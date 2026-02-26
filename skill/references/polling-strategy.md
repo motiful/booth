@@ -7,12 +7,12 @@ Booth uses adaptive polling to monitor decks — not fixed intervals.
 ```
 1. poll-child.sh <name> --prev-hash <last-hash>
    ├── unchanged → skip, extend interval
-   └── changed → pipe to detect-state.sh
+   └── changed → deck-status.sh detects state (JSONL primary, capture-pane fallback)
        ├── working → no action, keep interval
        ├── idle → read output, report to user
        ├── waiting-approval → send Enter to approve
        ├── needs-attention → read full output, present to user
-       ├── collapsed → send Ctrl+O, re-poll
+       ├── error → check details, retry or escalate
        └── unknown → retry with --lines 100
 ```
 
@@ -27,10 +27,9 @@ STATUS=$(echo "$RESULT" | cut -f1)
 HASH=$(echo "$RESULT" | cut -f2)
 TEXT=$(echo "$RESULT" | cut -f3-)
 
-# If changed, detect state
-if [ "$STATUS" = "changed" ]; then
-  STATE=$(echo "$TEXT" | ~/.claude/skills/booth/scripts/detect-state.sh)
-fi
+# State is also available via stderr (state=<value>)
+# Or query directly:
+STATE=$(~/.claude/skills/booth/scripts/deck-status.sh "deck-name")
 ```
 
 ## Interval Rules
@@ -62,35 +61,33 @@ When multiple decks are running:
 
 ---
 
-## Dual-Channel Monitoring: JSONL + capture-pane
+## Detection: JSONL Primary, capture-pane Fallback
 
-`poll-child.sh` supports two signal sources. JSONL is more precise; capture-pane is the universal fallback.
-
-### Priority
+All state detection goes through `deck-status.sh` which calls `jsonl-state.py`:
 
 ```
-1. If decks.json has sessionJsonlPath → use jsonl-monitor.sh (precise)
-2. If JSONL unavailable or inconclusive → fallback to capture-pane (universal)
-3. If both signals conflict → JSONL wins (it's structured data vs screen scraping)
+1. Find deck's JSONL: tmux CWD → encode path → ~/.claude/projects/<encoded>/*.jsonl
+2. Parse last 50 JSONL lines → determine state
+3. If JSONL says idle/unknown → check capture-pane for Allow/Deny (waiting-approval)
+4. If no JSONL found → full fallback to capture-pane + detect-state.sh
 ```
-
-### When capture-pane is still needed
-
-- **waiting-approval**: JSONL doesn't record Allow/Deny UI events (they're terminal-layer, not API-layer)
-- **Legacy sessions**: decks started before JSONL tracking, or manually started decks without sessionJsonlPath
-- **JSONL path unknown**: if Booth couldn't discover the JSONL path at spawn time
 
 ### Session JSONL Path Discovery
 
 CC stores session transcripts at:
 ```
-~/.claude/projects/<url-encoded-project-path>/<session-uuid>.jsonl
+~/.claude/projects/<encoded-path>/<session-uuid>.jsonl
 ```
 
-**At spawn time**, Booth discovers the JSONL path:
-1. URL-encode the deck's working directory path (replace `/` with `-`, prepend `-`)
-2. List `~/.claude/projects/<encoded>/` directory
-3. Find the newest `.jsonl` file created after spawn (within a few seconds)
-4. Write the path to `decks.json` → `sessionJsonlPath`
+Path encoding: replace `/` and `.` with `-`. Example:
+```
+/Users/foo/bar/.baz → -Users-foo-bar--baz
+```
 
-If discovery fails (directory doesn't exist yet, timing race), leave `sessionJsonlPath` empty — poll-child.sh will use capture-pane only.
+`deck-status.sh` discovers the path automatically from the deck's tmux CWD. No need to store in `decks.json` (though `sessionJsonlPath` is still accepted if present).
+
+### When capture-pane is still needed
+
+- **waiting-approval**: JSONL doesn't record Allow/Deny UI events (terminal-layer, not API-layer)
+- **Legacy/manual sessions**: no JSONL available
+- **New deck**: JSONL not yet created (CC still starting up)

@@ -1,4 +1,7 @@
 #!/bin/bash
+# DEPRECATED: Use deck-status.sh or jsonl-state.py instead.
+# This script is superseded by the unified jsonl-state.py parser.
+#
 # jsonl-monitor.sh — Detect CC session state from JSONL transcript
 #
 # Usage: jsonl-monitor.sh <jsonl-path>

@@ -172,23 +172,44 @@ When user says "spin up a deck" → do it immediately. Don't pre-digest the work
 **12. Improve the Product, Not Your Memory**
 When you discover a Booth bug, missing rule, or better pattern → update SKILL.md or reference files directly. Don't write to personal MEMORY.md. Memory doesn't ship with the product, can't be shared, and gets lost. The skill files ARE the product.
 
-### Monitoring Architecture: Watchdog + Cron Guardian
+### Monitoring Architecture: JSONL Watchdog + Cron Guardian
 
-**Design goal: zero tokens when decks are working normally. Sub-10s detection when they're not.**
+**Design goal: zero tokens when decks are working. Event-driven detection when they stop.**
 
-Two-layer monitoring:
+**Detection strategy:** Read CC's session JSONL files (`~/.claude/projects/*/‹uuid›.jsonl`), not screen-scraping via capture-pane. Each JSONL line is a structured event — tool calls, responses, errors, turn completion — giving precise state without heuristics.
 
-1. **`booth-watchdog.sh`** — persistent bash process in a hidden DJ window (`_watchdog`). Primary monitor.
+**State signals from JSONL:**
+
+| Event | State |
+|-------|-------|
+| `type=user` (text or tool_result) | **working** |
+| `type=assistant` with `tool_use` or `thinking` | **working** |
+| `type=progress` | **working** |
+| `type=system, subtype=turn_duration` | **idle** |
+| `type=system, subtype=api_error` | **error** |
+| `[NEEDS ATTENTION]` in assistant text | **needs-attention** |
+| 60s no new events while working | **idle** (timeout) |
+
+JSONL can't detect `waiting-approval` (Allow/Deny is a terminal UI event). `deck-status.sh` falls back to capture-pane for that.
+
+**Two-layer monitoring:**
+
+1. **`booth-watchdog.sh`** → `jsonl-state.py watchdog` — persistent Python process in a hidden DJ window (`_watchdog`). Per-deck `tail -f` watchers with `selectors` for event-driven detection. Alerts DJ only on state transitions.
 2. **`booth-heartbeat.sh`** — cron safety net. Only checks if watchdog is alive; restarts it if dead.
 
-**Watchdog loop** (pure bash, zero tokens):
+**One-shot query:** `deck-status.sh <deck-name>` — finds deck's JSONL, parses last 50 lines. Used by `poll-child.sh` and any script needing deck state.
+
+**Shared parsing:** `jsonl-state.py` contains all JSONL parsing logic. Both `deck-status.sh` (oneshot mode) and the watchdog (watchdog mode) use it. One parser, two calling patterns.
+
+**Watchdog loop:**
 1. Read `.booth/decks.json` → get active decks
 2. No active decks → exit (window closes)
-3. For each deck: `capture-pane` → `detect-state.sh`
-   - `working` → **silent** (DJ never hears)
-   - anything else → **alert DJ** (only on state transition, no spam)
-4. Adaptive sleep: 5s initial, +5s per quiet cycle (max 120s), resets on any state change
-5. Auto-exits when all decks are removed from `decks.json`
+3. For each deck: find JSONL → start `tail -f` watcher
+4. `selectors.select()` waits for events from any watcher (event-driven, not polling)
+5. Parse each JSONL line → detect state transition → alert DJ if non-working
+6. 60s idle timeout for working decks with no events
+7. Every 10s: check `decks.json` for new/removed decks, start/stop watchers
+8. Auto-exits when no active decks remain
 
 **Lifecycle:** `spawn-child.sh` auto-starts the watchdog if not already running. When all decks finish and DJ marks them completed in `decks.json`, the watchdog exits and its window closes. Next `spawn-child.sh` starts a fresh one.
 
@@ -200,7 +221,7 @@ Scans all `booth-*` sockets. If a socket has decks but no `_watchdog` window →
 
 **Message formats DJ receives:**
 - `[booth-event] deck-created name=X dir=/path` — from `spawn-child.sh` when a new deck starts
-- `[booth-alert] deck X <state>.` — from watchdog when a deck leaves `working` state
+- `[booth-alert] deck X <state>.` — from watchdog when a deck's state transitions away from `working`
 
 **When DJ receives a `[booth-event]` message:**
 1. Add the deck to registry (`.booth/decks.json`)
@@ -208,11 +229,12 @@ Scans all `booth-*` sockets. If a socket has decks but no `_watchdog` window →
 3. No polling needed — watchdog handles ongoing monitoring
 
 **When DJ receives a `[booth-alert]` message:**
-1. Poll the specific deck(s) mentioned via `capture-pane` to get full context
+1. Run `deck-status.sh <deck>` to confirm state, then `capture-pane` for full context
 2. Make decisions:
    - **Idle (completed)** → verify against goals, deliver structured report, kill
    - **Needs attention** → read the error, escalate to user with context
    - **Waiting approval** → auto-approve if safe, or escalate
+   - **Error** → check api_error details, retry or escalate
 3. Update `.booth/decks.json` (marking completed decks lets watchdog stop tracking them)
 
 **Verification on completion** — When a deck appears done, check:
@@ -226,7 +248,7 @@ Only after verification passes → report to user → kill deck.
 **Recovery** — After `/compact`, session resume, or ANY interruption, Booth's FIRST action:
 1. Read `.booth/decks.json`
 2. Run `tmux -L $BOOTH_SOCKET list-sessions` to cross-reference
-3. For any deck in `monitoring` status → poll immediately via `capture-pane`
+3. For any deck in active status → `deck-status.sh` to check state
 4. Report status to user
 5. Watchdog should still be running (check `_watchdog` window); if not, restart it
 
@@ -255,8 +277,8 @@ Each project with a `.booth/` directory gets its own tmux socket. Socket name: `
 - All tmux operations use a per-project socket: `-L $BOOTH_SOCKET` (isolated from user's tmux)
 - Each deck is an independent CC instance with its own context window
 - Communicate via `send-keys` (write) and `capture-pane` (read)
-- Dual-channel monitoring: JSONL (precise) + capture-pane (universal fallback)
-- Scripts: `~/.claude/skills/booth/scripts/` — `spawn-child.sh`, `poll-child.sh`, `send-to-child.sh`, `detect-state.sh`, `jsonl-monitor.sh`, `booth-start.sh`, `booth-watchdog.sh`, `booth-heartbeat.sh`
+- JSONL-based monitoring (primary) with capture-pane fallback for waiting-approval
+- Scripts: `~/.claude/skills/booth/scripts/` — `spawn-child.sh`, `poll-child.sh`, `send-to-child.sh`, `deck-status.sh`, `jsonl-state.py`, `booth-start.sh`, `booth-watchdog.sh`, `booth-heartbeat.sh`
 
 ---
 
@@ -304,5 +326,5 @@ Detailed operational guides — read on demand when you need the specifics.
 | [Lifecycle](references/lifecycle.md) | When creating sub-projects, handling completion/crash, or cleaning up |
 | [Registry](references/registry.md) | When maintaining deck state in memory or displaying status |
 | [Persistence](references/persistence.md) | When reading/writing `.booth/decks.json` or recovering after `/compact` |
-| [State Signals](references/state-signals.md) | When interpreting `detect-state.sh` output or debugging state detection |
+| [State Signals](references/state-signals.md) | When interpreting deck state detection (JSONL events + capture-pane fallback patterns) |
 | [Child Protocol](references/child-protocol.md) | When reviewing what child sessions know about Booth |
