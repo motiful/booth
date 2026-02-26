@@ -1,109 +1,89 @@
-# Watch, Takeover, Return & Detach
+# 看、瞄、Detach
 
-Four distinct interactions with decks. Don't confuse them.
+Three interactions with decks. Takeover/return are implicit, not commands.
 
-## Watch — read-only observation
+## 看 (Look) — full-screen switch
 
-Trigger: `watch <name>` / `show me <name>` / Chinese: `看看 X`, `让我看看 X`, `监工`
+Trigger: `看看 X` / `watch X` / `show me X`
 
-User wants to observe a deck in real-time without interrupting it. Deck keeps working.
+User wants to see a deck's full output. Booth switches the tmux client to that deck's session.
 
-**Booth opens the view automatically** — no need for the user to run anything.
+**Booth keeps monitoring.** This is NOT takeover — Booth continues heartbeat and polling as normal.
 
-### Primary: Floating popup (display-popup)
-
-1. Booth opens a centered floating popup showing the deck's output:
+1. Booth runs:
    ```bash
-   # Centered popup — 85% width, 75% height
-   tmux -L $BOOTH_SOCKET display-popup -E -xC -yC -w 85% -h 75% \
-     -T " deck: <name> " -b rounded \
-     "bash ~/.claude/skills/booth-skill/scripts/booth-peek.sh <name>"
+   tmux -L $BOOTH_SOCKET switch-client -t <name>
    ```
-   The popup auto-refreshes every 2 seconds via `capture-pane`.
+   Or uses the deck menu (if multiple decks):
+   ```bash
+   bash ~/.claude/skills/booth-skill/scripts/booth-deck-menu.sh look
+   ```
 
 2. Tell user:
    ```
-   浮窗已打开。q 关闭，k 杀掉，Esc 退出。
+   已切到 <name>。prefix+d 回来。
    ```
 
-3. Booth **continues polling** this deck as normal — nothing changes on Booth's side
+3. User reads, scrolls, does whatever they want. When they press `prefix+d`, they're back at DJ.
 
-4. Controls inside the popup:
-   - `q` / `Esc` — close the popup
-   - `k` — kill the deck (with confirmation)
-   - `t` — shows takeover instructions
+4. **Implicit return**: When user comes back to DJ, Booth auto-resumes normal operation. No "return" command needed.
 
-### Smaller popup variant
+**tmux keybinding**: `prefix+w` → deck menu → select by number → full screen switch.
 
-For a compact corner view:
-```bash
-tmux -L $BOOTH_SOCKET display-popup -E -w 50% -h 40% \
-  -T " deck: <name> " -b rounded \
-  "bash ~/.claude/skills/booth-skill/scripts/booth-peek.sh <name>"
-```
+## 瞄 (Glance) — split-pane, DJ stays visible
 
-### Fallback: split-window
+Trigger: `瞄一眼 X` / `glance X` / `让我瞄一下`
 
-If `display-popup` is unavailable (tmux < 3.3) or user prefers split panes:
-```bash
-tmux -L $BOOTH_SOCKET split-window -h -t dj "tmux -L $BOOTH_SOCKET attach -t <name> -r"
-```
-User closes with `Ctrl-B x` (kill pane).
+User wants to see a deck while keeping DJ visible. Like a mixer — deck output on the right, DJ on the left.
 
-**Fallback** — If Booth is NOT running inside tmux (e.g., user started CC directly), fall back to giving the attach command:
-   ```
-   tmux -L $BOOTH_SOCKET attach -t <name> -r
-   ```
-
-## Takeover — user takes direct control
-
-Trigger: `takeover <name>` / `let me talk to <name>` / Chinese: `接管 X`, `我上`
-
-User wants to stop Booth's management and directly interact with the deck as a normal CC session.
-
-1. Check deck's current state via `poll-child.sh`
-2. If deck is actively working:
-   - Send: "Please finish your current step and pause — the user wants to talk to you directly"
-   - Wait for deck to reach a stopping point (poll until idle)
-3. If deck is idle or waiting:
-   - Send: "The user wants to talk to you directly"
-4. Open the deck in a split-pane (interactive, not read-only):
+1. Booth opens a split-pane (read-only):
    ```bash
-   tmux -L $BOOTH_SOCKET split-window -h -t dj "tmux -L $BOOTH_SOCKET attach -t <name>"
+   tmux -L $BOOTH_SOCKET split-window -h -t $DJ_SESSION -l 50% \
+     "tmux -L $BOOTH_SOCKET attach -t <name> -r"
    ```
-5. Tell user:
+
+2. Tell user:
    ```
-   Opened <name> in the right pane. You have direct control.
-   When done, Ctrl-B D to detach, then tell me "return" or "I'm back".
+   右边是 <name>（只读）。prefix+x 关掉右半。
    ```
-6. **Stop polling** deck X — it's now under user's direct control
-7. **Update `.booth/decks.json`**: set status to `takeover`
 
-**Fallback** — If not in tmux, give the attach command: `tmux -L $BOOTH_SOCKET attach -t <name>`
+3. Booth **continues working normally** on the left. The right pane is just a passive view.
 
-## Return — user hands control back to Booth
+4. User closes the right pane with `prefix+x` (kill pane) or tells Booth "关掉".
 
-Trigger: `return` / `I'm back` / Chinese: `我回来了`, `交还 X`
+**tmux keybinding**: `prefix+e` → deck menu → select by number → split-pane opens.
 
-1. Resume polling the takeover'd deck(s)
-2. Check current state
-3. Report what happened while user was in control
-4. Resume normal monitoring
-5. **Update `.booth/decks.json`**: restore status from state detection
+## Implicit Takeover & Return
+
+There are NO explicit takeover/return commands. The logic is:
+
+- **User switches to a deck** (via 看 or prefix+w) → that's "takeover". Booth keeps monitoring.
+- **User comes back to DJ** (via prefix+d) → that's "return". Nothing special happens.
+- **Deck completes while user is away** → Booth auto-kills it and reports results when user returns.
+
+The old explicit `takeover` / `return` commands are removed. Booth is always monitoring, always managing. The user just looks at things when they want to.
 
 ## Detach — unbind from Booth without killing
 
-Trigger: `detach <name>` / Chinese: `解绑 X`, `放手 X`
+Trigger: `detach <name>` / `解绑 X`
 
-User wants to stop Booth's monitoring of a deck, but NOT kill the session. The deck becomes a standalone CC session the user can interact with directly via `tmux -L $BOOTH_SOCKET attach -t <name>` at any time, outside of Booth's oversight.
+User wants Booth to stop monitoring a deck, but NOT kill it. The deck becomes standalone.
 
 1. **Stop polling** deck X
-2. **Remove from `.booth/decks.json`** (or mark as `detached`)
+2. **Update `.booth/decks.json`**: mark as `detached`
 3. Tell user:
    ```
-   Deck `X` has been detached. It's still running:
+   Deck X 已解绑。它还在跑：
    tmux -L $BOOTH_SOCKET attach -t X
-   Booth is no longer monitoring it. If you want Booth to take it back later, just let me know.
+   Booth 不再监控它。
    ```
 
-**Detach ≠ Takeover**: Takeover is temporary (you expect a `return`). Detach is permanent unbinding (Booth forgets about it). The tmux session lives on independently.
+## Keybinding Summary
+
+| Key | Action |
+|-----|--------|
+| `prefix+w` | 看 — deck menu → full screen switch |
+| `prefix+e` | 瞄 — deck menu → split-pane (DJ stays) |
+| `prefix+d` | 回 DJ |
+| `prefix+n/p` | 上/下一个 session |
+| `prefix+S` | session 树 |
