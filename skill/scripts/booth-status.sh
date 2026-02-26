@@ -17,11 +17,11 @@ DETECT="$(dirname "$0")/detect-state.sh"
 DJ=$($T show -gvq @booth-dj 2>/dev/null || echo "dj")
 CURRENT=$($T display-message -p '#{client_session}' 2>/dev/null || echo "")
 
-# --- DJ button (for status-left) ---
+# --- DJ button (for status-left) — wide padding for easy clicking ---
 if [[ "$CURRENT" == "$DJ" ]]; then
-  DJ_BTN="#[range=user|${DJ}]#[fg=colour255,bg=colour24,bold] DJ #[norange]#[default]"
+  DJ_BTN="#[range=user|${DJ}]#[fg=colour255,bg=colour24,bold]  DJ  #[norange]#[default]"
 else
-  DJ_BTN="#[range=user|${DJ}]#[fg=colour245,bg=colour238] DJ #[norange]#[default]"
+  DJ_BTN="#[range=user|${DJ}]#[fg=colour245,bg=colour238]  DJ  #[norange]#[default]"
 fi
 $T set -gq @booth-status-left-extra "$DJ_BTN"
 
@@ -68,11 +68,11 @@ for name in "${NAMES[@]}"; do
     *)                ind="#[fg=colour245]…" ;;
   esac
 
-  # Use full session name as range tag (no truncation)
+  # Use full session name as range tag — wide padding for easy clicking
   if [[ "$name" == "$CURRENT" ]]; then
-    OUT+=" #[range=user|${name}]${ind}#[fg=colour255,bg=colour24,bold] ${name} #[norange]#[default]"
+    OUT+="  #[range=user|${name}]${ind}#[fg=colour255,bg=colour24,bold]  ${name}  #[norange]#[default]"
   else
-    OUT+=" #[range=user|${name}]${ind}#[fg=colour245] ${name} #[norange]#[default]"
+    OUT+="  #[range=user|${name}]${ind}#[fg=colour245]  ${name}  #[norange]#[default]"
   fi
 done
 

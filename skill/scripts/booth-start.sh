@@ -123,7 +123,7 @@ case "$CMD" in
     echo "=== decks.json ==="
     BOOTH_CWD=$(tmux -L "$SOCKET" display-message -t "$SESSION" -p "#{pane_current_path}" 2>/dev/null || true)
     if [[ -n "$BOOTH_CWD" && -f "$BOOTH_CWD/.booth/decks.json" ]]; then
-      cat "$BOOTH_CWD/.booth/decks.json" | python3 -m json.tool 2>/dev/null || cat "$BOOTH_CWD/.booth/decks.json"
+      node -e "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync('$BOOTH_CWD/.booth/decks.json','utf-8')),null,2)+'\n')" 2>/dev/null || cat "$BOOTH_CWD/.booth/decks.json"
     else
       echo "(no .booth/decks.json found)"
     fi

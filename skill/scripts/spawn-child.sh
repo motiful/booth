@@ -104,30 +104,29 @@ DJ_SESSION=$( tmux -L "$SOCKET" show -gvq @booth-dj 2>/dev/null || echo "dj" )
 DJ_CWD=$(tmux -L "$SOCKET" display-message -t "$DJ_SESSION" -p "#{pane_current_path}" 2>/dev/null || true)
 if [[ -n "$DJ_CWD" && -d "$DJ_CWD/.booth" ]]; then
   ALERTS_FILE="$DJ_CWD/.booth/alerts.json"
-  python3 -c "
-import json, sys, os
-from datetime import datetime, timezone
-f = sys.argv[1]
-alerts = []
-try:
-    with open(f) as fh: alerts = json.load(fh)
-except: pass
-alerts.append({'timestamp': datetime.now(timezone.utc).isoformat(), 'deck': sys.argv[2], 'type': 'deck-created', 'message': 'deck-created name=' + sys.argv[2] + ' dir=' + sys.argv[3]})
-tmp = f + '.tmp'
-with open(tmp, 'w') as fh: json.dump(alerts, fh, indent=2); fh.write('\n')
-os.replace(tmp, f)
-" "$ALERTS_FILE" "$NAME" "$WORK_DIR" 2>/dev/null || true
+  node "$SCRIPT_DIR/jsonl-state.mjs" write-alert "$ALERTS_FILE" "$NAME" "deck-created" "deck-created name=$NAME dir=$WORK_DIR" 2>/dev/null || true
 fi
 
-# Ensure watchdog is running (hidden window in DJ session)
-WATCHDOG_WINDOW="_watchdog"
-if ! tmux -L "$SOCKET" list-windows -t "$DJ_SESSION" -F "#{window_name}" 2>/dev/null | grep -q "^${WATCHDOG_WINDOW}$"; then
-  DJ_CWD=$(tmux -L "$SOCKET" display-message -t "$DJ_SESSION" -p "#{pane_current_path}" 2>/dev/null || true)
-  if [[ -n "$DJ_CWD" ]]; then
-    tmux -L "$SOCKET" new-window -d -t "$DJ_SESSION" -n "$WATCHDOG_WINDOW" -c "$DJ_CWD" \
-      "BOOTH_SOCKET=$SOCKET BOOTH_DJ=$DJ_SESSION $SCRIPT_DIR/booth-watchdog.sh"
-    echo "watchdog=started"
+# Ensure watchdog is running (background process with PID file)
+WATCHDOG_PID_FILE=""
+if [[ -n "$DJ_CWD" ]]; then
+  WATCHDOG_PID_FILE="$DJ_CWD/.booth/watchdog.pid"
+fi
+
+WATCHDOG_ALIVE=false
+if [[ -n "$WATCHDOG_PID_FILE" && -f "$WATCHDOG_PID_FILE" ]]; then
+  WD_PID=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null || true)
+  if [[ -n "$WD_PID" ]] && kill -0 "$WD_PID" 2>/dev/null; then
+    WATCHDOG_ALIVE=true
   fi
+fi
+
+if [[ "$WATCHDOG_ALIVE" == false && -n "$DJ_CWD" ]]; then
+  BOOTH_SOCKET="$SOCKET" BOOTH_DJ="$DJ_SESSION" \
+    nohup node "$SCRIPT_DIR/jsonl-state.mjs" watchdog \
+    >> /tmp/booth-watchdog-${SOCKET}.log 2>&1 &
+  echo "$!" > "$DJ_CWD/.booth/watchdog.pid"
+  echo "watchdog=started (pid=$!)"
 fi
 
 echo "session=$NAME"

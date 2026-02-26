@@ -172,6 +172,34 @@ When user says "spin up a deck" → do it immediately. Don't pre-digest the work
 **12. Improve the Product, Not Your Memory**
 When you discover a Booth bug, missing rule, or better pattern → update SKILL.md or reference files directly. Don't write to personal MEMORY.md. Memory doesn't ship with the product, can't be shared, and gets lost. The skill files ARE the product.
 
+**13. Audit Decks Like a PM — Trust but Verify**
+Decks are capable but not infallible. DJ's job is to independently verify their work, not rubber-stamp their self-reports.
+
+**Audit checklist (run after every deck "completion" report):**
+1. **Task coverage** — Did the deck complete ALL assigned tasks? Compare your original assignment against its task list. Decks commonly drop or reinterpret tasks when receiving multi-task prompts.
+2. **Testing** — Did it actually test? Look for test commands in the pane output, not just "I tested" claims. If no test evidence → send it back with specific test commands.
+3. **Scope integrity** — Did it commit only its own work? Did it modify files outside its assignment? Did it push without permission?
+4. **Architecture consistency** — Do its changes align with the overall design? (e.g., if the project is migrating away from Python, did it introduce new Python code?)
+
+**When audit finds problems:**
+- Don't fix it yourself (violates "Manage, Don't Execute"). Send the deck back with specific instructions.
+- Report honestly to user: what was done, what was missed, what needs redo.
+- Track dropped tasks — if a deck drops a task twice, break the task into a dedicated deck.
+
+**Autonomy levels (from user's delegation):**
+- **Execution/scheduling decisions** — DJ decides autonomously. Don't ask user "should I send this task?" or "should I kill this deck?" Just do it, report after.
+- **Product/architecture/design decisions** — Escalate to user. These affect the product's direction and require human judgment (aesthetics, cost trade-offs, API design, public-facing decisions).
+- **先斩后奏 (act first, report later)** — For high-confidence operational decisions, execute immediately and inform user. User can always redirect.
+
+**14. RALPH Loop Discipline**
+Every task runs to completion through the RALPH loop: assign → execute → test → verify → deliver. "Done" means tested and committed, not "code written."
+
+- Deck says "done" → DJ runs audit checklist (#13)
+- Audit fails → DJ sends deck back with specific gaps
+- Audit passes → DJ delivers structured report to user
+- User accepts → deck killed, task closed
+- Loop until goal in `decks.json` is fully met
+
 ### Monitoring Architecture: JSONL Watchdog + Cron Guardian
 
 **Design goal: zero tokens when decks are working. Event-driven detection when they stop.**
@@ -196,12 +224,12 @@ JSONL can't detect `waiting-approval` (Allow/Deny is a terminal UI event). `deck
 
 **Two-layer monitoring:**
 
-1. **`booth-watchdog.sh`** → `jsonl-state.py watchdog` — persistent Python process in a hidden DJ window (`_watchdog`). Per-deck `tail -f` watchers with `selectors` for event-driven detection.
+1. **`booth-watchdog.sh`** → `jsonl-state.mjs watchdog` — persistent Node.js process. Per-deck `tail -f` watchers with readline for event-driven detection.
 2. **`booth-heartbeat.sh`** — cron safety net. Only checks if watchdog is alive; restarts it if dead.
 
 **One-shot query:** `deck-status.sh <deck-name>` — finds deck's JSONL, parses last 50 lines. Used by `poll-child.sh` and any script needing deck state.
 
-**Shared parsing:** `jsonl-state.py` contains all JSONL parsing logic. Both `deck-status.sh` (oneshot mode) and the watchdog (watchdog mode) use it. One parser, two calling patterns.
+**Shared parsing:** `jsonl-state.mjs` contains all JSONL parsing logic. Both `deck-status.sh` (oneshot mode) and the watchdog (watchdog mode) use it. One parser, two calling patterns.
 
 **Watchdog loop:**
 1. Read `.booth/decks.json` → get active decks
@@ -213,13 +241,13 @@ JSONL can't detect `waiting-approval` (Allow/Deny is a terminal UI event). `deck
 7. Every 10s: check `decks.json` for new/removed decks, start/stop watchers
 8. Auto-exits when no active decks remain
 
-**Lifecycle:** `spawn-child.sh` auto-starts the watchdog if not already running. When all decks finish and DJ marks them completed in `decks.json`, the watchdog exits and its window closes. Next `spawn-child.sh` starts a fresh one.
+**Lifecycle:** `spawn-child.sh` auto-starts the watchdog as a background process (PID saved to `.booth/watchdog.pid`). When all decks finish and DJ marks them completed in `decks.json`, the watchdog exits. Next `spawn-child.sh` starts a fresh one. `booth kill` terminates the watchdog via PID file.
 
 **Cron guardian** (safety net):
 ```bash
 */10 * * * * ~/.claude/skills/booth/scripts/booth-heartbeat.sh >> /tmp/booth-heartbeat.log 2>&1
 ```
-Scans all `booth-*` sockets. If a socket has decks but no `_watchdog` window → restarts watchdog + writes alert to `.booth/alerts.json` + shows urgent `display-message`.
+Scans all `booth-*` sockets. If a socket has decks but watchdog PID is dead → restarts watchdog + writes alert to `.booth/alerts.json` + shows urgent `display-message`.
 
 ### Alert Architecture — 4 Layers
 
@@ -247,7 +275,7 @@ Alerts flow through a file-based pipeline. **No `send-keys` to DJ.** The DJ read
 Alert types: `idle`, `error`, `needs-attention`, `deck-created`.
 
 **Writers** (Layer 2):
-- `jsonl-state.py` watchdog — state transitions
+- `jsonl-state.mjs` watchdog — state transitions
 - `spawn-child.sh` — deck-created events
 - `booth-heartbeat.sh` — watchdog restart events
 
@@ -334,7 +362,7 @@ git branch -d feat/branch-name              # delete merged branch
 2. Run `tmux -L $BOOTH_SOCKET list-sessions` to cross-reference
 3. For any deck in active status → `deck-status.sh` to check state
 4. Report status to user
-5. Watchdog should still be running (check `_watchdog` window); if not, restart it
+5. Watchdog should still be running (check `.booth/watchdog.pid`); if not, restart it
 
 ### Booth tmux Topology
 
@@ -367,17 +395,18 @@ Each project with a `.booth/` directory gets its own tmux socket. Socket name: `
 
 | Tool | Type | Entry point | Engine | Notes |
 |------|------|------------|--------|-------|
-| `deck-status.sh` | One-shot query | DJ calls on demand | `jsonl-state.py oneshot` + capture-pane for waiting-approval | Replaces `detect-state.sh` |
-| `booth-watchdog.sh` | Persistent monitor | Auto-started by `spawn-child.sh` | `jsonl-state.py watchdog` (`tail -f`, event-driven) | Hidden `_watchdog` tmux window |
+| `deck-status.sh` | One-shot query | DJ calls on demand | `jsonl-state.mjs oneshot` + capture-pane for waiting-approval | Replaces `detect-state.sh` |
+| `booth-watchdog.sh` | Persistent monitor | Auto-started by `spawn-child.sh` | `jsonl-state.mjs watchdog` (`tail -f`, event-driven) | Background process, PID in `.booth/watchdog.pid` |
 | `booth-heartbeat.sh` | Persistent guardian | cron every 10 min | Pure bash (zero tokens) | Only checks if watchdog is alive |
 | `poll-child.sh` | One-shot query | DJ manual poll | `deck-status.sh` + change detection | Backward-compat wrapper |
 | `spawn-child.sh` | One-shot action | DJ spins deck | bash + tmux | Also starts watchdog if needed |
 | `send-to-child.sh` | One-shot action | DJ sends message | tmux send-keys | — |
 | `booth-stop-hook.sh` | CC stop hook | Runs after each DJ turn | Reads `.booth/alerts.json` → outputs as system context | Layer 3 alert reader |
 | `detect-state.sh` | **DEPRECATED** | Internal fallback only | capture-pane grep | Only called by `deck-status.sh` when no JSONL |
-| `jsonl-monitor.sh` | **DELETED** | — | — | Superseded by `jsonl-state.py` |
+| `jsonl-state.py` | **DEPRECATED** | — | — | Superseded by `jsonl-state.mjs` (Node.js) |
+| `jsonl-monitor.sh` | **DELETED** | — | — | Superseded by `jsonl-state.mjs` |
 
-**Shared engine:** `jsonl-state.py` contains all JSONL parsing logic. Both `deck-status.sh` (oneshot) and `booth-watchdog.sh` (watchdog) use it. One parser, two modes.
+**Shared engine:** `jsonl-state.mjs` (Node.js, zero npm deps) contains all JSONL parsing logic. Modes: `oneshot` (deck-status.sh), `watchdog` (booth-watchdog.sh), `write-alert` (shell scripts), `read-alerts` (stop hook).
 
 **JSONL vs capture-pane — layered, not redundant:**
 1. Normal state detection (working/idle/error) → JSONL (structured, precise)

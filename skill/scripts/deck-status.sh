@@ -18,7 +18,7 @@ set -euo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-JSONL_STATE_PY="$SCRIPT_DIR/jsonl-state.py"
+JSONL_STATE="$SCRIPT_DIR/jsonl-state.mjs"
 DETECT_STATE="$SCRIPT_DIR/detect-state.sh"
 SOCKET="${BOOTH_SOCKET:-booth}"
 
@@ -55,7 +55,7 @@ fi
 # --- Detect state via JSONL ---
 
 if [[ -n "$JSONL_PATH" && -f "$JSONL_PATH" ]]; then
-  STATE=$(tail -50 "$JSONL_PATH" | python3 "$JSONL_STATE_PY" oneshot 2>/dev/null || echo "unknown")
+  STATE=$(tail -50 "$JSONL_PATH" | node "$JSONL_STATE" oneshot 2>/dev/null || echo "unknown")
 
   # JSONL can't detect waiting-approval. If state is idle/unknown,
   # double-check capture-pane for Allow/Deny prompts.

@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { resolveProject } from '../constants.js';
 import { boothIsRunning, runTmux } from '../scripts.js';
 
@@ -40,6 +42,19 @@ export function kill(args: string[]): void {
   console.log('Killing all Booth sessions:');
   const sessions = runTmux(['-L', socket, 'list-sessions', '-F', '  #{session_name}']);
   if (sessions) console.log(sessions);
+
+  // Kill watchdog background process if running
+  const { root } = resolveProject(process.cwd());
+  const pidFile = resolve(root, '.booth', 'watchdog.pid');
+  try {
+    const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
+    if (pid > 0) {
+      process.kill(pid, 'SIGTERM');
+      console.log(`Killed watchdog (pid=${pid})`);
+    }
+  } catch {
+    // PID file missing or process already dead — fine
+  }
 
   try {
     execFileSync('tmux', ['-L', socket, 'kill-server'], {

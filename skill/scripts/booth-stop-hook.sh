@@ -16,7 +16,6 @@ ALERTS_FILE=".booth/alerts.json"
 [[ -f "$ALERTS_FILE" ]] || exit 0
 
 # Only run for the DJ session
-# Check if we're in a tmux session named "dj" (or the configured DJ name)
 SESSION_NAME=$(tmux display-message -p '#S' 2>/dev/null || true)
 if [[ -z "$SESSION_NAME" ]]; then
   exit 0
@@ -34,37 +33,20 @@ if [[ "$SESSION_NAME" != "$DJ_NAME" ]]; then
   exit 0
 fi
 
-# Read alerts — atomic: read + clear in one operation
-# Use python3 for safe JSON handling + atomic file swap
-ALERTS=$(python3 -c "
-import json, sys, os
+# Find jsonl-state.mjs (same directory as this script)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+JSONL_STATE="$SCRIPT_DIR/jsonl-state.mjs"
 
-f = sys.argv[1]
-try:
-    with open(f) as fh:
-        alerts = json.load(fh)
-except (FileNotFoundError, json.JSONDecodeError):
-    sys.exit(0)
-
-if not alerts:
-    sys.exit(0)
-
-# Clear the file (atomic write)
-tmp = f + '.tmp'
-with open(tmp, 'w') as fh:
-    json.dump([], fh)
-    fh.write('\n')
-os.replace(tmp, f)
-
-# Output alerts for CC
-for a in alerts:
-    ts = a.get('timestamp', '?')[:19]
-    deck = a.get('deck', '?')
-    atype = a.get('type', '?')
-    msg = a.get('message', '')
-    print(f'[booth-alert] [{atype}] {deck}: {msg} (at {ts})')
-" "$ALERTS_FILE" 2>/dev/null) || true
-
-if [[ -n "$ALERTS" ]]; then
-  echo "$ALERTS"
+# Read and clear alerts via Node.js utility
+if [[ -f "$JSONL_STATE" ]]; then
+  node "$JSONL_STATE" read-alerts "$ALERTS_FILE" 2>/dev/null || true
+else
+  # Fallback: pure bash + jq (if jsonl-state.mjs not found)
+  if command -v jq &>/dev/null; then
+    COUNT=$(jq 'length' "$ALERTS_FILE" 2>/dev/null || echo "0")
+    if [[ "$COUNT" -gt 0 ]]; then
+      jq -r '.[] | "[booth-alert] [\(.type)] \(.deck): \(.message) (at \(.timestamp[:19]))"' "$ALERTS_FILE" 2>/dev/null
+      echo '[]' > "$ALERTS_FILE"
+    fi
+  fi
 fi
