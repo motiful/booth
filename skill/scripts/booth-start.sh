@@ -46,18 +46,19 @@ case "$CMD" in
     # Resolve directory
     DIR="$(cd "$DIR" && pwd)"
 
-    # Load Booth-specific tmux config if available
+    # Create tmux session for DJ
+    # 不用 -f，让 tmux 先加载用户的 ~/.tmux.conf（保留用户的 prefix 等设置）
+    tmux -L "$SOCKET" new-session -d -s "$SESSION" -c "$DIR"
+
+    # 在用户配置之上叠加 Booth 专用配置（状态栏、快捷键等）
     TMUX_CONF="$SKILL_DIR/booth.tmux.conf"
-    TMUX_CONF_ARGS=""
     if [[ -f "$TMUX_CONF" ]]; then
-      TMUX_CONF_ARGS="-f $TMUX_CONF"
+      tmux -L "$SOCKET" source-file "$TMUX_CONF"
     fi
 
-    # Create tmux session for DJ
-    tmux -L "$SOCKET" $TMUX_CONF_ARGS new-session -d -s "$SESSION" -c "$DIR"
-
-    # Set BOOTH_SOCKET env var so child scripts inherit it
+    # Set env vars so child scripts and keybindings can find DJ
     tmux -L "$SOCKET" set-environment -t "$SESSION" BOOTH_SOCKET "$SOCKET"
+    tmux -L "$SOCKET" set -g @booth-dj "$SESSION"
 
     # Launch CC with /booth skill loaded
     BOOTH_PROMPT="You are the Booth DJ. You were started via booth-start.sh. Your tmux session is '$SESSION' on socket '$SOCKET'. Working directory: $DIR. Run /booth to activate Booth mode."

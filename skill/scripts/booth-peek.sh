@@ -31,6 +31,10 @@ YELLOW="\033[33m"
 RED="\033[31m"
 GREEN="\033[32m"
 
+# Hide cursor during rendering
+tput civis 2>/dev/null
+trap 'tput cnorm 2>/dev/null' EXIT
+
 # --- Confirm prompt for kill ---
 confirm_kill() {
   clear
@@ -63,21 +67,30 @@ confirm_kill() {
 
 # --- Scroll mode: full scrollback in less ---
 scroll_mode() {
+  tput cnorm 2>/dev/null  # show cursor for less
   tmux -L "$SOCKET" capture-pane -t "$DECK_NAME" -p -S - 2>/dev/null \
     | less -R +G
-  # +G starts at bottom (most recent output)
-  # When user quits less, returns to live view
+  tput civis 2>/dev/null  # hide again
 }
 
 # --- Takeover: switch client to deck session ---
 do_takeover() {
-  # switch-client changes what session this tmux client displays
-  # The popup closes (script exits), terminal shows the deck directly
   tmux -L "$SOCKET" switch-client -t "$DECK_NAME" 2>/dev/null
   exit 0
 }
 
+# --- Separator line (cached) ---
+draw_separator() {
+  local cols="${1:-80}"
+  printf "${DIM}"
+  printf '─%.0s' $(seq 1 "$cols")
+  printf "${RESET}\n"
+}
+
 # --- Main loop ---
+# Use cursor positioning instead of clear — preserves tmux copy-mode scrollback
+FIRST_DRAW=true
+
 while true; do
   # Check if deck still exists
   if ! tmux -L "$SOCKET" has-session -t "$DECK_NAME" 2>/dev/null; then
@@ -85,28 +98,45 @@ while true; do
     echo -e "${DIM}  Deck '$DECK_NAME' is no longer running.${RESET}"
     echo ""
     echo "  Press any key to close."
+    tput cnorm 2>/dev/null
     read -rsn1
     exit 0
   fi
 
   # Get terminal dimensions
   COLS=$(tput cols 2>/dev/null || echo 80)
-  LINES=$(tput lines 2>/dev/null || echo 24)
-  CONTENT_LINES=$((LINES - 4))  # reserve for header + footer
+  TERM_LINES=$(tput lines 2>/dev/null || echo 24)
+  CONTENT_LINES=$((TERM_LINES - 4))  # reserve for header + footer
 
-  # Clear and draw
-  clear
+  if $FIRST_DRAW; then
+    clear
+    FIRST_DRAW=false
+  else
+    # Move cursor to top-left, don't clear — lets tmux scrollback survive
+    tput cup 0 0
+  fi
 
   # Header
-  echo -e "${CYAN}${BOLD}  ◉ deck: ${DECK_NAME}${RESET}${DIM}  (live · 2s refresh)${RESET}"
-  echo -e "${DIM}$(printf '─%.0s' $(seq 1 "$COLS"))${RESET}"
+  echo -e "${CYAN}${BOLD}  ◉ deck: ${DECK_NAME}${RESET}${DIM}  (live · 2s)${RESET}"
+  draw_separator "$COLS"
 
   # Capture pane content (last N lines)
-  tmux -L "$SOCKET" capture-pane -t "$DECK_NAME" -p -S -"$CONTENT_LINES" 2>/dev/null || echo "  (capture failed)"
+  CAPTURED=$(tmux -L "$SOCKET" capture-pane -t "$DECK_NAME" -p -S -"$CONTENT_LINES" 2>/dev/null || echo "  (capture failed)")
+
+  # Pad to fill screen (prevents old content bleeding through)
+  CAPTURED_LINES=$(echo "$CAPTURED" | wc -l)
+  echo "$CAPTURED"
+  PADDING=$((CONTENT_LINES - CAPTURED_LINES))
+  if [[ $PADDING -gt 0 ]]; then
+    for ((i=0; i<PADDING; i++)); do
+      tput el  # clear to end of line
+      echo ""
+    done
+  fi
 
   # Footer
-  echo ""
-  echo -e "${DIM}$(printf '─%.0s' $(seq 1 "$COLS"))${RESET}"
+  draw_separator "$COLS"
+  tput el
   echo -ne "  ${GREEN}q${RESET}:关闭  ${RED}k${RESET}:杀掉  ${CYAN}s${RESET}:滚动  ${YELLOW}t${RESET}:接管"
 
   # Wait for input (2 second timeout for auto-refresh)
@@ -118,9 +148,11 @@ while true; do
       ;;
     k|K)
       confirm_kill
+      FIRST_DRAW=true
       ;;
     s|S)
       scroll_mode
+      FIRST_DRAW=true
       ;;
     t|T)
       do_takeover
