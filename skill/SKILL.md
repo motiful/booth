@@ -186,6 +186,8 @@ When you discover a Booth bug, missing rule, or better pattern → update SKILL.
 | `type=assistant` with `tool_use` or `thinking` | **working** |
 | `type=progress` | **working** |
 | `type=system, subtype=turn_duration` | **idle** |
+| `type=system, subtype=stop_hook_summary` (preventedContinuation=false) | **idle** |
+| `type=assistant` with `stop_reason=end_turn` (text only) | **idle** |
 | `type=system, subtype=api_error` | **error** |
 | `[NEEDS ATTENTION]` in assistant text | **needs-attention** |
 | 60s no new events while working | **idle** (timeout) |
@@ -238,12 +240,51 @@ Scans all `booth-*` sockets. If a socket has decks but no `_watchdog` window →
 3. Update `.booth/decks.json` (marking completed decks lets watchdog stop tracking them)
 
 **Verification on completion** — When a deck appears done, check:
-1. Was the original goal met?
-2. Did it commit?
-3. Did it clean up resources?
-4. Any loose ends?
+1. Was the original goal met? (check `goal` field in `decks.json`)
+2. Did it run tests? (code changes without tests = not done)
+3. Did it commit?
+4. Did it clean up resources?
+5. Any loose ends?
 
 Only after verification passes → report to user → kill deck.
+
+### DJ Behavior: RALPH Loop
+
+**RALPH = Ralph Wiggum Loop** — Agent runs in a persistent loop: read state → plan → execute → test → commit → repeat until goal is met. Progress lives in files (`.booth/decks.json`), not conversation context.
+
+**DJ as "smart RALPH":**
+- Every watchdog alert / heartbeat triggers a loop iteration
+- Check: is the deck's `goal` (from `decks.json`) achieved?
+- No → send next instruction to deck, or spin new deck
+- Yes → verify tests pass → structured delivery report → kill deck → next task
+- Goals must be written to `decks.json` at spin-up time (`goal` field)
+
+**Deck as "dumb RALPH":**
+- Receives task → executes → tests → commits → reports done
+- If stuck → CC retries internally; if truly stuck → `[NEEDS ATTENTION]` → watchdog alerts DJ
+
+**Testing is mandatory:**
+- Any code change requires tests before marking complete
+- DJ verifies test results in delivery, not just "deck said it's done"
+- No tests = loop back with "run tests before marking complete"
+
+**Loop termination:**
+- Goal met + tests pass + committed → done
+- User cancels → done
+- Repeated failures (3+ retries) → escalate to user with full context
+
+### Worktree Merge: Local, Not PR
+
+When a deck works on a git worktree branch within the same repo, merge locally:
+
+```bash
+cd /path/to/repo                            # main worktree (main branch)
+git merge feat/branch-name                  # direct local merge
+git worktree remove .claude/worktrees/name  # clean up worktree
+git branch -d feat/branch-name              # delete merged branch
+```
+
+**Do NOT open a PR** for same-repo worktree branches. PRs are for cross-repo or team review scenarios. Booth manages its own worktrees — local merge is the correct workflow.
 
 **Recovery** — After `/compact`, session resume, or ANY interruption, Booth's FIRST action:
 1. Read `.booth/decks.json`
@@ -278,7 +319,26 @@ Each project with a `.booth/` directory gets its own tmux socket. Socket name: `
 - Each deck is an independent CC instance with its own context window
 - Communicate via `send-keys` (write) and `capture-pane` (read)
 - JSONL-based monitoring (primary) with capture-pane fallback for waiting-approval
-- Scripts: `~/.claude/skills/booth/scripts/` — `spawn-child.sh`, `poll-child.sh`, `send-to-child.sh`, `deck-status.sh`, `jsonl-state.py`, `booth-start.sh`, `booth-watchdog.sh`, `booth-heartbeat.sh`
+
+### Tool Classification
+
+| Tool | Type | Entry point | Engine | Notes |
+|------|------|------------|--------|-------|
+| `deck-status.sh` | One-shot query | DJ calls on demand | `jsonl-state.py oneshot` + capture-pane for waiting-approval | Replaces `detect-state.sh` |
+| `booth-watchdog.sh` | Persistent monitor | Auto-started by `spawn-child.sh` | `jsonl-state.py watchdog` (`tail -f`, event-driven) | Hidden `_watchdog` tmux window |
+| `booth-heartbeat.sh` | Persistent guardian | cron every 10 min | Pure bash (zero tokens) | Only checks if watchdog is alive |
+| `poll-child.sh` | One-shot query | DJ manual poll | `deck-status.sh` + change detection | Backward-compat wrapper |
+| `spawn-child.sh` | One-shot action | DJ spins deck | bash + tmux | Also starts watchdog if needed |
+| `send-to-child.sh` | One-shot action | DJ sends message | tmux send-keys | — |
+| `detect-state.sh` | **DEPRECATED** | Internal fallback only | capture-pane grep | Only called by `deck-status.sh` when no JSONL |
+| `jsonl-monitor.sh` | **DELETED** | — | — | Superseded by `jsonl-state.py` |
+
+**Shared engine:** `jsonl-state.py` contains all JSONL parsing logic. Both `deck-status.sh` (oneshot) and `booth-watchdog.sh` (watchdog) use it. One parser, two modes.
+
+**JSONL vs capture-pane — layered, not redundant:**
+1. Normal state detection (working/idle/error) → JSONL (structured, precise)
+2. Approval prompt detection (waiting-approval) → capture-pane (JSONL blind spot — Allow/Deny is terminal UI)
+3. No JSONL available → capture-pane full fallback via `detect-state.sh`
 
 ---
 

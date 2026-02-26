@@ -22,6 +22,7 @@ Booth maintains persistent state in a `.booth/` directory at the working directo
       "mode": "worktree",
       "status": "working",
       "prompt": "Refactor the API layer",
+      "goal": "API routes restructured into domain modules, tests passing",
       "plan": "Restructure API routes into domain modules, expected to modify 3 files in src/routes/",
       "expectedOutput": "src/routes/{auth,users,posts}.ts refactored with shared middleware extracted",
       "lastSentMessage": "commit and push these changes",
@@ -43,6 +44,7 @@ Booth maintains persistent state in a `.booth/` directory at the working directo
 | `mode` | yes | `directory` or `worktree` |
 | `status` | yes | Current deck state (see below) |
 | `prompt` | yes | Initial prompt sent to deck |
+| `goal` | yes | Single-line objective for RALPH Loop verification. DJ checks this on every alert to decide: done or keep going? |
 | `plan` | yes | What this deck is doing and why — used for spin-up reporting and completion verification |
 | `expectedOutput` | yes | Concrete deliverable — files/changes expected. Used to verify completion |
 | `lastSentMessage` | no | Last message Booth sent via send-to-child. Used to distinguish Booth messages from user takeover in capture-pane |

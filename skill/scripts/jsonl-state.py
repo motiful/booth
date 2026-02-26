@@ -41,6 +41,12 @@ def parse_event_state(line):
         sub = ev.get("subtype", "")
         if sub == "turn_duration":
             return "idle"
+        if sub == "stop_hook_summary":
+            # CC 2.1.59+: stop hooks run after turn completes. If the hook
+            # didn't prevent continuation, the turn is done → idle.
+            if not ev.get("preventedContinuation", False):
+                return "idle"
+            return None
         if sub == "api_error":
             return "error"
         return None
@@ -48,6 +54,7 @@ def parse_event_state(line):
     if t == "assistant":
         msg = ev.get("message", {})
         content = msg.get("content", [])
+        stop_reason = msg.get("stop_reason")
         # Check for [NEEDS ATTENTION] in text
         for c in content:
             if isinstance(c, dict) and c.get("type") == "text":
@@ -59,7 +66,10 @@ def parse_event_state(line):
         if "thinking" in ctypes:
             return "working"
         if "text" in ctypes:
-            # Final text output — don't transition yet; wait for turn_duration
+            # end_turn = model finished responding, turn is complete
+            if stop_reason == "end_turn":
+                return "idle"
+            # Other stop reasons or streaming (None) — wait for system event
             return None
         return None
 
