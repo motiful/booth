@@ -6,6 +6,9 @@ Usage:
   booth a [<name>]     Attach to DJ, or a specific deck
   booth ls             List sessions and deck registry
   booth kill [<name>]  Kill a specific deck, or everything
+  booth watch <name>   Peek at a deck (popup in tmux, read-only outside)
+  booth info           Show current project's Booth status
+  booth ps             List all running Booth instances
   booth setup          Install CC skill + crontab heartbeat
   booth -h             Show this help
 
@@ -17,6 +20,9 @@ Examples:
   booth ~/myproject    Start DJ in ~/myproject, auto-attach
   booth a              Re-attach to DJ
   booth a api-refactor Enter deck "api-refactor"
+  booth watch research Peek at the "research" deck
+  booth info           Show project socket, status, sessions
+  booth ps             Show all Booth instances across projects
   booth ls             Show what's running
   booth kill           Kill DJ + all decks
   booth kill stale-one Kill just one deck`);

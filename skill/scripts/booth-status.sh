@@ -3,7 +3,8 @@
 # Called by tmux's #() in status-right, refreshes at status-interval
 #
 # Usage: booth-status.sh <socket-path>
-# Design: ≤3 decks show names, >3 collapse to count
+# Design: ≤5 decks show clickable names, >5 collapse to count
+# Uses #[range=user|name] for click-to-switch (handled by MouseDown1StatusRight binding)
 
 SOCK="${1:-}"
 [[ -z "$SOCK" ]] && exit 0
@@ -22,23 +23,23 @@ done < <($T list-sessions -F "#{session_name}" 2>/dev/null)
 COUNT=${#NAMES[@]}
 
 if [[ $COUNT -eq 0 ]]; then
-  echo "no decks  d=DJ"
-elif [[ $COUNT -le 3 ]]; then
-  # Show individual names
+  echo "#[fg=colour245]no decks"
+elif [[ $COUNT -le 5 ]]; then
   OUT=""
   for name in "${NAMES[@]}"; do
+    # Truncate to 15 chars (tmux user range limit)
+    tag="${name:0:15}"
     if [[ "$name" == "$CURRENT" ]]; then
-      OUT+=" ●${name}"
+      OUT+=" #[range=user|${tag}]#[fg=colour255,bg=colour24,bold] ${name} #[norange]#[default]"
     else
-      OUT+=" ▸${name}"
+      OUT+=" #[range=user|${tag}]#[fg=colour245] ${name} #[norange]#[default]"
     fi
   done
-  echo "${OUT}  d=DJ"
+  echo "${OUT}"
 else
-  # Collapse to count, only show current if on a deck
   if [[ "$CURRENT" != "$DJ" && -n "$CURRENT" ]]; then
-    echo "▸${COUNT} decks ●${CURRENT}  d=DJ"
+    echo "#[fg=colour245]${COUNT} decks #[fg=colour255,bold]●${CURRENT}#[default]"
   else
-    echo "▸${COUNT} decks  d=DJ"
+    echo "#[fg=colour245]${COUNT} decks"
   fi
 fi

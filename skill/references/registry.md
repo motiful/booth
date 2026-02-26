@@ -33,7 +33,7 @@ tmux -L $BOOTH_SOCKET list-sessions -F "#{session_name}:#{session_path}" 2>/dev/
 
 ## Status Display
 
-When user asks `status` (or Chinese equivalent `状态`):
+When user asks `status`:
 - List all decks with name, directory, mode, and current status
 - Highlight any that need attention
 - Show time since last poll

@@ -41,6 +41,9 @@ Each project gets its own Booth instance, anchored by a `.booth/` directory (lik
 | `booth a [<name>]` | Attach to DJ, or a specific deck |
 | `booth ls` | List sessions and deck registry |
 | `booth kill [<name>]` | Kill a specific deck, or everything |
+| `booth watch <name>` | Peek at a deck (popup in tmux, read-only outside) |
+| `booth info` | Show current project's Booth status |
+| `booth ps` | List all running Booth instances |
 | `booth setup` | Install CC skill + crontab heartbeat |
 | `booth -h` | Show usage |
 
@@ -58,7 +61,7 @@ Once attached, Booth speaks shorthand:
 | `kill <name>` | Shut down a deck |
 | `status` | Show all decks and their state |
 
-Chinese works too: `开一个`, `看看`, `接管`, `我回来了`, `关掉`, `状态`.
+Natural language works too — just say what you mean.
 
 ## How It Works
 
@@ -111,8 +114,8 @@ You can always intervene. That safety net is what lets you dump 10 ideas in with
 booth/
 ├── bin/booth.ts              # CLI entry (#!/usr/bin/env node)
 ├── src/
-│   ├── cli.ts                # Command router (5 commands)
-│   ├── commands/*.ts         # start, attach, ls, kill, setup, help
+│   ├── cli.ts                # Command router (8 commands)
+│   ├── commands/*.ts         # start, attach, ls, kill, watch, info, ps, setup, help
 │   ├── constants.ts          # Project discovery, socket naming
 │   ├── scripts.ts            # Bash script executor
 │   ├── crontab.ts            # Crontab install/uninstall

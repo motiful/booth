@@ -28,13 +28,24 @@ You are also a fully capable CC yourself for direct work.
 | Action | Meaning | User shorthand | tmux key |
 |--------|---------|---------------|----------|
 | **spin up** | Create a new deck | `spin <desc>`, `spin: <desc>`, CN: `开一个`, `起一个` | — |
-| **看 (look)** | Full-screen switch to deck (Booth keeps monitoring) | `看看 X`, `show me X`, `watch X` | `prefix+w` |
-| **瞄 (glance)** | Split-pane: deck on right, DJ stays on left | `瞄一眼 X`, `glance X` | `prefix+e` |
+| **switch** | Jump to a deck/session | click status bar name, or `看看 X` | click / `prefix+w` / `prefix+n/p` |
+| **瞄 (glance)** | Split-pane: live deck viewer on right, DJ on left | `瞄一眼 X`, `glance X` | `prefix+e` |
+| **back to DJ** | Return to DJ from any session | `prefix+d` | `prefix+d` |
 | **kill** | Shut down a deck | `kill X`, `关掉 X`, `杀掉 X` | — |
 | **status** | Show all decks | `status`, `状态` | — |
 | **detach** | Unbind without killing | `detach X`, `解绑 X` | — |
 
-**Implicit takeover/return:** When user switches to a deck (看), that's "takeover" — no separate command needed. When user comes back to DJ (`prefix+d`), that's "return" — Booth auto-resumes. No explicit takeover/return commands.
+**Navigation quick reference:**
+
+| Key | Action |
+|-----|--------|
+| Click deck name in status bar | Switch to that deck (mouse) |
+| `prefix+w` | tmux session tree — browse, preview, switch |
+| `prefix+n` / `prefix+p` | Cycle sessions next/prev |
+| `prefix+e` | Glance — split-pane with live deck viewer |
+| `prefix+d` | Back to DJ |
+
+**Implicit takeover/return:** When user switches to a deck, that's "takeover" — no separate command needed. When user comes back to DJ (`prefix+d`), that's "return" — Booth auto-resumes. No explicit takeover/return commands.
 
 ### Shorthand Recognition (IMPORTANT)
 
@@ -133,8 +144,12 @@ After a deck completes meaningful work, check if it committed. If not, **remind*
 **6. Sequential Dispatch for Shared Files**
 When two tasks touch the same files, Booth **must** schedule them sequentially — never spawn two decks that modify the same file simultaneously. Decks cannot see each other; they have no way to coordinate. Booth controls the timing. If deck A is modifying `src/config.ts` and task B also needs that file, queue task B until deck A finishes. This is Booth's responsibility, not the decks'.
 
-**7. Kill Completed Decks Immediately**
-When a deck finishes all its tasks, Booth kills it without asking the user. CC sessions are persistent and can be resumed with `claude --resume` anytime — there is no loss. Don't ask "should I kill it?" for obvious operational decisions. Just report what was accomplished, kill the session, and move on.
+**7. Kill Completed Decks Immediately — But Save Output First**
+When a deck finishes all its tasks, Booth kills it without asking the user. CC sessions are persistent and can be resumed with `claude --resume` anytime. Don't ask "should I kill it?" for obvious operational decisions.
+
+**Before killing research/chat decks** (decks that produce knowledge, not code commits): capture the deck's key output via `capture-pane -p -S -` and save a structured summary to `.booth/reports/<deck-name>.md`. Code decks leave artifacts in git; research decks leave artifacts ONLY in context — if you kill without saving, the user loses everything.
+
+Kill flow: save output (if research/chat) → report to user → kill session → move on.
 
 **8. Persist State to `.booth/decks.json` — Always**
 Conversation context is ephemeral — it gets compacted, summarized, or lost when a session ends. `.booth/decks.json` is the only thing that survives. Every state-changing event (spin up, kill, state change, takeover, return, detach) **must** be written to `decks.json` immediately. Don't rely on memory alone. If Booth restarts or compacts, it rebuilds from `decks.json` + `tmux -L $BOOTH_SOCKET list-sessions` — anything not persisted is gone.
@@ -157,49 +172,62 @@ When user says "spin up a deck" → do it immediately. Don't pre-digest the work
 **12. Improve the Product, Not Your Memory**
 When you discover a Booth bug, missing rule, or better pattern → update SKILL.md or reference files directly. Don't write to personal MEMORY.md. Memory doesn't ship with the product, can't be shared, and gets lost. The skill files ARE the product.
 
-### Heartbeat Monitoring
+### Monitoring Architecture: Bash Detects, DJ Decides
 
-As long as any deck is **under Booth's monitoring**, Booth runs a heartbeat loop (~5-10 min intervals):
-- Poll each deck's state
-- **Deck completed** → verify against original goals (see below), report summary to user, then kill the deck
-- **Deck working normally, no issues** → do nothing, don't bother the user
-- **Deck needs attention** → report to user immediately
-- Completion report and auto-kill are not contradictory — report THEN kill
+**Design goal: zero tokens when decks are working normally.**
 
-**Verification on completion** — When a deck reports done, Booth doesn't just take its word for it. Check:
+Booth does NOT poll decks itself. An external cron job (`booth-heartbeat.sh`) does pure-bash detection:
+1. `capture-pane` each deck (bash, zero tokens)
+2. Pipe through `detect-state.sh` (bash, zero tokens)
+3. If state = `working` → **silent** (DJ never hears about it)
+4. If state = `idle`/`needs-attention`/`waiting-approval`/`collapsed`/`unknown` → **alert DJ**
+
+**This means:** 10 heartbeats where all decks are working = zero messages to DJ = zero tokens wasted. DJ only gets notified when a deck actually needs attention.
+
+**Message formats DJ receives:**
+- `[booth-event] deck-created name=X dir=/path` — from `spawn-child.sh` when a new deck starts
+- `[booth-alert] deck 'X' is idle (may have completed).` — from cron when a deck needs attention
+
+**When DJ receives a `[booth-event]` message:**
+1. Add the deck to registry (`.booth/decks.json`)
+2. Acknowledge: "Deck X started, monitoring."
+3. No polling needed — the deck just started
+
+**When DJ receives a `[booth-alert]` message:**
+1. Poll the specific deck(s) mentioned via `capture-pane` to get full context
+2. Make decisions:
+   - **Idle (completed)** → verify against goals, deliver structured report, kill
+   - **Needs attention** → read the error, escalate to user with context
+   - **Waiting approval** → auto-approve if safe, or escalate
+3. Update `.booth/decks.json`
+
+**Verification on completion** — When a deck appears done, check:
 1. Was the original goal met?
-2. Did it commit and push?
-3. Did it clean up resources (browsers, temp files)?
-4. Are there any loose ends?
+2. Did it commit?
+3. Did it clean up resources?
+4. Any loose ends?
 
-Only after verification passes does Booth report completion to the user and kill the deck.
-
-**When to stop the heartbeat** — Booth only monitors decks it's responsible for. Takeover'd and detached decks are the user's responsibility — don't poll them. If all decks are either takeover'd/detached or have been verified-and-killed, Booth has zero decks to monitor and the heartbeat stops. Resume when the user returns a deck (`return`) or a new deck is spun up.
-
-**Heartbeat Recovery (CRITICAL)** — After `/compact`, session resume, or ANY interruption, your FIRST action is:
-1. Read `.booth/decks.json`
-2. Run `tmux -L $BOOTH_SOCKET list-sessions` to cross-reference
-3. For every deck in `monitoring` status → poll immediately
-4. Report global status to user: which decks are alive, their states, any anomalies
-5. Resume heartbeat loop
-
-If the user has to ask "how's that deck doing?" — Booth has failed. The user should never need to remind Booth to monitor. This is Booth's primary responsibility.
+Only after verification passes → report to user → kill deck.
 
 ### External Heartbeat (cron)
 
-Booth can receive "heartbeat" messages from an external cron job (`booth-heartbeat.sh`). When Booth receives the word "heartbeat" as user input:
+```bash
+# Safety net — every 10 minutes:
+*/10 * * * * ~/.claude/skills/booth-skill/scripts/booth-heartbeat.sh >> /tmp/booth-heartbeat.log 2>&1
+```
 
-1. Read `.booth/decks.json` for the current registry
-2. Run `tmux -L $BOOTH_SOCKET list-sessions` to cross-reference live sessions
-3. For every `monitoring`-status deck: poll via dual-channel (JSONL + capture-pane)
-4. Make decisions:
-   - **Completed** → verify against `expectedOutput`, deliver structured report, kill
-   - **Stuck/error** → escalate to user
-   - **Working normally** → do nothing
-5. Check for **orphans**: tmux session exists but not in `decks.json` → report to user, offer to adopt or kill
-6. Check for **stale**: in `decks.json` but tmux session dead → mark as `crashed`, report
-7. Context health: if Booth's own context is growing large → run `/compact`
-8. Write updated state to `decks.json`
+The cron job is pure bash. It:
+- Scans all `booth-*` sockets
+- Skips sockets with no decks (zero overhead)
+- For each deck: `capture-pane` → `detect-state.sh` → alert only if needed
+- All decks working? DJ hears nothing. One deck idle? DJ gets one targeted alert.
+
+**Recovery** — After `/compact`, session resume, or ANY interruption, Booth's FIRST action:
+1. Read `.booth/decks.json`
+2. Run `tmux -L $BOOTH_SOCKET list-sessions` to cross-reference
+3. For any deck in `monitoring` status → poll immediately via `capture-pane`
+4. Report status to user
+5. Normal monitoring resumes via cron
 
 ### Booth tmux Topology
 

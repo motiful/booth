@@ -99,6 +99,14 @@ if [[ -n "$PROMPT" ]]; then
   "$SCRIPT_DIR/send-to-child.sh" "$NAME" "$PROMPT"
 fi
 
+# Notify DJ about the new deck (event-driven — DJ only hears when something happens)
+DJ_SESSION=$( tmux -L "$SOCKET" show -gvq @booth-dj 2>/dev/null || echo "dj" )
+if tmux -L "$SOCKET" has-session -t "$DJ_SESSION" 2>/dev/null; then
+  tmux -L "$SOCKET" send-keys -t "$DJ_SESSION" -l "[booth-event] deck-created name=$NAME dir=$WORK_DIR"
+  sleep 0.3
+  tmux -L "$SOCKET" send-keys -t "$DJ_SESSION" Enter
+fi
+
 echo "session=$NAME"
 echo "dir=$WORK_DIR"
 echo "worktree=$WORKTREE"

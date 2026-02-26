@@ -2,18 +2,30 @@
 # booth-deck-menu.sh — Generate tmux display-menu for deck selection
 # Called from tmux keybindings. Lists all decks (excludes DJ).
 #
-# Usage: booth-deck-menu.sh <action>
+# Usage: booth-deck-menu.sh <action> [<socket-path>]
 # action:
-#   look   — switch-client to deck (全屏看)
-#   glance — split-pane, DJ stays visible (瞄一眼)
-#   peek   — display-popup with booth-peek.sh (legacy)
+#   look   — switch-client to deck
+#   glance — split-pane with live deck viewer (booth-peek.sh) on right
 
 set -euo pipefail
 
 ACTION="${1:-look}"
-SOCKET="${BOOTH_SOCKET:-booth}"
-T="tmux -L $SOCKET"
+SOCK="${2:-}"
 
+# Derive socket: explicit arg > env var > fallback
+if [[ -n "$SOCK" ]]; then
+  T="tmux -S $SOCK"
+  # Extract socket name from path for scripts that use -L
+  SOCK_NAME="$(basename "$SOCK")"
+elif [[ -n "${BOOTH_SOCKET:-}" ]]; then
+  T="tmux -L $BOOTH_SOCKET"
+  SOCK_NAME="$BOOTH_SOCKET"
+else
+  T="tmux"
+  SOCK_NAME=""
+fi
+
+PEEK_SCRIPT="$HOME/.claude/skills/booth-skill/scripts/booth-peek.sh"
 DJ=$($T show -gvq @booth-dj 2>/dev/null || echo "dj")
 
 # Collect deck names (everything except DJ)
@@ -29,6 +41,12 @@ if [[ ${#DECKS[@]} -eq 0 ]]; then
   exit 0
 fi
 
+# Helper: build the glance shell command for a given deck
+glance_cmd() {
+  local deck="$1"
+  echo "BOOTH_SOCKET='$SOCK_NAME' bash '$PEEK_SCRIPT' '$deck'"
+}
+
 # Single deck? Skip menu, act directly.
 if [[ ${#DECKS[@]} -eq 1 ]]; then
   deck="${DECKS[0]}"
@@ -37,11 +55,7 @@ if [[ ${#DECKS[@]} -eq 1 ]]; then
       $T switch-client -t "$deck"
       ;;
     glance)
-      $T split-window -h -t "$DJ" -l 50% "$T attach -t '$deck' -r"
-      ;;
-    peek)
-      $T display-popup -E -w 120 -h 35 -T " deck: $deck " -b rounded \
-        "BOOTH_SOCKET=$SOCKET bash ~/.claude/skills/booth-skill/scripts/booth-peek.sh '$deck'"
+      $T split-window -h -l 50% "$(glance_cmd "$deck")"
       ;;
   esac
   exit 0
@@ -57,10 +71,7 @@ for deck in "${DECKS[@]}"; do
       CMD="switch-client -t ${deck}"
       ;;
     glance)
-      CMD="split-window -h -t ${DJ} -l 50% \"$T attach -t '${deck}' -r\""
-      ;;
-    peek)
-      CMD="display-popup -E -w 120 -h 35 -T ' deck: ${deck} ' -b rounded 'BOOTH_SOCKET=$SOCKET bash ~/.claude/skills/booth-skill/scripts/booth-peek.sh ${deck}'"
+      CMD="split-window -h -l 50% \"$(glance_cmd "$deck")\""
       ;;
   esac
 

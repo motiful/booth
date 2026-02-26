@@ -47,10 +47,10 @@ case "$CMD" in
     DIR="$(cd "$DIR" && pwd)"
 
     # Create tmux session for DJ
-    # 不用 -f，让 tmux 先加载用户的 ~/.tmux.conf（保留用户的 prefix 等设置）
+    # Don't use -f; let tmux load user's ~/.tmux.conf first (preserves their prefix etc.)
     tmux -L "$SOCKET" new-session -d -s "$SESSION" -c "$DIR"
 
-    # 在用户配置之上叠加 Booth 专用配置（状态栏、快捷键等）
+    # Layer Booth-specific config on top of user's (status bar, keybindings, etc.)
     TMUX_CONF="$SKILL_DIR/booth.tmux.conf"
     if [[ -f "$TMUX_CONF" ]]; then
       tmux -L "$SOCKET" source-file "$TMUX_CONF"

@@ -137,7 +137,7 @@ while true; do
   # Footer
   draw_separator "$COLS"
   tput el
-  echo -ne "  ${GREEN}q${RESET}:关闭  ${RED}k${RESET}:杀掉  ${CYAN}s${RESET}:滚动  ${YELLOW}t${RESET}:接管"
+  echo -ne "  ${GREEN}q${RESET}:close  ${RED}k${RESET}:kill  ${CYAN}s${RESET}:scroll  ${YELLOW}t${RESET}:takeover"
 
   # Wait for input (2 second timeout for auto-refresh)
   read -rsn1 -t 2 key || key=""
