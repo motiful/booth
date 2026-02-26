@@ -14,6 +14,11 @@ SOCK="${1:-}"
 
 T="tmux -S $SOCK"
 DETECT="$(dirname "$0")/detect-state.sh"
+
+# Braille spinner for working decks — frame rotates every status-interval tick
+SPINNER='⣾⣽⣻⢿⡿⣟⣯⣷'
+SPIN_LEN=${#SPINNER}
+SPIN_IDX=$(( $(date +%s) % SPIN_LEN ))
 DJ=$($T show -gvq @booth-dj 2>/dev/null || echo "dj")
 CURRENT=$($T display-message -p '#{client_session}' 2>/dev/null || echo "")
 
@@ -60,11 +65,11 @@ for name in "${NAMES[@]}"; do
   fi
 
   case "$state" in
-    working)          ind="#[fg=colour39]●" ;;
+    working)          ind="#[fg=colour39]${SPINNER:$SPIN_IDX:1}" ;;
     idle)             ind="#[fg=colour34]✓" ;;
     needs-attention)  ind="#[fg=colour196]⚠" ;;
     waiting-approval) ind="#[fg=colour214]◌" ;;
-    collapsed)        ind="#[fg=colour39]●" ;;
+    collapsed)        ind="#[fg=colour39]${SPINNER:$SPIN_IDX:1}" ;;
     *)                ind="#[fg=colour245]…" ;;
   esac
 
