@@ -172,26 +172,40 @@ When user says "spin up a deck" → do it immediately. Don't pre-digest the work
 **12. Improve the Product, Not Your Memory**
 When you discover a Booth bug, missing rule, or better pattern → update SKILL.md or reference files directly. Don't write to personal MEMORY.md. Memory doesn't ship with the product, can't be shared, and gets lost. The skill files ARE the product.
 
-### Monitoring Architecture: Bash Detects, DJ Decides
+### Monitoring Architecture: Watchdog + Cron Guardian
 
-**Design goal: zero tokens when decks are working normally.**
+**Design goal: zero tokens when decks are working normally. Sub-10s detection when they're not.**
 
-Booth does NOT poll decks itself. An external cron job (`booth-heartbeat.sh`) does pure-bash detection:
-1. `capture-pane` each deck (bash, zero tokens)
-2. Pipe through `detect-state.sh` (bash, zero tokens)
-3. If state = `working` → **silent** (DJ never hears about it)
-4. If state = `idle`/`needs-attention`/`waiting-approval`/`collapsed`/`unknown` → **alert DJ**
+Two-layer monitoring:
 
-**This means:** 10 heartbeats where all decks are working = zero messages to DJ = zero tokens wasted. DJ only gets notified when a deck actually needs attention.
+1. **`booth-watchdog.sh`** — persistent bash process in a hidden DJ window (`_watchdog`). Primary monitor.
+2. **`booth-heartbeat.sh`** — cron safety net. Only checks if watchdog is alive; restarts it if dead.
+
+**Watchdog loop** (pure bash, zero tokens):
+1. Read `.booth/decks.json` → get active decks
+2. No active decks → exit (window closes)
+3. For each deck: `capture-pane` → `detect-state.sh`
+   - `working` → **silent** (DJ never hears)
+   - anything else → **alert DJ** (only on state transition, no spam)
+4. Adaptive sleep: 5s initial, +5s per quiet cycle (max 120s), resets on any state change
+5. Auto-exits when all decks are removed from `decks.json`
+
+**Lifecycle:** `spawn-child.sh` auto-starts the watchdog if not already running. When all decks finish and DJ marks them completed in `decks.json`, the watchdog exits and its window closes. Next `spawn-child.sh` starts a fresh one.
+
+**Cron guardian** (safety net):
+```bash
+*/10 * * * * ~/.claude/skills/booth/scripts/booth-heartbeat.sh >> /tmp/booth-heartbeat.log 2>&1
+```
+Scans all `booth-*` sockets. If a socket has decks but no `_watchdog` window → restarts watchdog + alerts DJ.
 
 **Message formats DJ receives:**
 - `[booth-event] deck-created name=X dir=/path` — from `spawn-child.sh` when a new deck starts
-- `[booth-alert] deck 'X' is idle (may have completed).` — from cron when a deck needs attention
+- `[booth-alert] deck X <state>.` — from watchdog when a deck leaves `working` state
 
 **When DJ receives a `[booth-event]` message:**
 1. Add the deck to registry (`.booth/decks.json`)
 2. Acknowledge: "Deck X started, monitoring."
-3. No polling needed — the deck just started
+3. No polling needed — watchdog handles ongoing monitoring
 
 **When DJ receives a `[booth-alert]` message:**
 1. Poll the specific deck(s) mentioned via `capture-pane` to get full context
@@ -199,7 +213,7 @@ Booth does NOT poll decks itself. An external cron job (`booth-heartbeat.sh`) do
    - **Idle (completed)** → verify against goals, deliver structured report, kill
    - **Needs attention** → read the error, escalate to user with context
    - **Waiting approval** → auto-approve if safe, or escalate
-3. Update `.booth/decks.json`
+3. Update `.booth/decks.json` (marking completed decks lets watchdog stop tracking them)
 
 **Verification on completion** — When a deck appears done, check:
 1. Was the original goal met?
@@ -209,25 +223,12 @@ Booth does NOT poll decks itself. An external cron job (`booth-heartbeat.sh`) do
 
 Only after verification passes → report to user → kill deck.
 
-### External Heartbeat (cron)
-
-```bash
-# Safety net — every 10 minutes:
-*/10 * * * * ~/.claude/skills/booth-skill/scripts/booth-heartbeat.sh >> /tmp/booth-heartbeat.log 2>&1
-```
-
-The cron job is pure bash. It:
-- Scans all `booth-*` sockets
-- Skips sockets with no decks (zero overhead)
-- For each deck: `capture-pane` → `detect-state.sh` → alert only if needed
-- All decks working? DJ hears nothing. One deck idle? DJ gets one targeted alert.
-
 **Recovery** — After `/compact`, session resume, or ANY interruption, Booth's FIRST action:
 1. Read `.booth/decks.json`
 2. Run `tmux -L $BOOTH_SOCKET list-sessions` to cross-reference
 3. For any deck in `monitoring` status → poll immediately via `capture-pane`
 4. Report status to user
-5. Normal monitoring resumes via cron
+5. Watchdog should still be running (check `_watchdog` window); if not, restart it
 
 ### Booth tmux Topology
 
@@ -255,7 +256,7 @@ Each project with a `.booth/` directory gets its own tmux socket. Socket name: `
 - Each deck is an independent CC instance with its own context window
 - Communicate via `send-keys` (write) and `capture-pane` (read)
 - Dual-channel monitoring: JSONL (precise) + capture-pane (universal fallback)
-- Scripts: `~/.claude/skills/booth/scripts/` — `spawn-child.sh`, `poll-child.sh`, `send-to-child.sh`, `detect-state.sh`, `jsonl-monitor.sh`, `booth-start.sh`, `booth-heartbeat.sh`
+- Scripts: `~/.claude/skills/booth/scripts/` — `spawn-child.sh`, `poll-child.sh`, `send-to-child.sh`, `detect-state.sh`, `jsonl-monitor.sh`, `booth-start.sh`, `booth-watchdog.sh`, `booth-heartbeat.sh`
 
 ---
 
