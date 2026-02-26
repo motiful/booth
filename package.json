@@ -1,0 +1,34 @@
+{
+  "name": "@motiful/booth",
+  "version": "0.1.0",
+  "description": "Parallel Claude Code session manager — like a DJ booth controlling multiple decks",
+  "type": "module",
+  "bin": {
+    "booth": "./dist/bin/booth.js"
+  },
+  "scripts": {
+    "build": "tsc && node scripts/copy-skill.js",
+    "dev": "tsx bin/booth.ts"
+  },
+  "files": [
+    "dist/",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "claude-code",
+    "tmux",
+    "parallel",
+    "session-manager",
+    "cli"
+  ],
+  "author": "Jack Lu",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,186 @@
+#!/bin/bash
+# booth-start.sh — Booth CLI entry point
+#
+# Usage (via CLI wrapper):
+#   booth [<path>]       Start DJ and attach (default: current dir)
+#   booth a [<name>]     Attach to DJ, or a specific deck
+#   booth ls             List sessions and deck registry
+#   booth kill [<name>]  Kill a specific deck, or everything
+#   booth setup          Install CC skill + crontab heartbeat
+#
+# Booth runs as a tmux session (dj) on a per-project socket.
+# Decks are peer sessions on the same socket.
+
+set -euo pipefail
+
+SOCKET="${BOOTH_SOCKET:-booth}"
+SESSION="dj"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEFAULT_DIR="$(pwd)"
+
+CMD="${1:-help}"
+shift 2>/dev/null || true
+
+# Parse subcommand options
+DIR="$DEFAULT_DIR"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dir) DIR="$2"; shift 2 ;;
+    --socket) SOCKET="$2"; shift 2 ;;
+    *) break ;;
+  esac
+done
+
+booth_is_running() {
+  tmux -L "$SOCKET" has-session -t "$SESSION" 2>/dev/null
+}
+
+case "$CMD" in
+  start)
+    if booth_is_running; then
+      echo "DJ is already running on socket $SOCKET."
+      exit 0
+    fi
+
+    # Resolve directory
+    DIR="$(cd "$DIR" && pwd)"
+
+    # Load Booth-specific tmux config if available
+    TMUX_CONF="$SKILL_DIR/booth.tmux.conf"
+    TMUX_CONF_ARGS=""
+    if [[ -f "$TMUX_CONF" ]]; then
+      TMUX_CONF_ARGS="-f $TMUX_CONF"
+    fi
+
+    # Create tmux session for DJ
+    tmux -L "$SOCKET" $TMUX_CONF_ARGS new-session -d -s "$SESSION" -c "$DIR"
+
+    # Set BOOTH_SOCKET env var so child scripts inherit it
+    tmux -L "$SOCKET" set-environment -t "$SESSION" BOOTH_SOCKET "$SOCKET"
+
+    # Launch CC with /booth skill loaded
+    BOOTH_PROMPT="You are the Booth DJ. You were started via booth-start.sh. Your tmux session is '$SESSION' on socket '$SOCKET'. Working directory: $DIR. Run /booth to activate Booth mode."
+    tmux -L "$SOCKET" send-keys -t "$SESSION" "claude --append-system-prompt '${BOOTH_PROMPT}'" Enter
+
+    # Wait for CC to start (poll for prompt indicator)
+    TIMEOUT=15
+    ELAPSED=0
+    while [[ $ELAPSED -lt $TIMEOUT ]]; do
+      sleep 1
+      ELAPSED=$((ELAPSED + 1))
+      OUTPUT=$(tmux -L "$SOCKET" capture-pane -t "$SESSION" -p -S -5 2>/dev/null || true)
+      if echo "$OUTPUT" | grep -qE '^\s*>' 2>/dev/null; then
+        break
+      fi
+    done
+
+    if [[ $ELAPSED -ge $TIMEOUT ]]; then
+      echo "Warning: CC may not have started within ${TIMEOUT}s" >&2
+    fi
+
+    # Detect installed skill name
+    if [[ -d "$HOME/.claude/skills/booth-skill" ]]; then
+      SKILL_CMD="/booth-skill"
+    elif [[ -d "$HOME/.claude/skills/booth" ]]; then
+      SKILL_CMD="/booth"
+    else
+      echo "Warning: Booth skill not installed. Run 'booth setup' first." >&2
+      SKILL_CMD="/booth"
+    fi
+
+    # Send skill command to activate
+    sleep 1
+    tmux -L "$SOCKET" send-keys -t "$SESSION" -l "$SKILL_CMD"
+    sleep 0.3
+    tmux -L "$SOCKET" send-keys -t "$SESSION" Enter
+
+    echo "DJ started."
+    echo ""
+    echo "  socket: $SOCKET | session: $SESSION"
+    echo "  dir: $DIR | skill: $SKILL_CMD"
+    ;;
+
+  attach)
+    if ! booth_is_running; then
+      echo "DJ is not running. Start with: booth" >&2
+      exit 1
+    fi
+    exec tmux -L "$SOCKET" attach -t "$SESSION"
+    ;;
+
+  status)
+    if ! booth_is_running; then
+      echo "DJ is not running." >&2
+      exit 1
+    fi
+
+    echo "=== Booth Sessions ==="
+    tmux -L "$SOCKET" list-sessions -F "#{session_name}  #{session_created_string}  #{session_activity_string}" 2>/dev/null || echo "(none)"
+
+    echo ""
+    echo "=== decks.json ==="
+    BOOTH_CWD=$(tmux -L "$SOCKET" display-message -t "$SESSION" -p "#{pane_current_path}" 2>/dev/null || true)
+    if [[ -n "$BOOTH_CWD" && -f "$BOOTH_CWD/.booth/decks.json" ]]; then
+      cat "$BOOTH_CWD/.booth/decks.json" | python3 -m json.tool 2>/dev/null || cat "$BOOTH_CWD/.booth/decks.json"
+    else
+      echo "(no .booth/decks.json found)"
+    fi
+    ;;
+
+  deck)
+    DECK_NAME="${1:-}"
+    if [[ -z "$DECK_NAME" ]]; then
+      echo "Usage: booth-start.sh deck <name>" >&2
+      echo ""
+      echo "Available sessions:"
+      tmux -L "$SOCKET" list-sessions -F "  #{session_name}" 2>/dev/null | grep -v "$SESSION" || echo "  (none)"
+      exit 1
+    fi
+
+    if ! tmux -L "$SOCKET" has-session -t "$DECK_NAME" 2>/dev/null; then
+      echo "Deck '$DECK_NAME' not found." >&2
+      echo ""
+      echo "Available sessions:"
+      tmux -L "$SOCKET" list-sessions -F "  #{session_name}" 2>/dev/null | grep -v "$SESSION" || echo "  (none)"
+      exit 1
+    fi
+
+    exec tmux -L "$SOCKET" attach -t "$DECK_NAME"
+    ;;
+
+  kill)
+    if ! booth_is_running; then
+      echo "DJ is not running."
+      exit 0
+    fi
+
+    # List what we're about to kill
+    echo "Killing all Booth sessions:"
+    tmux -L "$SOCKET" list-sessions -F "  #{session_name}" 2>/dev/null
+
+    # Kill all sessions on the socket
+    tmux -L "$SOCKET" kill-server 2>/dev/null || true
+    echo "Done."
+    ;;
+
+  help|--help|-h)
+    echo "Booth — Parallel Claude Code Session Manager"
+    echo ""
+    echo "Usage:"
+    echo "  booth [<path>]       Start DJ and attach (default: current dir)"
+    echo "  booth a [<name>]     Attach to DJ, or a specific deck"
+    echo "  booth ls             List sessions and deck registry"
+    echo "  booth kill [<name>]  Kill a specific deck, or everything"
+    echo "  booth setup          Install CC skill + crontab heartbeat"
+    echo ""
+    echo "Per-project: each directory with .booth/ has its own DJ + decks."
+    echo "Socket: $SOCKET"
+    ;;
+
+  *)
+    echo "Unknown command: $CMD" >&2
+    echo "Run 'booth help' for usage." >&2
+    exit 1
+    ;;
+esac
