@@ -3,32 +3,42 @@
 # Called by tmux's #() in status-right, refreshes at status-interval
 #
 # Usage: booth-status.sh <socket-path>
-# socket-path: full path like /private/tmp/tmux-501/booth
+# Design: ≤3 decks show names, >3 collapse to count
 
 SOCK="${1:-}"
-if [[ -z "$SOCK" ]]; then
-  echo "no socket"
-  exit 0
-fi
+[[ -z "$SOCK" ]] && exit 0
 
 T="tmux -S $SOCK"
 DJ=$($T show -gvq @booth-dj 2>/dev/null || echo "dj")
 CURRENT=$($T display-message -p '#{client_session}' 2>/dev/null || echo "")
 
-# List all sessions except DJ
-DECKS=""
+# Collect deck names
+NAMES=()
 while IFS= read -r name; do
-  [[ "$name" == "$DJ" ]] && continue
-  [[ -z "$name" ]] && continue
-  if [[ "$name" == "$CURRENT" ]]; then
-    DECKS+=" ●${name}"
-  else
-    DECKS+=" ▸${name}"
-  fi
+  [[ "$name" == "$DJ" || -z "$name" ]] && continue
+  NAMES+=("$name")
 done < <($T list-sessions -F "#{session_name}" 2>/dev/null)
 
-if [[ -z "$DECKS" ]]; then
+COUNT=${#NAMES[@]}
+
+if [[ $COUNT -eq 0 ]]; then
   echo "no decks  d=DJ"
+elif [[ $COUNT -le 3 ]]; then
+  # Show individual names
+  OUT=""
+  for name in "${NAMES[@]}"; do
+    if [[ "$name" == "$CURRENT" ]]; then
+      OUT+=" ●${name}"
+    else
+      OUT+=" ▸${name}"
+    fi
+  done
+  echo "${OUT}  d=DJ"
 else
-  echo "${DECKS}  d=DJ"
+  # Collapse to count, only show current if on a deck
+  if [[ "$CURRENT" != "$DJ" && -n "$CURRENT" ]]; then
+    echo "▸${COUNT} decks ●${CURRENT}  d=DJ"
+  else
+    echo "▸${COUNT} decks  d=DJ"
+  fi
 fi
