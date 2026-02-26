@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # booth-status.sh — Dynamic status bar content for tmux
-# Called by tmux's #() in status-right, refreshes at status-interval
+# Called by tmux's #() in status-right as a trigger; sets @booth-deck-status
+# user variable so tmux's format engine processes range tags natively.
 #
 # Usage: booth-status.sh <socket-path>
 # Design: ≤5 decks show clickable names, >5 collapse to count
-# Uses #[range=user|name] for click-to-switch (handled by MouseDown1StatusRight binding)
+# Range tags (#[range=user|name]) enable click-to-switch via MouseDown1StatusRight
 
 SOCK="${1:-}"
 [[ -z "$SOCK" ]] && exit 0
@@ -23,11 +24,10 @@ done < <($T list-sessions -F "#{session_name}" 2>/dev/null)
 COUNT=${#NAMES[@]}
 
 if [[ $COUNT -eq 0 ]]; then
-  echo "#[fg=colour245]no decks"
+  OUT="#[fg=colour245]no decks"
 elif [[ $COUNT -le 5 ]]; then
   OUT=""
   for name in "${NAMES[@]}"; do
-    # Truncate to 15 chars (tmux user range limit)
     tag="${name:0:15}"
     if [[ "$name" == "$CURRENT" ]]; then
       OUT+=" #[range=user|${tag}]#[fg=colour255,bg=colour24,bold] ${name} #[norange]#[default]"
@@ -35,11 +35,14 @@ elif [[ $COUNT -le 5 ]]; then
       OUT+=" #[range=user|${tag}]#[fg=colour245] ${name} #[norange]#[default]"
     fi
   done
-  echo "${OUT}"
 else
   if [[ "$CURRENT" != "$DJ" && -n "$CURRENT" ]]; then
-    echo "#[fg=colour245]${COUNT} decks #[fg=colour255,bold]●${CURRENT}#[default]"
+    OUT="#[fg=colour245]${COUNT} decks #[fg=colour255,bold]●${CURRENT}#[default]"
   else
-    echo "#[fg=colour245]${COUNT} decks"
+    OUT="#[fg=colour245]${COUNT} decks"
   fi
 fi
+
+# Set user variable (format engine processes range tags natively)
+# Output nothing — #() return value is unused
+$T set -gq @booth-deck-status "$OUT"

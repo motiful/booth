@@ -42,9 +42,16 @@ if [[ ${#DECKS[@]} -eq 0 ]]; then
 fi
 
 # Helper: build the glance shell command for a given deck
+# Attach directly to the real session (TMUX='' bypasses nesting check)
 glance_cmd() {
   local deck="$1"
-  echo "BOOTH_SOCKET='$SOCK_NAME' bash '$PEEK_SCRIPT' '$deck'"
+  if [[ -n "$SOCK" ]]; then
+    echo "TMUX='' tmux -S '$SOCK' attach -t '$deck'"
+  elif [[ -n "$SOCK_NAME" ]]; then
+    echo "TMUX='' tmux -L '$SOCK_NAME' attach -t '$deck'"
+  else
+    echo "TMUX='' tmux attach -t '$deck'"
+  fi
 }
 
 # Single deck? Skip menu, act directly.
