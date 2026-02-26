@@ -60,6 +60,17 @@ case "$CMD" in
     tmux -L "$SOCKET" set-environment -t "$SESSION" BOOTH_SOCKET "$SOCKET"
     tmux -L "$SOCKET" set -g @booth-dj "$SESSION"
 
+    # Register tmux hooks for automatic deck lifecycle management
+    # session-created: auto-register new decks in decks.json + start watchdog
+    tmux -L "$SOCKET" set-hook -g session-created \
+      "run-shell \"bash $SCRIPT_DIR/on-session-event.sh created #{hook_session_name} #{socket_path}\""
+    # session-closed: auto-mark deck completed + stop watchdog if no more decks
+    tmux -L "$SOCKET" set-hook -g session-closed \
+      "run-shell \"bash $SCRIPT_DIR/on-session-event.sh closed #{hook_session_name} #{socket_path}\""
+    # client-session-changed: instant status bar refresh when switching sessions
+    tmux -L "$SOCKET" set-hook -g client-session-changed \
+      "refresh-client -S"
+
     # Launch CC with /booth skill loaded
     BOOTH_PROMPT="You are the Booth DJ. You were started via booth-start.sh. Your tmux session is '$SESSION' on socket '$SOCKET'. Working directory: $DIR. Run /booth to activate Booth mode."
     tmux -L "$SOCKET" send-keys -t "$SESSION" "claude --append-system-prompt '${BOOTH_PROMPT}'" Enter

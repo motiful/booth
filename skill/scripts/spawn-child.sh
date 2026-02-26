@@ -99,35 +99,9 @@ if [[ -n "$PROMPT" ]]; then
   "$SCRIPT_DIR/send-to-child.sh" "$NAME" "$PROMPT"
 fi
 
-# Notify DJ about the new deck via alerts.json (Layer 2)
-DJ_SESSION=$( tmux -L "$SOCKET" show -gvq @booth-dj 2>/dev/null || echo "dj" )
-DJ_CWD=$(tmux -L "$SOCKET" display-message -t "$DJ_SESSION" -p "#{pane_current_path}" 2>/dev/null || true)
-if [[ -n "$DJ_CWD" && -d "$DJ_CWD/.booth" ]]; then
-  ALERTS_FILE="$DJ_CWD/.booth/alerts.json"
-  node "$SCRIPT_DIR/jsonl-state.mjs" write-alert "$ALERTS_FILE" "$NAME" "deck-created" "deck-created name=$NAME dir=$WORK_DIR" 2>/dev/null || true
-fi
-
-# Ensure watchdog is running (background process with PID file)
-WATCHDOG_PID_FILE=""
-if [[ -n "$DJ_CWD" ]]; then
-  WATCHDOG_PID_FILE="$DJ_CWD/.booth/watchdog.pid"
-fi
-
-WATCHDOG_ALIVE=false
-if [[ -n "$WATCHDOG_PID_FILE" && -f "$WATCHDOG_PID_FILE" ]]; then
-  WD_PID=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null || true)
-  if [[ -n "$WD_PID" ]] && kill -0 "$WD_PID" 2>/dev/null; then
-    WATCHDOG_ALIVE=true
-  fi
-fi
-
-if [[ "$WATCHDOG_ALIVE" == false && -n "$DJ_CWD" ]]; then
-  BOOTH_SOCKET="$SOCKET" BOOTH_DJ="$DJ_SESSION" \
-    nohup node "$SCRIPT_DIR/jsonl-state.mjs" watchdog \
-    >> /tmp/booth-watchdog-${SOCKET}.log 2>&1 &
-  echo "$!" > "$DJ_CWD/.booth/watchdog.pid"
-  echo "watchdog=started (pid=$!)"
-fi
+# NOTE: Deck registration, alert writing, and watchdog startup are handled
+# automatically by tmux session-created hook → on-session-event.sh.
+# The new-session call above triggers the hook. No manual work needed here.
 
 echo "session=$NAME"
 echo "dir=$WORK_DIR"

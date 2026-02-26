@@ -17,7 +17,7 @@
  */
 
 import { spawn, execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync, watch } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -300,6 +300,11 @@ function runWatchdog() {
   // --- Cleanup ---
   function cleanup() {
     log('Shutting down...');
+    if (decksWatcher) {
+      decksWatcher.close();
+      decksWatcher = null;
+    }
+    if (healthInterval) clearInterval(healthInterval);
     for (const name of [...watchers.keys()]) {
       stopWatcher(name);
     }
@@ -317,24 +322,10 @@ function runWatchdog() {
 
   log(`Started. socket=${socket} dj=${djSession} cwd=${process.cwd()}`);
 
-  // --- Management loop ---
-  const MGMT_INTERVAL = 10_000; // 10s
-
-  function managementTick() {
-    // Check DJ alive
-    if (!tmuxHasSession(djSession)) {
-      log('DJ session gone. Exiting.');
-      cleanup();
-    }
-
-    // Read active decks
+  // --- Sync watchers with decks.json ---
+  function syncWatchers() {
     const active = getActiveDecks();
     const activeNames = new Set(active.map(d => d.name));
-
-    if (activeNames.size === 0 && watchers.size === 0) {
-      log('No active decks. Exiting.');
-      cleanup();
-    }
 
     // Start watchers for new decks
     for (const { name, dir } of active) {
@@ -348,20 +339,66 @@ function runWatchdog() {
       }
     }
 
-    // Stop watchers for removed decks
+    // Stop watchers for removed/completed decks
     for (const name of [...watchers.keys()]) {
       if (!activeNames.has(name)) {
         stopWatcher(name);
       }
     }
 
-    // Check idle timeouts
-    checkIdleTimeouts();
+    // Exit if nothing to watch
+    if (activeNames.size === 0 && watchers.size === 0) {
+      log('No active decks. Exiting.');
+      cleanup();
+    }
   }
 
-  // Run management immediately, then on interval
-  managementTick();
-  setInterval(managementTick, MGMT_INTERVAL);
+  // --- Watch decks.json for changes (event-driven via tmux hooks) ---
+  let decksWatcher = null;
+  let syncDebounce = null;
+  const DECKS_FILE = '.booth/decks.json';
+
+  function startDecksWatch() {
+    if (!existsSync(DECKS_FILE)) return;
+    try {
+      decksWatcher = watch(DECKS_FILE, () => {
+        // Debounce: multiple rapid writes → single sync
+        if (syncDebounce) clearTimeout(syncDebounce);
+        syncDebounce = setTimeout(() => {
+          log('decks.json changed — syncing watchers');
+          syncWatchers();
+        }, 500);
+      });
+      decksWatcher.on('error', () => {
+        // File might be replaced atomically — restart watch
+        log('decks.json watcher error — restarting');
+        if (decksWatcher) decksWatcher.close();
+        decksWatcher = null;
+        setTimeout(startDecksWatch, 1000);
+      });
+    } catch (e) {
+      log(`Failed to watch decks.json: ${e.message}`);
+    }
+  }
+
+  // --- Health check (30s interval — lightweight fallback) ---
+  let healthInterval = setInterval(() => {
+    // Check DJ alive
+    if (!tmuxHasSession(djSession)) {
+      log('DJ session gone. Exiting.');
+      cleanup();
+    }
+    // Check idle timeouts
+    checkIdleTimeouts();
+    // Ensure decks watcher is alive
+    if (!decksWatcher) startDecksWatch();
+    // Fallback sync in case fs.watch missed something
+    syncWatchers();
+  }, 30_000);
+
+  // Initial sync + start watching
+  syncWatchers();
+  startDecksWatch();
 }
 
 // ---------------------------------------------------------------------------

@@ -222,32 +222,31 @@ Every task runs to completion through the RALPH loop: assign → execute → tes
 
 JSONL can't detect `waiting-approval` (Allow/Deny is a terminal UI event). `deck-status.sh` falls back to capture-pane for that.
 
-**Two-layer monitoring:**
+**Three-layer monitoring:**
 
-1. **`booth-watchdog.sh`** → `jsonl-state.mjs watchdog` — persistent Node.js process. Per-deck `tail -f` watchers with readline for event-driven detection.
-2. **`booth-heartbeat.sh`** — cron safety net. Only checks if watchdog is alive; restarts it if dead.
+1. **tmux hooks** (`on-session-event.sh`) — instant deck lifecycle: session-created auto-registers deck in `decks.json` + starts watchdog; session-closed auto-marks completed + stops watchdog if no more decks. Registered by `booth-start.sh`.
+2. **`booth-watchdog.sh`** → `jsonl-state.mjs watchdog` — persistent Node.js background process. Per-deck `tail -f` watchers with readline for precise JSONL state detection. Reacts to `decks.json` changes via `fs.watch` (no polling).
+3. **`booth-heartbeat.sh`** — cron safety net. Only checks if watchdog PID is alive; restarts if dead.
 
 **One-shot query:** `deck-status.sh <deck-name>` — finds deck's JSONL, parses last 50 lines. Used by `poll-child.sh` and any script needing deck state.
 
-**Shared parsing:** `jsonl-state.mjs` contains all JSONL parsing logic. Both `deck-status.sh` (oneshot mode) and the watchdog (watchdog mode) use it. One parser, two calling patterns.
+**Shared engine:** `jsonl-state.mjs` (Node.js, zero npm deps). Modes: `oneshot` (deck-status.sh), `watchdog` (booth-watchdog.sh), `write-alert` (shell scripts), `read-alerts` (stop hook).
 
-**Watchdog loop:**
-1. Read `.booth/decks.json` → get active decks
-2. No active decks → exit (window closes)
-3. For each deck: find JSONL → start `tail -f` watcher
-4. `selectors.select()` waits for events from any watcher (event-driven, not polling)
-5. Parse each JSONL line → detect state transition → write alert if non-working
-6. 60s idle timeout for working decks with no events
-7. Every 10s: check `decks.json` for new/removed decks, start/stop watchers
-8. Auto-exits when no active decks remain
+**Watchdog behavior:**
+1. On start: read `decks.json` → start `tail -f` watcher per active deck
+2. `fs.watch` on `decks.json` → instant sync when hooks add/remove decks (debounced 500ms)
+3. Per-watcher: parse JSONL lines → detect state transitions → write alert if non-working
+4. 60s idle timeout for working decks with no new events
+5. 30s health check: verify DJ alive, re-sync watchers (fallback), check idle timeouts
+6. No active decks → auto-exit
 
-**Lifecycle:** `spawn-child.sh` auto-starts the watchdog as a background process (PID saved to `.booth/watchdog.pid`). When all decks finish and DJ marks them completed in `decks.json`, the watchdog exits. Next `spawn-child.sh` starts a fresh one. `booth kill` terminates the watchdog via PID file.
+**Lifecycle:** tmux hooks handle deck registration/removal. `on-session-event.sh` starts the watchdog when the first deck is created. Watchdog self-exits when all decks complete. `booth kill` terminates via PID file. Cron heartbeat restarts if crashed.
 
 **Cron guardian** (safety net):
 ```bash
 */10 * * * * ~/.claude/skills/booth/scripts/booth-heartbeat.sh >> /tmp/booth-heartbeat.log 2>&1
 ```
-Scans all `booth-*` sockets. If a socket has decks but watchdog PID is dead → restarts watchdog + writes alert to `.booth/alerts.json` + shows urgent `display-message`.
+Scans all `booth-*` sockets. If a socket has decks but watchdog PID is dead → restarts watchdog + writes alert + shows urgent `display-message`.
 
 ### Alert Architecture — 4 Layers
 
@@ -396,10 +395,11 @@ Each project with a `.booth/` directory gets its own tmux socket. Socket name: `
 | Tool | Type | Entry point | Engine | Notes |
 |------|------|------------|--------|-------|
 | `deck-status.sh` | One-shot query | DJ calls on demand | `jsonl-state.mjs oneshot` + capture-pane for waiting-approval | Replaces `detect-state.sh` |
-| `booth-watchdog.sh` | Persistent monitor | Auto-started by `spawn-child.sh` | `jsonl-state.mjs watchdog` (`tail -f`, event-driven) | Background process, PID in `.booth/watchdog.pid` |
+| `on-session-event.sh` | tmux hook handler | tmux session-created/closed hooks | Node.js (decks.json + alerts) | Auto-registers/removes decks, starts/stops watchdog |
+| `booth-watchdog.sh` | Persistent monitor | Auto-started by `on-session-event.sh` | `jsonl-state.mjs watchdog` (`tail -f` + `fs.watch`) | Background process, PID in `.booth/watchdog.pid` |
 | `booth-heartbeat.sh` | Persistent guardian | cron every 10 min | Pure bash (zero tokens) | Only checks if watchdog is alive |
 | `poll-child.sh` | One-shot query | DJ manual poll | `deck-status.sh` + change detection | Backward-compat wrapper |
-| `spawn-child.sh` | One-shot action | DJ spins deck | bash + tmux | Also starts watchdog if needed |
+| `spawn-child.sh` | One-shot action | DJ spins deck | bash + tmux | Session creation triggers hooks |
 | `send-to-child.sh` | One-shot action | DJ sends message | tmux send-keys | — |
 | `booth-stop-hook.sh` | CC stop hook | Runs after each DJ turn | Reads `.booth/alerts.json` → outputs as system context | Layer 3 alert reader |
 | `detect-state.sh` | **DEPRECATED** | Internal fallback only | capture-pane grep | Only called by `deck-status.sh` when no JSONL |
