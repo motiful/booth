@@ -107,6 +107,17 @@ if tmux -L "$SOCKET" has-session -t "$DJ_SESSION" 2>/dev/null; then
   tmux -L "$SOCKET" send-keys -t "$DJ_SESSION" Enter
 fi
 
+# Ensure watchdog is running (hidden window in DJ session)
+WATCHDOG_WINDOW="_watchdog"
+if ! tmux -L "$SOCKET" list-windows -t "$DJ_SESSION" -F "#{window_name}" 2>/dev/null | grep -q "^${WATCHDOG_WINDOW}$"; then
+  DJ_CWD=$(tmux -L "$SOCKET" display-message -t "$DJ_SESSION" -p "#{pane_current_path}" 2>/dev/null || true)
+  if [[ -n "$DJ_CWD" ]]; then
+    tmux -L "$SOCKET" new-window -d -t "$DJ_SESSION" -n "$WATCHDOG_WINDOW" -c "$DJ_CWD" \
+      "BOOTH_SOCKET=$SOCKET BOOTH_DJ=$DJ_SESSION $SCRIPT_DIR/booth-watchdog.sh"
+    echo "watchdog=started"
+  fi
+fi
+
 echo "session=$NAME"
 echo "dir=$WORK_DIR"
 echo "worktree=$WORKTREE"

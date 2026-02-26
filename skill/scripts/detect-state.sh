@@ -1,4 +1,7 @@
 #!/bin/bash
+# DEPRECATED: Use deck-status.sh instead (JSONL-based detection).
+# Kept as a debugging tool for manual capture-pane analysis.
+#
 # detect-state.sh — Detect the state of a child Claude Code session from pane output
 #
 # Usage: echo "<pane-output>" | detect-state.sh

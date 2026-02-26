@@ -1,6 +1,7 @@
 # State Signal Patterns
 
-Complete pattern matching rules for `detect-state.sh`.
+Primary detection uses JSONL events via `deck-status.sh` / `jsonl-state.py`.
+The capture-pane patterns below are used as fallback (see `detect-state.sh`, deprecated).
 
 ## Signal Types
 
