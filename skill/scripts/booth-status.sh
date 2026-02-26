@@ -4,6 +4,9 @@
 #   @booth-status-left-extra — DJ button (click to return)
 #   @booth-deck-status       — deck list with status indicators + click ranges
 #
+# Range tags MUST be in user variables rendered via #{E:...} for clicks to work.
+# #() output is NOT parsed for format escapes by tmux.
+#
 # Usage: booth-status.sh <socket-path>
 
 SOCK="${1:-}"
@@ -65,11 +68,11 @@ for name in "${NAMES[@]}"; do
     *)                ind="#[fg=colour245]…" ;;
   esac
 
-  tag="${name:0:15}"
+  # Use full session name as range tag (no truncation)
   if [[ "$name" == "$CURRENT" ]]; then
-    OUT+=" #[range=user|${tag}]${ind}#[fg=colour255,bg=colour24,bold] ${name} #[norange]#[default]"
+    OUT+=" #[range=user|${name}]${ind}#[fg=colour255,bg=colour24,bold] ${name} #[norange]#[default]"
   else
-    OUT+=" #[range=user|${tag}]${ind}#[fg=colour245] ${name} #[norange]#[default]"
+    OUT+=" #[range=user|${name}]${ind}#[fg=colour245] ${name} #[norange]#[default]"
   fi
 done
 
