@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cleanOldInstall, installSkill } from '../skill-installer.js';
+import { cleanOldInstall, installSkill, installStopHook } from '../skill-installer.js';
 import { installHeartbeat } from '../crontab.js';
 import { getHeartbeatScript } from '../constants.js';
 
@@ -79,7 +79,10 @@ export function setup(): void {
     console.log('Warning: heartbeat script not found, skipping crontab setup.');
   }
 
-  // 6. Print usage guide
+  // 6. Install CC stop hook for alert consumption
+  installStopHook();
+
+  // 7. Print usage guide
   console.log('');
   console.log('Setup complete!');
   console.log('');

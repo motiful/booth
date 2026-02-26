@@ -1,5 +1,5 @@
-import { cpSync, existsSync, readFileSync, writeFileSync, rmSync, lstatSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { cpSync, existsSync, readFileSync, writeFileSync, rmSync, lstatSync, mkdirSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
 
 const SKILLS_DIR = resolve(process.env.HOME ?? '~', '.claude/skills');
 const OLD_SKILL_PATH = resolve(SKILLS_DIR, 'booth');
@@ -74,4 +74,52 @@ function patchSkillMd(): void {
 
   writeFileSync(skillMdPath, content, 'utf-8');
   console.log('Patched SKILL.md paths for booth-skill installation.');
+}
+
+const STOP_HOOK_CMD = 'bash ~/.claude/skills/booth-skill/scripts/booth-stop-hook.sh';
+
+export function installStopHook(): void {
+  const settingsPath = resolve(process.env.HOME ?? '~', '.claude/settings.json');
+  const settingsDir = dirname(settingsPath);
+
+  // Ensure directory exists
+  if (!existsSync(settingsDir)) {
+    mkdirSync(settingsDir, { recursive: true });
+  }
+
+  // Read existing settings
+  let settings: Record<string, unknown> = {};
+  if (existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    } catch {
+      console.error('Warning: Could not parse ~/.claude/settings.json. Skipping stop hook install.');
+      return;
+    }
+  }
+
+  // Ensure hooks.Stop array exists
+  const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
+  const stopHooks = (hooks.Stop ?? []) as Array<{ hooks?: Array<{ type: string; command: string }> }>;
+
+  // Check if already installed
+  const alreadyInstalled = stopHooks.some(entry =>
+    entry.hooks?.some(h => h.command === STOP_HOOK_CMD)
+  );
+
+  if (alreadyInstalled) {
+    console.log('[ok] Stop hook already installed');
+    return;
+  }
+
+  // Append new stop hook entry
+  stopHooks.push({
+    hooks: [{ type: 'command', command: STOP_HOOK_CMD }],
+  });
+
+  hooks.Stop = stopHooks;
+  settings.hooks = hooks;
+
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+  console.log('Installed CC stop hook for booth alerts');
 }

@@ -69,10 +69,28 @@ for sock_path in "$TMUX_DIR"/booth-*; do
         "BOOTH_SOCKET=$SOCK_NAME BOOTH_DJ=$DJ_SESSION $WATCHDOG_SCRIPT"
       echo "$LOG_PREFIX $SOCK_NAME: watchdog restarted."
 
-      # Alert DJ that watchdog had to be restarted
-      tmux -L "$SOCK_NAME" send-keys -t "$DJ_SESSION" -l "[booth-alert] watchdog was down — restarted by cron. $DECK_COUNT deck(s) being monitored."
-      sleep 0.3
-      tmux -L "$SOCK_NAME" send-keys -t "$DJ_SESSION" Enter
+      # Write alert to .booth/alerts.json (Layer 2)
+      ALERTS_FILE="$DJ_CWD/.booth/alerts.json"
+      if [[ -d "$DJ_CWD/.booth" ]]; then
+        ALERT_MSG="watchdog was down — restarted by cron. $DECK_COUNT deck(s) being monitored."
+        ALERT_JSON=$(python3 -c "
+import json, sys, os
+from datetime import datetime, timezone
+f = sys.argv[1]
+alerts = []
+try:
+    with open(f) as fh: alerts = json.load(fh)
+except: pass
+alerts.append({'timestamp': datetime.now(timezone.utc).isoformat(), 'deck': '_watchdog', 'type': 'error', 'message': sys.argv[2]})
+tmp = f + '.tmp'
+with open(tmp, 'w') as fh: json.dump(alerts, fh, indent=2); fh.write('\n')
+os.replace(tmp, f)
+" "$ALERTS_FILE" "$ALERT_MSG" 2>&1)
+        echo "$LOG_PREFIX Alert written to $ALERTS_FILE"
+      fi
+
+      # Layer 4: urgent display-message (watchdog restart is critical)
+      tmux -L "$SOCK_NAME" display-message -d 5000 "⚠ Booth: watchdog restarted by cron"
     else
       echo "$LOG_PREFIX $SOCK_NAME: could not determine DJ CWD, skipping restart."
     fi

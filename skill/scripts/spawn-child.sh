@@ -99,12 +99,24 @@ if [[ -n "$PROMPT" ]]; then
   "$SCRIPT_DIR/send-to-child.sh" "$NAME" "$PROMPT"
 fi
 
-# Notify DJ about the new deck (event-driven — DJ only hears when something happens)
+# Notify DJ about the new deck via alerts.json (Layer 2)
 DJ_SESSION=$( tmux -L "$SOCKET" show -gvq @booth-dj 2>/dev/null || echo "dj" )
-if tmux -L "$SOCKET" has-session -t "$DJ_SESSION" 2>/dev/null; then
-  tmux -L "$SOCKET" send-keys -t "$DJ_SESSION" -l "[booth-event] deck-created name=$NAME dir=$WORK_DIR"
-  sleep 0.3
-  tmux -L "$SOCKET" send-keys -t "$DJ_SESSION" Enter
+DJ_CWD=$(tmux -L "$SOCKET" display-message -t "$DJ_SESSION" -p "#{pane_current_path}" 2>/dev/null || true)
+if [[ -n "$DJ_CWD" && -d "$DJ_CWD/.booth" ]]; then
+  ALERTS_FILE="$DJ_CWD/.booth/alerts.json"
+  python3 -c "
+import json, sys, os
+from datetime import datetime, timezone
+f = sys.argv[1]
+alerts = []
+try:
+    with open(f) as fh: alerts = json.load(fh)
+except: pass
+alerts.append({'timestamp': datetime.now(timezone.utc).isoformat(), 'deck': sys.argv[2], 'type': 'deck-created', 'message': 'deck-created name=' + sys.argv[2] + ' dir=' + sys.argv[3]})
+tmp = f + '.tmp'
+with open(tmp, 'w') as fh: json.dump(alerts, fh, indent=2); fh.write('\n')
+os.replace(tmp, f)
+" "$ALERTS_FILE" "$NAME" "$WORK_DIR" 2>/dev/null || true
 fi
 
 # Ensure watchdog is running (hidden window in DJ session)

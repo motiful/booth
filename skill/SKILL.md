@@ -196,7 +196,7 @@ JSONL can't detect `waiting-approval` (Allow/Deny is a terminal UI event). `deck
 
 **Two-layer monitoring:**
 
-1. **`booth-watchdog.sh`** → `jsonl-state.py watchdog` — persistent Python process in a hidden DJ window (`_watchdog`). Per-deck `tail -f` watchers with `selectors` for event-driven detection. Alerts DJ only on state transitions.
+1. **`booth-watchdog.sh`** → `jsonl-state.py watchdog` — persistent Python process in a hidden DJ window (`_watchdog`). Per-deck `tail -f` watchers with `selectors` for event-driven detection.
 2. **`booth-heartbeat.sh`** — cron safety net. Only checks if watchdog is alive; restarts it if dead.
 
 **One-shot query:** `deck-status.sh <deck-name>` — finds deck's JSONL, parses last 50 lines. Used by `poll-child.sh` and any script needing deck state.
@@ -208,7 +208,7 @@ JSONL can't detect `waiting-approval` (Allow/Deny is a terminal UI event). `deck
 2. No active decks → exit (window closes)
 3. For each deck: find JSONL → start `tail -f` watcher
 4. `selectors.select()` waits for events from any watcher (event-driven, not polling)
-5. Parse each JSONL line → detect state transition → alert DJ if non-working
+5. Parse each JSONL line → detect state transition → write alert if non-working
 6. 60s idle timeout for working decks with no events
 7. Every 10s: check `decks.json` for new/removed decks, start/stop watchers
 8. Auto-exits when no active decks remain
@@ -219,18 +219,61 @@ JSONL can't detect `waiting-approval` (Allow/Deny is a terminal UI event). `deck
 ```bash
 */10 * * * * ~/.claude/skills/booth/scripts/booth-heartbeat.sh >> /tmp/booth-heartbeat.log 2>&1
 ```
-Scans all `booth-*` sockets. If a socket has decks but no `_watchdog` window → restarts watchdog + alerts DJ.
+Scans all `booth-*` sockets. If a socket has decks but no `_watchdog` window → restarts watchdog + writes alert to `.booth/alerts.json` + shows urgent `display-message`.
 
-**Message formats DJ receives:**
-- `[booth-event] deck-created name=X dir=/path` — from `spawn-child.sh` when a new deck starts
-- `[booth-alert] deck X <state>.` — from watchdog when a deck's state transitions away from `working`
+### Alert Architecture — 4 Layers
 
-**When DJ receives a `[booth-event]` message:**
-1. Add the deck to registry (`.booth/decks.json`)
-2. Acknowledge: "Deck X started, monitoring."
-3. No polling needed — watchdog handles ongoing monitoring
+Alerts flow through a file-based pipeline. **No `send-keys` to DJ.** The DJ reads alerts naturally via a CC stop hook.
 
-**When DJ receives a `[booth-alert]` message:**
+| Layer | Mechanism | When | Invasiveness |
+|-------|-----------|------|-------------|
+| 1. Passive | Status bar indicators (●✓⚠◌) | Always visible | Zero — already there |
+| 2. File | Append to `.booth/alerts.json` | Every state transition | Zero — just a file write |
+| 3. Natural | CC stop hook reads `alerts.json` after each DJ turn | DJ's next turn start | Zero — injected as system context |
+| 4. Urgent | `tmux display-message -d 5000` (5s toast) | Critical errors only (error, needs-attention) | Minimal — non-invasive toast |
+
+**`.booth/alerts.json` schema** (JSON array, append-only until consumed):
+```json
+[
+  {
+    "timestamp": "2026-02-27T10:30:00+00:00",
+    "deck": "api-refactor",
+    "type": "idle",
+    "message": "deck api-refactor idle."
+  }
+]
+```
+
+Alert types: `idle`, `error`, `needs-attention`, `deck-created`.
+
+**Writers** (Layer 2):
+- `jsonl-state.py` watchdog — state transitions
+- `spawn-child.sh` — deck-created events
+- `booth-heartbeat.sh` — watchdog restart events
+
+**Reader** (Layer 3 — primary alert consumption):
+`booth-stop-hook.sh` — CC stop hook installed at project or global level. Runs after each DJ turn:
+1. Checks `.booth/alerts.json` exists and is non-empty
+2. Verifies current tmux session is the DJ (not a deck)
+3. Reads all alerts, outputs formatted `[booth-alert]` lines
+4. Clears the file (atomic write)
+5. CC injects the output as system context → DJ sees alerts at next turn
+
+**Install the stop hook** in the project's `.claude/settings.json`:
+```json
+{
+  "hooks": {
+    "Stop": [{
+      "hooks": [{
+        "type": "command",
+        "command": "bash ~/.claude/skills/booth-skill/scripts/booth-stop-hook.sh"
+      }]
+    }]
+  }
+}
+```
+
+**When DJ sees `[booth-alert]` in system context:**
 1. Run `deck-status.sh <deck>` to confirm state, then `capture-pane` for full context
 2. Make decisions:
    - **Idle (completed)** → verify against goals, deliver structured report, kill
@@ -330,6 +373,7 @@ Each project with a `.booth/` directory gets its own tmux socket. Socket name: `
 | `poll-child.sh` | One-shot query | DJ manual poll | `deck-status.sh` + change detection | Backward-compat wrapper |
 | `spawn-child.sh` | One-shot action | DJ spins deck | bash + tmux | Also starts watchdog if needed |
 | `send-to-child.sh` | One-shot action | DJ sends message | tmux send-keys | — |
+| `booth-stop-hook.sh` | CC stop hook | Runs after each DJ turn | Reads `.booth/alerts.json` → outputs as system context | Layer 3 alert reader |
 | `detect-state.sh` | **DEPRECATED** | Internal fallback only | capture-pane grep | Only called by `deck-status.sh` when no JSONL |
 | `jsonl-monitor.sh` | **DELETED** | — | — | Superseded by `jsonl-state.py` |
 

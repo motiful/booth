@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime, timezone
 
 # ---------------------------------------------------------------------------
 # Shared parsing logic
@@ -171,14 +172,35 @@ def run_watchdog():
         )
         return r.returncode == 0
 
-    def alert_dj(message):
+    def write_alert(deck_name, alert_type, message):
+        """Write alert to .booth/alerts.json (Layer 2)."""
+        alerts_file = os.path.join(".booth", "alerts.json")
+        os.makedirs(".booth", exist_ok=True)
+        alert = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "deck": deck_name,
+            "type": alert_type,
+            "message": message,
+        }
+        # Read existing alerts, append, write back
+        alerts = []
+        try:
+            with open(alerts_file) as f:
+                alerts = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        alerts.append(alert)
+        tmp = alerts_file + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(alerts, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, alerts_file)
+        log(f"Alert written: {alert_type} {deck_name}")
+
+    def display_urgent(message):
+        """tmux display-message for critical errors (Layer 4)."""
         subprocess.run(
-            ["tmux", "-L", socket, "send-keys", "-t", dj_session, "-l", message],
-            capture_output=True,
-        )
-        time.sleep(0.3)
-        subprocess.run(
-            ["tmux", "-L", socket, "send-keys", "-t", dj_session, "Enter"],
+            ["tmux", "-L", socket, "display-message", "-d", "5000", message],
             capture_output=True,
         )
 
@@ -263,7 +285,9 @@ def run_watchdog():
                 w["last_event"] = time.time()
                 log(f"{deck_name}: {old} → {new_state}")
                 if new_state != "working":
-                    alert_dj(f"[booth-alert] deck {deck_name} {new_state}.")
+                    write_alert(deck_name, new_state, f"deck {deck_name} {new_state}.")
+                    if new_state in ("error", "needs-attention"):
+                        display_urgent(f"⚠ Booth: deck {deck_name} {new_state}")
             elif new_state:
                 # Same state but fresh event — update timestamp
                 w["last_event"] = time.time()
@@ -275,7 +299,7 @@ def run_watchdog():
             if w["state"] == "working" and (now - w["last_event"]) > 60:
                 w["state"] = "idle"
                 log(f"{name}: working → idle (60s timeout)")
-                alert_dj(f"[booth-alert] deck {name} idle.")
+                write_alert(name, "idle", f"deck {name} idle (60s timeout).")
 
     # --- Cleanup ---
     def cleanup(signum=None, frame=None):
