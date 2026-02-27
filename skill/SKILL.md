@@ -265,9 +265,10 @@ JSONL can't detect `waiting-approval` (Allow/Deny is a terminal UI event). `deck
 1. On start: read `decks.json` → start `tail -f` watcher per active deck
 2. `fs.watch` on `decks.json` → instant sync when hooks add/remove decks (debounced 500ms)
 3. Per-watcher: parse JSONL lines → detect state transitions → write alert if non-working
-4. 60s idle timeout for working decks with no new events
-5. 30s health check: verify DJ alive, re-sync watchers (fallback), check idle timeouts
-6. No active decks → auto-exit
+4. On alert: write to `alerts.json` + `wakeDj()` (send-keys `[booth-heartbeat]` if DJ idle, 30s global cooldown)
+5. 60s idle timeout for working decks with no new events
+6. 30s health check: verify DJ alive, re-sync watchers (fallback), check idle timeouts
+7. No active decks → auto-exit
 
 **Lifecycle:** tmux hooks handle deck registration/removal. `on-session-event.sh` starts the watchdog when the first deck is created. Watchdog self-exits when all decks complete. `booth kill` terminates via PID file. Cron heartbeat restarts if crashed.
 
@@ -279,7 +280,7 @@ Scans all `booth-*` sockets. If a socket has decks but watchdog PID is dead → 
 
 ### Alert Architecture — 4 Layers
 
-Alerts flow through a file-based pipeline. **No `send-keys` to DJ.** The DJ reads alerts naturally via a CC stop hook.
+Alerts flow through a file-based pipeline. The DJ reads alerts naturally via a CC stop hook. If DJ is idle (no turn running → no stop hook), watchdog sends a single `[booth-heartbeat]` via send-keys to wake it (30s global cooldown).
 
 | Layer | Mechanism | When | Invasiveness |
 |-------|-----------|------|-------------|
@@ -579,4 +580,5 @@ Detailed operational guides — read on demand when you need the specifics.
 | [Child Protocol](references/child-protocol.md) | When reviewing what child sessions know about Booth |
 | [DJ Delegation](references/dj-delegation.md) | When deciding what DJ can vs must not do — strict delegation rules |
 | [Pane Routing](references/pane-routing.md) | When debugging "message sent to wrong pane" — why session names break after join-pane |
+| [Task Management](references/task-management.md) | When using CC's native TaskCreate/TaskList/TaskUpdate as a persistent work queue |
 | [Deck Forensics](references/deck-forensics.md) | When tracing past deck activity — where to find logs, archives, and artifacts |
