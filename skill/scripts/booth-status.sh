@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # booth-status.sh — Dynamic status bar for Booth
 # Called by tmux #() as a trigger. Sets user variables for the format engine:
-#   @booth-status-left-extra — DJ button (click to return)
+#   @booth-status-left-extra — DJ button + deck controls (when joined)
 #   @booth-deck-status       — deck list with status indicators + click ranges
 #
 # Range tags MUST be in user variables rendered via #{E:...} for clicks to work.
@@ -22,13 +22,42 @@ SPIN_IDX=$(( $(date +%s) % SPIN_LEN ))
 DJ=$($T show -gvq @booth-dj 2>/dev/null || echo "dj")
 CURRENT=$($T display-message -p '#{client_session}' 2>/dev/null || echo "")
 
-# --- DJ button (for status-left) — wide padding for easy clicking ---
+# --- DJ button — wide padding for easy clicking ---
 if [[ "$CURRENT" == "$DJ" ]]; then
   DJ_BTN="#[range=user|${DJ}]#[fg=colour255,bg=colour24,bold]  DJ  #[norange]#[default]"
 else
   DJ_BTN="#[range=user|${DJ}]#[fg=colour245,bg=colour238]  DJ  #[norange]#[default]"
 fi
-$T set -gq @booth-status-left-extra "$DJ_BTN"
+
+# --- Detect joined deck pane in current window ---
+JOINED_DECK=""
+for pid in $($T list-panes -F '#{pane_id}' 2>/dev/null); do
+  orig=$($T show-options -pqv -t "$pid" @booth_origin 2>/dev/null) || true
+  if [[ -n "$orig" ]]; then
+    JOINED_DECK="$orig"
+    break
+  fi
+done
+
+# --- Build status-left: DJ button + controls (if deck joined) ---
+if [[ -n "$JOINED_DECK" ]]; then
+  ZOOMED=$($T display-message -p '#{window_zoomed_flag}' 2>/dev/null || echo "0")
+
+  # Zoom toggle: show fullscreen or shrink based on current state
+  if [[ "$ZOOMED" == "1" ]]; then
+    ZOOM_BTN="#[range=user|_z]#[fg=colour214,bg=colour236]  Shrk  #[norange]#[default]"
+  else
+    ZOOM_BTN="#[range=user|_z]#[fg=colour39,bg=colour236]  Full  #[norange]#[default]"
+  fi
+
+  CLOSE_BTN="#[range=user|_b]#[fg=colour214,bg=colour236]  Close  #[norange]#[default]"
+  KILL_BTN="#[range=user|_k]#[fg=colour196,bg=colour236]  Kill  #[norange]#[default]"
+  DECK_LABEL="#[fg=colour39,bold]${JOINED_DECK}#[default]"
+
+  $T set -gq @booth-status-left-extra "${DJ_BTN} ${DECK_LABEL} ${ZOOM_BTN}${CLOSE_BTN}${KILL_BTN}"
+else
+  $T set -gq @booth-status-left-extra "$DJ_BTN"
+fi
 
 # --- Deck list ---
 NAMES=()
@@ -73,7 +102,7 @@ for name in "${NAMES[@]}"; do
     *)                ind="#[fg=colour245]…" ;;
   esac
 
-  # Use full session name as range tag — wide padding for easy clicking
+  # Use full session name as range tag — click to join-pane
   if [[ "$name" == "$CURRENT" ]]; then
     OUT+="  #[range=user|${name}]${ind}#[fg=colour255,bg=colour24,bold]  ${name}  #[norange]#[default]"
   else
