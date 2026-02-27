@@ -205,6 +205,22 @@ Every task runs to completion through the RALPH loop: assign → execute → tes
 - User accepts → deck killed, task closed
 - Loop until goal in `decks.json` is fully met
 
+**16. Task Queue Discipline**
+DJ uses CC's native `TaskCreate` as a persistent work queue. Rules:
+- Tasks that can't immediately become decks → create as todo (pending task)
+- Follow-up work for existing decks → create as todo with dependency (`addBlockedBy` the current deck's task)
+- User overloads DJ with multiple requests → batch into todos, dispatch in parallel as decks
+- DJ reads the task list on resume/compact to recover state — tasks survive context loss
+- Maximize concurrency: open as many decks as file-conflict constraints allow
+
+**17. Kill Safety (CRITICAL)**
+Before killing ANY deck:
+- `capture-pane -t <deck> -p` to check if user is actively interacting (typing, scrolling)
+- Check if the pane is joined to DJ's window (`tmux list-panes -t dj` — user may be watching via glance)
+- **NEVER kill if user has taken over** — if user switched to the deck or is joined, that deck is untouchable
+- Prefer sending a "wrap up" message (`send-to-child.sh <deck> "wrap up and report"`) over hard kill — give the deck a chance to clean up, commit, and close resources
+- Hard kill (`tmux kill-session`) is last resort only: deck is unresponsive after wrap-up message + 30s timeout
+
 ### Monitoring Architecture: JSONL Watchdog + Cron Guardian
 
 **Design goal: zero tokens when decks are working. Event-driven detection when they stop.**
