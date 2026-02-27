@@ -2,11 +2,14 @@
 # spawn-child.sh — Create a tmux session and launch a child Claude Code instance
 #
 # Usage: spawn-child.sh --name <name> --dir <directory> [--worktree] [--prompt <initial-prompt>]
+#        [--system-prompt-file <path>] [--disallowed-tools <tools>]
 #
-# --name:      tmux session name (also worktree branch name)
-# --dir:       working directory (for worktree mode, the main repo directory)
-# --worktree:  enable worktree mode, creates .claude/worktrees/<name>/
-# --prompt:    optional initial prompt to send after child CC starts
+# --name:                tmux session name (also worktree branch name)
+# --dir:                 working directory (for worktree mode, the main repo directory)
+# --worktree:            enable worktree mode, creates .claude/worktrees/<name>/
+# --prompt:              optional initial prompt to send after child CC starts
+# --system-prompt-file:  path to file with additional system prompt (appended after child protocol)
+# --disallowed-tools:    comma-separated tool names to deny (passed as --disallowedTools to claude)
 
 set -euo pipefail
 
@@ -16,6 +19,8 @@ NAME=""
 DIR=""
 WORKTREE=false
 PROMPT=""
+SYSTEM_PROMPT_FILE=""
+DISALLOWED_TOOLS=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -23,6 +28,8 @@ while [[ $# -gt 0 ]]; do
     --dir)    DIR="$2"; shift 2 ;;
     --worktree) WORKTREE=true; shift ;;
     --prompt) PROMPT="$2"; shift 2 ;;
+    --system-prompt-file) SYSTEM_PROMPT_FILE="$2"; shift 2 ;;
+    --disallowed-tools)   DISALLOWED_TOOLS="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -67,14 +74,32 @@ else
   PROTOCOL=""
 fi
 
-# Launch claude in the tmux session
-if [[ -n "$PROTOCOL" ]]; then
-  # Escape single quotes in protocol for shell
-  ESCAPED_PROTOCOL="${PROTOCOL//\'/\'\\\'\'}"
-  tmux -L "$SOCKET" send-keys -t "$NAME" "claude --append-system-prompt '${ESCAPED_PROTOCOL}'" Enter
-else
-  tmux -L "$SOCKET" send-keys -t "$NAME" "claude" Enter
+# Combine child protocol with additional system prompt (if provided)
+if [[ -n "$SYSTEM_PROMPT_FILE" && -f "$SYSTEM_PROMPT_FILE" ]]; then
+  EXTRA_PROMPT=$(cat "$SYSTEM_PROMPT_FILE")
+  if [[ -n "$PROTOCOL" ]]; then
+    PROTOCOL="${PROTOCOL}
+
+---
+
+${EXTRA_PROMPT}"
+  else
+    PROTOCOL="$EXTRA_PROMPT"
+  fi
 fi
+
+# Build claude command with flags
+CLAUDE_CMD="claude"
+if [[ -n "$PROTOCOL" ]]; then
+  ESCAPED_PROTOCOL="${PROTOCOL//\'/\'\\\'\'}"
+  CLAUDE_CMD+=" --append-system-prompt '${ESCAPED_PROTOCOL}'"
+fi
+if [[ -n "$DISALLOWED_TOOLS" ]]; then
+  CLAUDE_CMD+=" --disallowedTools ${DISALLOWED_TOOLS}"
+fi
+
+# Launch claude in the tmux session
+tmux -L "$SOCKET" send-keys -t "$NAME" "$CLAUDE_CMD" Enter
 
 # Wait for claude to start (poll for prompt indicator, timeout 15s)
 TIMEOUT=15

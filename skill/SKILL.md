@@ -5,7 +5,7 @@ description: >-
   Use ONLY when the user explicitly invokes /booth. Manages parallel
   explorations across sub-projects or git worktrees with adaptive monitoring.
 disable-model-invocation: true
-allowed-tools: Bash(tmux:*), Bash(git:worktree *), Bash(~/.claude/skills/booth/scripts/*), Bash(mkdir:*), Bash(cat:.booth/*), Bash(jq:*)
+allowed-tools: Bash(tmux:*), Bash(git:worktree *), Bash(~/.claude/skills/booth/scripts/*), Bash(mkdir:*), Bash(cat:.booth/*), Bash(jq:*), Read(.booth/plans/*)
 ---
 
 # Booth — Parallel Claude Code Session Manager
@@ -34,6 +34,9 @@ You are now in **Booth mode**. Like a DJ in a booth controlling multiple decks, 
 | **kill** | Shut down a deck | `kill X`, `关掉 X`, `杀掉 X` | — |
 | **status** | Show all decks | `status`, `状态` | — |
 | **detach** | Unbind without killing | `detach X`, `解绑 X` | — |
+| **plan** | Spawn a plan deck (research only) | `plan X`, `plan: <desc>`, `规划 X` | — |
+| **approve plan** | Approve plan and spawn exec deck | `approve plan X`, `批准 X` | — |
+| **plan status** | Check plan lifecycle state | `plan status X` | — |
 
 **Navigation quick reference:**
 
@@ -59,6 +62,10 @@ spin: refactor the API layer     → spin up, use the description as the initial
 kill api-refactor                → kill the deck
 detach api-refactor              → stop monitoring but keep session alive
 status                           → list all decks with state
+plan: redesign the auth flow     → spawn plan deck (research only, no code changes)
+plan auth-redesign               → same, explicit name
+approve plan auth-redesign       → approve + spawn exec deck to implement
+plan status auth-redesign        → check plan lifecycle state
 ```
 
 When the user says `spin: <something>`, you still follow Section 0's consent rules — confirm before actually spawning. But understand the intent immediately.
@@ -463,6 +470,69 @@ Each project with a `.booth/` directory gets its own tmux socket. Socket name: `
 
 ---
 
+## Section 3: Plan-then-Execute Workflow
+
+For tasks that benefit from research before implementation, use the **plan workflow**. This splits work into two phases with a human review gate in between.
+
+### When to Use
+
+- Complex tasks requiring codebase research before coding
+- Tasks where the user wants to review the approach first
+- Multi-file changes where a wrong approach is expensive to undo
+- User explicitly says "plan" / "规划"
+
+### Flow
+
+1. **User says** `plan: <task description>` (or DJ suggests planning)
+2. **DJ spawns plan deck** via `booth-plan.sh spawn` — restricted tools (no Edit/NotebookEdit)
+3. **Plan deck** researches, writes `.booth/plans/<name>.md`, signals `[PLAN READY]`
+4. **DJ reads plan.md**, presents summary to user
+5. **User approves** → DJ runs `booth-plan.sh approve` then `booth-plan.sh execute`
+6. **Exec deck** reads plan.md, implements step by step, tests, commits, signals `[PLAN DONE]`
+7. **DJ verifies** via RALPH loop, delivers structured report
+
+### Commands
+
+```bash
+# Spawn plan deck
+~/.claude/skills/booth/scripts/booth-plan.sh spawn \
+  --name "<name>" --dir "$PWD" --task "<description>"
+
+# Approve plan (ready → approved)
+~/.claude/skills/booth/scripts/booth-plan.sh approve \
+  --name "<name>" --dir "$PWD"
+
+# Spawn exec deck
+~/.claude/skills/booth/scripts/booth-plan.sh execute \
+  --name "<name>" --dir "$PWD"
+
+# Check status
+~/.claude/skills/booth/scripts/booth-plan.sh status \
+  --name "<name>" --dir "$PWD"
+```
+
+### Plan Deck Restrictions
+
+Plan decks have Edit and NotebookEdit blocked via `--disallowedTools`. They can read the entire codebase but cannot modify source files. System prompt instructs Write to be used only for `.booth/plans/` files.
+
+### Watchdog Integration
+
+- `[PLAN READY]` in JSONL assistant text → watchdog detects idle state → alerts DJ
+- `[PLAN DONE]` in JSONL assistant text → same flow for exec deck completion
+- DJ reads plan.md directly to verify — plan file is source of truth, not deck context
+
+### Context Efficiency
+
+The plan file is the **durable handoff artifact**:
+- Plan deck can be killed after producing plan.md (context freed)
+- Exec deck starts fresh — reads plan.md, no inherited context
+- DJ only reads plan.md for review — never accumulates research context
+- Resilient to `/compact`, session crashes, and context window pressure
+
+For full details, see [Plan Workflow Reference](references/plan-workflow.md).
+
+---
+
 ## References
 
 Detailed operational guides — read on demand when you need the specifics.
@@ -477,4 +547,5 @@ Detailed operational guides — read on demand when you need the specifics.
 | [Persistence](references/persistence.md) | When reading/writing `.booth/decks.json` or recovering after `/compact` |
 | [State Signals](references/state-signals.md) | When interpreting deck state detection (JSONL events + capture-pane fallback patterns) |
 | [Child Protocol](references/child-protocol.md) | When reviewing what child sessions know about Booth |
+| [Plan Workflow](references/plan-workflow.md) | When using plan-then-execute workflow (plan/approve/execute commands) |
 | [DJ Delegation](references/dj-delegation.md) | When deciding what DJ can vs must not do — strict delegation rules |
