@@ -570,3 +570,4 @@ Detailed operational guides — read on demand when you need the specifics.
 | [State Signals](references/state-signals.md) | When interpreting deck state detection (JSONL events + capture-pane fallback patterns) |
 | [Child Protocol](references/child-protocol.md) | When reviewing what child sessions know about Booth |
 | [DJ Delegation](references/dj-delegation.md) | When deciding what DJ can vs must not do — strict delegation rules |
+| [Deck Forensics](references/deck-forensics.md) | When tracing past deck activity — where to find logs, archives, and artifacts |
