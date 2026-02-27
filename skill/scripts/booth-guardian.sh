@@ -1,5 +1,5 @@
 #!/bin/bash
-# booth-heartbeat.sh — Watchdog guardian (cron safety net)
+# booth-guardian.sh — Watchdog guardian (cron safety net)
 #
 # Runs via cron every 10 minutes. Its ONLY job is to ensure the watchdog
 # process is alive for each booth socket that has active decks. If the
@@ -9,7 +9,7 @@
 # This script does NOT do any deck monitoring — that's the watchdog's job.
 #
 # Install via crontab:
-#   */10 * * * * ~/.claude/skills/booth-skill/scripts/booth-heartbeat.sh >> /tmp/booth-heartbeat.log 2>&1
+#   */10 * * * * ~/.claude/skills/booth-skill/scripts/booth-guardian.sh >> /tmp/booth-guardian.log 2>&1
 
 set -euo pipefail
 
@@ -18,7 +18,7 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 JSONL_STATE="$SCRIPT_DIR/jsonl-state.mjs"
 DJ_SESSION="dj"
-LOG_PREFIX="[booth-heartbeat $(date '+%Y-%m-%d %H:%M:%S')]"
+LOG_PREFIX="[booth-guardian $(date '+%Y-%m-%d %H:%M:%S')]"
 TMUX_DIR="/tmp/tmux-$(id -u)"
 
 if [[ ! -d "$TMUX_DIR" ]]; then

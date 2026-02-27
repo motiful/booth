@@ -64,7 +64,7 @@ Decisions: <what was chosen and why>
 Next action: <what user should do, or "none needed">
 ```
 
-### Progress Report (during heartbeat, only on meaningful changes)
+### Progress Report (during monitoring, only on meaningful changes)
 ```
 <name>: <brief status — "modifying X" / "stuck on Y" / "waiting for approval">
 ```

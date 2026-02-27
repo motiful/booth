@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export const SESSION = 'dj';
-export const CRONTAB_MARKER = '# @motiful/booth heartbeat';
+export const CRONTAB_MARKER = '# @motiful/booth guardian';
 
 // --- Project discovery ---
 
@@ -72,8 +72,8 @@ export function getScriptsDir(): string {
   return resolve(getSkillDir(), 'scripts');
 }
 
-export function getHeartbeatScript(): string {
-  return resolve(getScriptsDir(), 'booth-heartbeat.sh');
+export function getGuardianScript(): string {
+  return resolve(getScriptsDir(), 'booth-guardian.sh');
 }
 
 export function getStartScript(): string {

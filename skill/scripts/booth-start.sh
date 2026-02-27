@@ -6,7 +6,7 @@
 #   booth a [<name>]     Attach to DJ, or a specific deck
 #   booth ls             List sessions and deck registry
 #   booth kill [<name>]  Kill a specific deck, or everything
-#   booth setup          Install CC skill + crontab heartbeat
+#   booth setup          Install CC skill + crontab guardian
 #
 # Booth runs as a tmux session (dj) on a per-project socket.
 # Decks are peer sessions on the same socket.
@@ -200,7 +200,7 @@ case "$CMD" in
     echo "  booth a [<name>]     Attach to DJ, or a specific deck"
     echo "  booth ls             List sessions and deck registry"
     echo "  booth kill [<name>]  Kill a specific deck, or everything"
-    echo "  booth setup          Install CC skill + crontab heartbeat"
+    echo "  booth setup          Install CC skill + crontab guardian"
     echo ""
     echo "Per-project: each directory with .booth/ has its own DJ + decks."
     echo "Socket: $SOCKET"

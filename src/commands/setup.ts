@@ -3,8 +3,8 @@ import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cleanOldInstall, installSkill, installStopHook } from '../skill-installer.js';
-import { installHeartbeat } from '../crontab.js';
-import { getHeartbeatScript } from '../constants.js';
+import { installGuardian } from '../crontab.js';
+import { getGuardianScript } from '../constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -62,21 +62,21 @@ export function setup(): void {
   // 4. Copy skill/ to ~/.claude/skills/booth-skill/
   installSkill(sourceSkillDir);
 
-  // 5. Install crontab heartbeat
-  const heartbeatScript = resolve(
+  // 5. Install crontab guardian
+  const guardianScript = resolve(
     process.env.HOME ?? '~',
-    '.claude/skills/booth-skill/scripts/booth-heartbeat.sh'
+    '.claude/skills/booth-skill/scripts/booth-guardian.sh'
   );
-  if (existsSync(heartbeatScript)) {
+  if (existsSync(guardianScript)) {
     // Ensure it's executable
     try {
-      execFileSync('chmod', ['+x', heartbeatScript], { timeout: 5_000 });
+      execFileSync('chmod', ['+x', guardianScript], { timeout: 5_000 });
     } catch {
       // ignore
     }
-    installHeartbeat(heartbeatScript);
+    installGuardian(guardianScript);
   } else {
-    console.log('Warning: heartbeat script not found, skipping crontab setup.');
+    console.log('Warning: guardian script not found, skipping crontab setup.');
   }
 
   // 6. Install CC stop hook for alert consumption

@@ -9,7 +9,7 @@ Usage:
   booth watch <name>   Peek at a deck (popup in tmux, read-only outside)
   booth info           Show current project's Booth status
   booth ps             List all running Booth instances
-  booth setup          Install CC skill + crontab heartbeat
+  booth setup          Install CC skill + crontab guardian
 
 Orchestration (public API):
   booth status [<name>]                   Show deck states (working/idle/error/…)

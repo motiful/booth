@@ -11,7 +11,7 @@
 #   - Auto-exits when no active decks remain or DJ session dies
 #   - Auto-restarts when jsonl-state.mjs is updated (exit code 42)
 #
-# Started by spawn-child.sh; guarded by booth-heartbeat.sh (cron).
+# Started by spawn-child.sh; guarded by booth-guardian.sh (cron).
 # Core logic in jsonl-state.mjs (shared with deck-status.sh).
 
 set -euo pipefail

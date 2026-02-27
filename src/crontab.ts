@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CRONTAB_MARKER } from './constants.js';
 
+/** Old marker for backward-compatible crontab migration. */
+const OLD_MARKER = '# @motiful/booth heartbeat';
+
 function getCurrentCrontab(): string {
   try {
     return execFileSync('crontab', ['-l'], {
@@ -30,34 +33,50 @@ function writeCrontab(content: string): void {
   }
 }
 
-export function isHeartbeatInstalled(): boolean {
+export function isGuardianInstalled(): boolean {
   const crontab = getCurrentCrontab();
-  return crontab.includes(CRONTAB_MARKER);
+  return crontab.includes(CRONTAB_MARKER) || crontab.includes(OLD_MARKER);
 }
 
-export function installHeartbeat(scriptPath: string): void {
-  if (isHeartbeatInstalled()) {
-    console.log('Heartbeat crontab already installed.');
+export function installGuardian(scriptPath: string): void {
+  const crontab = getCurrentCrontab();
+
+  // Clean old marker entries first (migration)
+  const hasOld = crontab.includes(OLD_MARKER);
+  const hasNew = crontab.includes(CRONTAB_MARKER);
+
+  if (hasOld) {
+    const cleaned = crontab.split('\n').filter(
+      (line) => !line.includes(OLD_MARKER)
+    ).join('\n');
+    writeCrontab(cleaned);
+    console.log('Removed old heartbeat crontab entry.');
+  }
+
+  if (hasNew) {
+    console.log('Guardian crontab already installed.');
     return;
   }
 
-  const current = getCurrentCrontab();
-  const line = `*/3 * * * * ${scriptPath} >> /tmp/booth-heartbeat.log 2>&1 ${CRONTAB_MARKER}`;
+  const current = hasOld
+    ? getCurrentCrontab()  // re-read after cleaning old
+    : crontab;
+  const line = `*/3 * * * * ${scriptPath} >> /tmp/booth-guardian.log 2>&1 ${CRONTAB_MARKER}`;
   const updated = current.endsWith('\n')
     ? current + line + '\n'
     : current + '\n' + line + '\n';
 
   writeCrontab(updated);
-  console.log('Installed heartbeat crontab (every 3 minutes).');
+  console.log('Installed guardian crontab (every 3 minutes).');
 }
 
-export function uninstallHeartbeat(): void {
-  if (!isHeartbeatInstalled()) return;
+export function uninstallGuardian(): void {
+  const crontab = getCurrentCrontab();
+  if (!crontab.includes(CRONTAB_MARKER) && !crontab.includes(OLD_MARKER)) return;
 
-  const current = getCurrentCrontab();
-  const lines = current.split('\n').filter(
-    (line) => !line.includes(CRONTAB_MARKER)
+  const lines = crontab.split('\n').filter(
+    (line) => !line.includes(CRONTAB_MARKER) && !line.includes(OLD_MARKER)
   );
   writeCrontab(lines.join('\n'));
-  console.log('Removed heartbeat crontab.');
+  console.log('Removed guardian crontab.');
 }

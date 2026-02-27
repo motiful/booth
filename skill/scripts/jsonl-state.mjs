@@ -315,7 +315,7 @@ function runWatchdog() {
   /** @type {Map<string, NodeJS.Timeout>} deckName → idle debounce timer */
   const idleTimers = new Map();
 
-  // --- Wake DJ (send-keys heartbeat, 30s global cooldown) ---
+  // --- Wake DJ (send-keys wake signal, 30s global cooldown) ---
   let lastWakeTime = 0;
   const WAKE_COOLDOWN = 30_000;
 
@@ -330,7 +330,7 @@ function runWatchdog() {
     }
     const target = djPaneId || djSession;
     try {
-      const result = sendMessage(socket, target, '[booth-heartbeat]');
+      const result = sendMessage(socket, target, '[booth-wake]');
       if (result.ok) {
         lastWakeTime = Date.now();
         log(`DJ woken (${target})`);

@@ -6,7 +6,7 @@
 
 ```bash
 npm install -g @motiful/booth
-booth setup    # installs CC skill + crontab heartbeat
+booth setup    # installs CC skill + crontab guardian
 ```
 
 ## Quick Start
@@ -44,7 +44,7 @@ Each project gets its own Booth instance, anchored by a `.booth/` directory (lik
 | `booth watch <name>` | Peek at a deck (popup in tmux, read-only outside) |
 | `booth info` | Show current project's Booth status |
 | `booth ps` | List all running Booth instances |
-| `booth setup` | Install CC skill + crontab heartbeat |
+| `booth setup` | Install CC skill + crontab guardian |
 | `booth -h` | Show usage |
 
 ### Inside Booth (DJ session)
@@ -88,15 +88,28 @@ Each deck is a fully independent Claude Code process: own context window, own co
 
 Core code is shared (`skill/` directory), three distribution channels.
 
-### Heartbeat
+### How AI Watches AI
 
-While any deck is under monitoring, the DJ polls every 5-10 minutes:
+Booth's watchdog is a background process that monitors every deck in real time — zero tokens consumed while decks are working.
 
-- **Working normally** → do nothing
-- **Completed** → verify goals, structured report, auto-kill
-- **Needs attention** → surface to user immediately
+**The information flow:**
 
-External cron heartbeat (`booth-heartbeat.sh`) discovers all running Booth instances and sends heartbeat to each — even after `/compact` or context loss.
+```
+Deck activity (JSONL transcript)
+  → Watchdog detects state change (idle / error / needs-attention)
+    → Writes alert to .booth/alerts.json
+      → DJ's stop hook reads alerts after each turn
+        → DJ sees [booth-alert] in context, takes action
+```
+
+If DJ is idle when an alert arrives (no turn running, so no stop hook), the watchdog sends a `[booth-wake]` signal via tmux to start a new turn — DJ wakes up, the turn ends, stop hook fires, alerts are consumed.
+
+**Self-healing:** A cron job (`booth-guardian.sh`) checks every 3 minutes that the watchdog process is alive. If it crashed, the guardian restarts it automatically. You never need to babysit the babysitter.
+
+**What you'll see:**
+- `[booth-alert]` lines in DJ's output — that's the stop hook delivering deck status
+- `⚠ Booth: ...` toast in tmux — only for critical errors
+- Watchdog logs in `/tmp/booth-watchdog-*.log` — if you're curious about internals
 
 ### The Control Spectrum
 

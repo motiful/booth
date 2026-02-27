@@ -8,7 +8,7 @@ Trigger: `看看 X` / `watch X` / `show me X`
 
 User wants to see a deck's full output. Booth switches the tmux client to that deck's session.
 
-**Booth keeps monitoring.** This is NOT takeover — Booth continues heartbeat and polling as normal.
+**Booth keeps monitoring.** This is NOT takeover — Booth continues monitoring as normal.
 
 1. Booth runs:
    ```bash

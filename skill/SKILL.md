@@ -159,7 +159,7 @@ Conversation context is ephemeral — it gets compacted, summarized, or lost whe
 **9. Plan → Progress → Delivery**
 Every deck has three mandatory communication phases:
 - **Plan** (before spin up): Tell user "deck X does what, expected output, which files affected"
-- **Progress** (during heartbeat): Report meaningful changes — "X is modifying Y" / "X is stuck on Z"
+- **Progress** (during monitoring): Report meaningful changes — "X is modifying Y" / "X is stuck on Z"
 - **Delivery** (on completion): Structured report — what changed (file + specific diff summary), decisions made and why, next action for user (or "none")
 - Never make the user re-read files they've already seen. Say what changed, not "go look at the file".
 
@@ -256,7 +256,7 @@ JSONL can't detect `waiting-approval` (Allow/Deny is a terminal UI event). `deck
 
 1. **tmux hooks** (`on-session-event.sh`) — instant deck lifecycle: session-created auto-registers deck in `decks.json` + starts watchdog; session-closed auto-marks completed + stops watchdog if no more decks. Registered by `booth-start.sh`.
 2. **`booth-watchdog.sh`** → `jsonl-state.mjs watchdog` — persistent Node.js background process. Per-deck `tail -f` watchers with readline for precise JSONL state detection. Reacts to `decks.json` changes via `fs.watch` (no polling).
-3. **`booth-heartbeat.sh`** — cron safety net. Only checks if watchdog PID is alive; restarts if dead.
+3. **`booth-guardian.sh`** — cron safety net. Only checks if watchdog PID is alive; restarts if dead.
 
 **One-shot query:** `deck-status.sh <deck-name>` — finds deck's JSONL, parses last 50 lines. Used by `poll-child.sh` and any script needing deck state.
 
@@ -266,22 +266,22 @@ JSONL can't detect `waiting-approval` (Allow/Deny is a terminal UI event). `deck
 1. On start: read `decks.json` → start `tail -f` watcher per active deck
 2. `fs.watch` on `decks.json` → instant sync when hooks add/remove decks (debounced 500ms)
 3. Per-watcher: parse JSONL lines → detect state transitions → write alert if non-working
-4. On alert: write to `alerts.json` + `wakeDj()` (send-keys `[booth-heartbeat]` if DJ idle, 30s global cooldown)
+4. On alert: write to `alerts.json` + `wakeDj()` (send-keys `[booth-wake]` if DJ idle, 30s global cooldown)
 5. 60s idle timeout for working decks with no new events
 6. 30s health check: verify DJ alive, re-sync watchers (fallback), check idle timeouts
 7. No active decks → auto-exit
 
-**Lifecycle:** tmux hooks handle deck registration/removal. `on-session-event.sh` starts the watchdog when the first deck is created. Watchdog self-exits when all decks complete. `booth kill` terminates via PID file. Cron heartbeat restarts if crashed.
+**Lifecycle:** tmux hooks handle deck registration/removal. `on-session-event.sh` starts the watchdog when the first deck is created. Watchdog self-exits when all decks complete. `booth kill` terminates via PID file. Cron guardian restarts if crashed.
 
 **Cron guardian** (safety net):
 ```bash
-*/10 * * * * ~/.claude/skills/booth/scripts/booth-heartbeat.sh >> /tmp/booth-heartbeat.log 2>&1
+*/10 * * * * ~/.claude/skills/booth/scripts/booth-guardian.sh >> /tmp/booth-guardian.log 2>&1
 ```
 Scans all `booth-*` sockets. If a socket has decks but watchdog PID is dead → restarts watchdog + writes alert + shows urgent `display-message`.
 
 ### Alert Architecture — 4 Layers
 
-Alerts flow through a file-based pipeline. The DJ reads alerts naturally via a CC stop hook. If DJ is idle (no turn running → no stop hook), watchdog sends a single `[booth-heartbeat]` via send-keys to wake it (30s global cooldown).
+Alerts flow through a file-based pipeline. The DJ reads alerts naturally via a CC stop hook. If DJ is idle (no turn running → no stop hook), watchdog sends a single `[booth-wake]` via send-keys to wake it (30s global cooldown).
 
 | Layer | Mechanism | When | Invasiveness |
 |-------|-----------|------|-------------|
@@ -307,7 +307,7 @@ Alert types: `idle`, `error`, `needs-attention`, `deck-created`.
 **Writers** (Layer 2):
 - `jsonl-state.mjs` watchdog — state transitions
 - `spawn-child.sh` — deck-created events
-- `booth-heartbeat.sh` — watchdog restart events
+- `booth-guardian.sh` — watchdog restart events
 
 **Reader** (Layer 3 — primary alert consumption):
 `booth-stop-hook.sh` — CC stop hook installed at project or global level. Runs after each DJ turn:
@@ -354,7 +354,7 @@ Only after verification passes → report to user → kill deck.
 **RALPH = Ralph Wiggum Loop** — Agent runs in a persistent loop: read state → plan → execute → test → commit → repeat until goal is met. Progress lives in files (`.booth/decks.json`), not conversation context.
 
 **DJ as "smart RALPH":**
-- Every watchdog alert / heartbeat triggers a loop iteration
+- Every watchdog alert / wake triggers a loop iteration
 - Check: is the deck's `goal` (from `decks.json`) achieved?
 - No → send next instruction to deck, or spin new deck
 - Yes → verify tests pass → structured delivery report → kill deck → next task
@@ -441,7 +441,7 @@ Each project with a `.booth/` directory gets its own tmux socket. Socket name: `
 | `deck-status.sh` | One-shot query | DJ calls on demand | `jsonl-state.mjs oneshot` + capture-pane for waiting-approval | Replaces `detect-state.sh` |
 | `on-session-event.sh` | tmux hook handler | tmux session-created/closed hooks | Node.js (decks.json + alerts) | Auto-registers/removes decks, starts/stops watchdog |
 | `booth-watchdog.sh` | Persistent monitor | Auto-started by `on-session-event.sh` | `jsonl-state.mjs watchdog` (`tail -f` + `fs.watch`) | Background process, PID in `.booth/watchdog.pid` |
-| `booth-heartbeat.sh` | Persistent guardian | cron every 10 min | Pure bash (zero tokens) | Only checks if watchdog is alive |
+| `booth-guardian.sh` | Persistent guardian | cron every 10 min | Pure bash (zero tokens) | Only checks if watchdog is alive |
 | `poll-child.sh` | One-shot query | DJ manual poll | `deck-status.sh` + change detection | Backward-compat wrapper |
 | `spawn-child.sh` | One-shot action | DJ spins deck | bash + tmux | Session creation triggers hooks |
 | `send-to-child.sh` | One-shot action | DJ sends message | tmux send-keys | — |
