@@ -83,7 +83,9 @@ if [[ $COUNT -eq 0 ]]; then
 fi
 
 # --- Adaptive overflow: full → truncate → collapse ---
-MAX_WIDTH=140
+# Available width = terminal width minus left status bar (~50 chars for BOOTH + DJ + controls)
+CLIENT_W=$($T display-message -p '#{client_width}' 2>/dev/null || echo 160)
+MAX_WIDTH=$(( CLIENT_W - 50 ))
 OVERHEAD=7  # padding + indicator per deck entry
 
 # Phase 1: check if full names fit
