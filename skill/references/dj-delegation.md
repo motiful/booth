@@ -82,6 +82,13 @@ User request
 
 For simple requests, skip steps — a one-line fix still goes to an exec deck, but doesn't need research or planning.
 
+## Deck Lifecycle — Kill Discipline
+
+- **idle ≠ task complete**: Deck idle only means the current turn ended, not that the overall mission is done. Before killing, verify every task goal is met. If not, push the deck to continue.
+- **Supervise continuously**: DJ must track each deck's progress. When a deck stops, check if its mission is truly fulfilled. If not, send it back to work — don't just leave it.
+- **Kill can be undone via resume**: `claude --resume <session-id>` restores the original CC conversation. Session ID = JSONL filename. Accidental kills waste time but aren't fatal.
+- **Own your ops**: When watchdog/script code is updated, restart the process, verify functionality, and test results yourself. Don't push ops issues to the user — the user is the boss, not SRE.
+
 ## Context Benefits
 
 By never doing operational work, DJ gets:
