@@ -13,7 +13,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SOCKET="${BOOTH_SOCKET:-booth}"
+# Auto-detect socket: extract from $TMUX env (set when running inside tmux), else fall back
+if [[ -n "${BOOTH_SOCKET:-}" ]]; then
+  SOCKET="$BOOTH_SOCKET"
+elif [[ -n "${TMUX:-}" ]]; then
+  # TMUX=/path/to/socket,pid,pane — extract socket name from path
+  SOCKET="$(basename "${TMUX%%,*}")"
+else
+  SOCKET="booth"
+fi
 NAME=""
 DIR=""
 WORKTREE=false
@@ -105,8 +113,8 @@ if [[ -n "$PROTOCOL" ]]; then
   printf '%s' "$PROTOCOL" > "$PROTOCOL_TMP"
   CLAUDE_CMD+=" --append-system-prompt \"\$(cat '$PROTOCOL_TMP')\""
 fi
-# Launch claude in the tmux session
-tmux -L "$SOCKET" send-keys -t "$NAME" "$CLAUDE_CMD" Enter
+# Launch claude in the tmux session (unset CLAUDECODE to avoid nesting detection)
+tmux -L "$SOCKET" send-keys -t "$NAME" "unset CLAUDECODE && $CLAUDE_CMD" Enter
 
 # Wait for claude to start (poll for prompt indicator, timeout 15s)
 TIMEOUT=15

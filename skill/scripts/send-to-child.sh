@@ -23,8 +23,14 @@ if [[ $# -ge 3 ]]; then
   # Extract socket name from path for -L usage
   SOCKET="$(basename "$SOCK_ARG")"
 elif [[ $# -eq 2 ]]; then
-  # Legacy: called with session name + message (uses BOOTH_SOCKET env)
-  SOCKET="${BOOTH_SOCKET:-booth}"
+  # Legacy: called with session name + message — auto-detect socket
+  if [[ -n "${BOOTH_SOCKET:-}" ]]; then
+    SOCKET="$BOOTH_SOCKET"
+  elif [[ -n "${TMUX:-}" ]]; then
+    SOCKET="$(basename "${TMUX%%,*}")"
+  else
+    SOCKET="booth"
+  fi
   NAME="$1"; MESSAGE="$2"
 else
   echo "Error: usage: send-to-child.sh [--pane %N] [socket-path] <session-name> <message>" >&2
