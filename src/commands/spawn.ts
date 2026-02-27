@@ -6,13 +6,12 @@ import { boothIsRunning } from '../scripts.js';
 
 export function spawn(args: string[]): void {
   // Parse: booth spawn <name> [--dir <path>] [--prompt <text>] [--worktree]
-  //        [--system-prompt-file <path>] [--disallowed-tools <tools>]
+  //        [--system-prompt-file <path>]
   let name = '';
   let dir = '';
   let prompt = '';
   let worktree = false;
   let systemPromptFile = '';
-  let disallowedTools = '';
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -27,9 +26,6 @@ export function spawn(args: string[]): void {
         break;
       case '--system-prompt-file':
         systemPromptFile = args[++i];
-        break;
-      case '--disallowed-tools':
-        disallowedTools = args[++i];
         break;
       default:
         if (!name) name = args[i];
@@ -58,7 +54,6 @@ export function spawn(args: string[]): void {
   if (worktree) scriptArgs.push('--worktree');
   if (prompt) scriptArgs.push('--prompt', prompt);
   if (systemPromptFile) scriptArgs.push('--system-prompt-file', systemPromptFile);
-  if (disallowedTools) scriptArgs.push('--disallowed-tools', disallowedTools);
 
   if (!existsSync(scriptPath)) {
     console.error(`Script not found: ${scriptPath}`);

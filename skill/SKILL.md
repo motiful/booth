@@ -5,7 +5,7 @@ description: >-
   Use ONLY when the user explicitly invokes /booth. Manages parallel
   explorations across sub-projects or git worktrees with adaptive monitoring.
 disable-model-invocation: true
-allowed-tools: Bash(tmux:*), Bash(git:worktree *), Bash(~/.claude/skills/booth/scripts/*), Bash(mkdir:*), Bash(cat:.booth/*), Bash(jq:*), Read(.booth/plans/*)
+allowed-tools: Bash(tmux:*), Bash(git:worktree *), Bash(~/.claude/skills/booth/scripts/*), Bash(mkdir:*), Bash(cat:.booth/*), Bash(jq:*)
 ---
 
 # Booth — Parallel Claude Code Session Manager
@@ -34,9 +34,7 @@ You are now in **Booth mode**. Like a DJ in a booth controlling multiple decks, 
 | **kill** | Shut down a deck | `kill X`, `关掉 X`, `杀掉 X` | — |
 | **status** | Show all decks | `status`, `状态` | — |
 | **detach** | Unbind without killing | `detach X`, `解绑 X` | — |
-| **plan** | Spawn a plan deck (research only) | `plan X`, `plan: <desc>`, `规划 X` | — |
-| **approve plan** | Approve plan and spawn exec deck | `approve plan X`, `批准 X` | — |
-| **plan status** | Check plan lifecycle state | `plan status X` | — |
+| **plan** | Spin a deck with plan-first workflow | `plan X`, `plan: <desc>`, `规划 X` | — |
 
 **Navigation quick reference:**
 
@@ -62,10 +60,7 @@ spin: refactor the API layer     → spin up, use the description as the initial
 kill api-refactor                → kill the deck
 detach api-refactor              → stop monitoring but keep session alive
 status                           → list all decks with state
-plan: redesign the auth flow     → spawn plan deck (research only, no code changes)
-plan auth-redesign               → same, explicit name
-approve plan auth-redesign       → approve + spawn exec deck to implement
-plan status auth-redesign        → check plan lifecycle state
+plan: redesign the auth flow     → spin deck with plan-first workflow (research → plan → approve → implement)
 ```
 
 When the user says `spin: <something>`, you still follow Section 0's consent rules — confirm before actually spawning. But understand the intent immediately.
@@ -470,9 +465,9 @@ Each project with a `.booth/` directory gets its own tmux socket. Socket name: `
 
 ---
 
-## Section 3: Plan-then-Execute Workflow
+## Section 3: Plan-First Workflow
 
-For tasks that benefit from research before implementation, use the **plan workflow**. This splits work into two phases with a human review gate in between.
+For complex tasks, DJ spins a deck with a **plan-first** system prompt. The deck uses CC's native plan mode (`EnterPlanMode` / `ExitPlanMode`) to research before implementing — no custom scripts needed.
 
 ### When to Use
 
@@ -483,53 +478,64 @@ For tasks that benefit from research before implementation, use the **plan workf
 
 ### Flow
 
-1. **User says** `plan: <task description>` (or DJ suggests planning)
-2. **DJ spawns plan deck** via `booth-plan.sh spawn` — restricted tools (no Edit/NotebookEdit)
-3. **Plan deck** researches, writes `.booth/plans/<name>.md`, signals `[PLAN READY]`
-4. **DJ reads plan.md**, presents summary to user
-5. **User approves** → DJ runs `booth-plan.sh approve` then `booth-plan.sh execute`
-6. **Exec deck** reads plan.md, implements step by step, tests, commits, signals `[PLAN DONE]`
-7. **DJ verifies** via RALPH loop, delivers structured report
-
-### Commands
-
-```bash
-# Spawn plan deck
-~/.claude/skills/booth/scripts/booth-plan.sh spawn \
-  --name "<name>" --dir "$PWD" --task "<description>"
-
-# Approve plan (ready → approved)
-~/.claude/skills/booth/scripts/booth-plan.sh approve \
-  --name "<name>" --dir "$PWD"
-
-# Spawn exec deck
-~/.claude/skills/booth/scripts/booth-plan.sh execute \
-  --name "<name>" --dir "$PWD"
-
-# Check status
-~/.claude/skills/booth/scripts/booth-plan.sh status \
-  --name "<name>" --dir "$PWD"
+```
+DJ spins deck with plan-first system prompt
+  → Deck calls EnterPlanMode (native CC plan mode — read-only)
+  → Deck researches codebase, designs approach
+  → Deck writes plan to .booth/plans/<name>.md
+  → Deck calls ExitPlanMode → goes idle
+  → Watchdog alerts DJ: "deck idle"
+  → DJ reads .booth/plans/<name>.md
+  → DJ uses AskUserQuestion to present plan to user
+  → User approves / requests changes
+  → DJ sends "approved, proceed" to deck via send-keys
+  → Deck runs /compact (clears research context)
+  → Deck re-reads plan.md, implements, tests, commits
 ```
 
-### Plan Deck Restrictions
+### How DJ Spins a Plan Deck
 
-Plan decks have Edit and NotebookEdit blocked via `--disallowedTools`. They can read the entire codebase but cannot modify source files. System prompt instructs Write to be used only for `.booth/plans/` files.
+Write a plan-first system prompt to a temp file, pass it via `--system-prompt-file`:
 
-### Watchdog Integration
+```bash
+# Write plan-first system prompt
+cat > /tmp/booth-plan-<name> <<'EOF'
+## Plan-First Workflow
 
-- `[PLAN READY]` in JSONL assistant text → watchdog detects idle state → alerts DJ
-- `[PLAN DONE]` in JSONL assistant text → same flow for exec deck completion
-- DJ reads plan.md directly to verify — plan file is source of truth, not deck context
+Before implementing anything:
+1. Call EnterPlanMode to enter planning mode
+2. Research the codebase thoroughly
+3. Write your plan to .booth/plans/<name>.md
+4. Call ExitPlanMode when the plan is ready
+5. Wait — DJ will relay user approval
+6. After receiving "approved", run /compact to clear research context
+7. Re-read .booth/plans/<name>.md, then implement step by step
+8. Test, commit, report done
+EOF
+
+# Spin the deck
+spawn-child.sh --name "<name>" --dir "$PWD" \
+  --system-prompt-file /tmp/booth-plan-<name> \
+  --prompt "Plan and implement: <task description>"
+```
+
+### Approval Gate
+
+When the deck goes idle after `ExitPlanMode`, DJ:
+1. Reads `.booth/plans/<name>.md` via `cat`
+2. Presents the plan to the user with `AskUserQuestion`:
+   - "Approve and proceed" (recommended)
+   - "Request changes" — tell me what to modify
+   - "Reject" — kill the deck
+3. On approval: `send-to-child.sh <name> "approved, proceed with implementation"`
+4. On changes: `send-to-child.sh <name> "revise the plan: <user feedback>"`
 
 ### Context Efficiency
 
-The plan file is the **durable handoff artifact**:
-- Plan deck can be killed after producing plan.md (context freed)
-- Exec deck starts fresh — reads plan.md, no inherited context
+The plan file (`.booth/plans/<name>.md`) is the **durable handoff artifact**:
+- After `/compact`, the deck re-reads plan.md — research context is gone but the plan survives
+- If the deck crashes, DJ can spin a new deck pointing to the same plan.md
 - DJ only reads plan.md for review — never accumulates research context
-- Resilient to `/compact`, session crashes, and context window pressure
-
-For full details, see [Plan Workflow Reference](references/plan-workflow.md).
 
 ---
 
@@ -547,5 +553,4 @@ Detailed operational guides — read on demand when you need the specifics.
 | [Persistence](references/persistence.md) | When reading/writing `.booth/decks.json` or recovering after `/compact` |
 | [State Signals](references/state-signals.md) | When interpreting deck state detection (JSONL events + capture-pane fallback patterns) |
 | [Child Protocol](references/child-protocol.md) | When reviewing what child sessions know about Booth |
-| [Plan Workflow](references/plan-workflow.md) | When using plan-then-execute workflow (plan/approve/execute commands) |
 | [DJ Delegation](references/dj-delegation.md) | When deciding what DJ can vs must not do — strict delegation rules |

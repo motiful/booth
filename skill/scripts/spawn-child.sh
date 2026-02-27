@@ -2,14 +2,13 @@
 # spawn-child.sh — Create a tmux session and launch a child Claude Code instance
 #
 # Usage: spawn-child.sh --name <name> --dir <directory> [--worktree] [--prompt <initial-prompt>]
-#        [--system-prompt-file <path>] [--disallowed-tools <tools>]
+#        [--system-prompt-file <path>]
 #
 # --name:                tmux session name (also worktree branch name)
 # --dir:                 working directory (for worktree mode, the main repo directory)
 # --worktree:            enable worktree mode, creates .claude/worktrees/<name>/
 # --prompt:              optional initial prompt to send after child CC starts
 # --system-prompt-file:  path to file with additional system prompt (appended after child protocol)
-# --disallowed-tools:    comma-separated tool names to deny (passed as --disallowedTools to claude)
 
 set -euo pipefail
 
@@ -20,7 +19,6 @@ DIR=""
 WORKTREE=false
 PROMPT=""
 SYSTEM_PROMPT_FILE=""
-DISALLOWED_TOOLS=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -29,7 +27,6 @@ while [[ $# -gt 0 ]]; do
     --worktree) WORKTREE=true; shift ;;
     --prompt) PROMPT="$2"; shift 2 ;;
     --system-prompt-file) SYSTEM_PROMPT_FILE="$2"; shift 2 ;;
-    --disallowed-tools)   DISALLOWED_TOOLS="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -108,10 +105,6 @@ if [[ -n "$PROTOCOL" ]]; then
   printf '%s' "$PROTOCOL" > "$PROTOCOL_TMP"
   CLAUDE_CMD+=" --append-system-prompt \"\$(cat '$PROTOCOL_TMP')\""
 fi
-if [[ -n "$DISALLOWED_TOOLS" ]]; then
-  CLAUDE_CMD+=" --disallowedTools ${DISALLOWED_TOOLS}"
-fi
-
 # Launch claude in the tmux session
 tmux -L "$SOCKET" send-keys -t "$NAME" "$CLAUDE_CMD" Enter
 
