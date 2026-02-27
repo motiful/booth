@@ -338,10 +338,15 @@ function runWatchdog() {
   const idleTimers = new Map();
 
   /**
-   * Send an alert to DJ immediately via sendMessage.
-   * No queuing — sendMessage handles stash/inject/restore natively.
+   * Send an alert to DJ via sendMessage — only when DJ is idle.
+   * If DJ is working (mid-API-call), injecting send-keys corrupts the terminal.
+   * In that case, the alert is already in alerts.json; the stop-hook will pick it up.
    */
   function sendAlertToDj(deck, type) {
+    if (djState !== 'idle' && djState !== 'unknown') {
+      log(`DJ busy (${djState}), skipping send-keys for ${deck} ${type} — alert in file`);
+      return;
+    }
     const message = `[booth-alert] ${deck} ${type}`;
     const target = djPaneId || djSession;
     try {
