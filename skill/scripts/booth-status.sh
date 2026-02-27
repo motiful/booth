@@ -118,7 +118,7 @@ for name in "${NAMES[@]}"; do
   # Use full session name as range tag — click to join-pane
   # Highlight: joined deck (inverted) > current session (bold) > default (muted)
   if [[ "$name" == "$JOINED_DECK" ]]; then
-    OUT+="  #[range=user|${name}]${ind}#[fg=colour16,bg=colour252,bold]  ${name}  #[norange]#[default]"
+    OUT+=" #[range=user|${name},bg=colour252] ${ind}#[fg=colour16,bold]  ${name}  #[norange]#[default]"
   elif [[ "$name" == "$CURRENT" ]]; then
     OUT+="  #[range=user|${name}]${ind}#[fg=colour255,bold]  ${name}  #[norange]#[default]"
   else
