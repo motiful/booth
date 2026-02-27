@@ -122,6 +122,16 @@ case "$EVENT" in
       fs.renameSync(tmp, f);
     " "$DECKS_FILE" "$SESSION_NAME" 2>/dev/null || true
 
+    # Kill any joined pane in the DJ session that belonged to this deck
+    # (When a pane is join-pane'd into DJ, it survives deck session kill as a dead pane)
+    for pid in $(tmux -L "$SOCK_NAME" list-panes -t "$DJ_SESSION" -F '#{pane_id}' 2>/dev/null); do
+      origin=$(tmux -L "$SOCK_NAME" show-options -pqv -t "$pid" @booth_origin 2>/dev/null) || true
+      if [[ "$origin" == "$SESSION_NAME" ]]; then
+        tmux -L "$SOCK_NAME" kill-pane -t "$pid" 2>/dev/null || true
+        break
+      fi
+    done
+
     # Write session-closed alert
     if [[ -f "$JSONL_STATE" ]]; then
       node "$JSONL_STATE" write-alert "$ALERTS_FILE" "$SESSION_NAME" "session-closed" \
