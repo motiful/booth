@@ -463,16 +463,24 @@ function runWatchdog() {
     const active = getActiveDecks();
     const activeNames = new Set(active.map(d => d.name));
 
-    // Start watchers for new decks
+    // Start or refresh watchers for active decks
     for (const { name, dir } of active) {
-      if (!watchers.has(name)) {
-        const jsonl = findJsonlForDir(dir);
-        if (jsonl) {
-          startWatcher(name, jsonl);
-        } else {
-          log(`${name}: JSONL not found yet (dir=${dir})`);
-        }
+      const jsonl = findJsonlForDir(dir);
+      if (!jsonl) {
+        log(`${name}: JSONL not found yet (dir=${dir})`);
+        continue;
       }
+      const existing = watchers.get(name);
+      if (existing && existing.jsonl === jsonl) {
+        // Already watching the correct file
+        continue;
+      }
+      if (existing) {
+        // JSONL file changed (new CC session) — restart watcher
+        log(`${name}: JSONL changed, restarting watcher`);
+        stopWatcher(name);
+      }
+      startWatcher(name, jsonl);
     }
 
     // Stop watchers for removed/completed decks
