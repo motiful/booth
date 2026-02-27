@@ -337,6 +337,64 @@ function runWatchdog() {
   /** @type {Map<string, NodeJS.Timeout>} deckName → idle debounce timer */
   const idleTimers = new Map();
 
+  // --- Alert ACK closed-loop ---
+  /** @type {Map<string, { timer: NodeJS.Timeout, alertType: string, deckStatus: string }>} */
+  const ackTimers = new Map();
+  const ACK_TIMEOUT = 2 * 60_000; // 2 minutes
+
+  /**
+   * Start an ACK timer for a deck alert. If DJ doesn't update decks.json
+   * within 2 min (status unchanged), resend the alert.
+   */
+  function startAckTimer(deckName, alertType) {
+    // Cancel existing timer for this deck
+    cancelAckTimer(deckName);
+    // Snapshot current deck status from decks.json
+    const currentStatus = getDeckStatus(deckName);
+    const timer = setTimeout(() => {
+      ackTimers.delete(deckName);
+      const nowStatus = getDeckStatus(deckName);
+      if (nowStatus === currentStatus) {
+        log(`ACK timeout: ${deckName} status unchanged (${nowStatus}), resending alert`);
+        doWriteAlert(deckName, alertType, `deck ${deckName} ${alertType} (ACK retry).`);
+        sendAlertToDj(deckName, alertType);
+      } else {
+        log(`ACK OK: ${deckName} status changed ${currentStatus} → ${nowStatus}`);
+      }
+    }, ACK_TIMEOUT);
+    ackTimers.set(deckName, { timer, alertType, deckStatus: currentStatus });
+  }
+
+  function cancelAckTimer(deckName) {
+    const entry = ackTimers.get(deckName);
+    if (entry) {
+      clearTimeout(entry.timer);
+      ackTimers.delete(deckName);
+    }
+  }
+
+  /** Check all ACK timers against current decks.json — cancel if status changed. */
+  function checkAckTimers() {
+    for (const [deckName, entry] of ackTimers) {
+      const nowStatus = getDeckStatus(deckName);
+      if (nowStatus !== entry.deckStatus) {
+        log(`ACK OK (on change): ${deckName} status ${entry.deckStatus} → ${nowStatus}`);
+        cancelAckTimer(deckName);
+      }
+    }
+  }
+
+  /** Get a deck's current status from decks.json. */
+  function getDeckStatus(deckName) {
+    try {
+      const data = JSON.parse(readFileSync('.booth/decks.json', 'utf-8'));
+      const deck = (data.decks ?? []).find(d => d.name === deckName);
+      return deck?.status ?? 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  }
+
   /**
    * Send an alert to DJ via sendMessage — only when DJ is idle.
    * If DJ is working (mid-API-call), injecting send-keys corrupts the terminal.
@@ -419,6 +477,7 @@ function runWatchdog() {
         // Clear notifiedState when deck goes back to working
         if (newState === 'working') {
           w.notifiedState = null;
+          cancelAckTimer(deckName);
           if (idleTimers.has(deckName)) {
             clearTimeout(idleTimers.get(deckName));
             idleTimers.delete(deckName);
@@ -435,6 +494,7 @@ function runWatchdog() {
                 w3.notifiedState = 'idle';
                 doWriteAlert(deckName, 'idle', `deck ${deckName} idle.`);
                 sendAlertToDj(deckName, 'idle');
+                startAckTimer(deckName, 'idle');
                 log(`${deckName}: idle confirmed (10s debounce)`);
               }
             }, 10_000);
@@ -444,6 +504,7 @@ function runWatchdog() {
             w.notifiedState = newState;
             doWriteAlert(deckName, newState, `deck ${deckName} ${newState}.`);
             sendAlertToDj(deckName, newState);
+            startAckTimer(deckName, newState);
             if (newState === 'error' || newState === 'needs-attention') {
               displayUrgent(`⚠ Booth: deck ${deckName} ${newState}`);
             }
@@ -491,6 +552,7 @@ function runWatchdog() {
           log(`${name}: working → idle (60s timeout)`);
           doWriteAlert(name, 'idle', `deck ${name} idle (60s timeout).`);
           sendAlertToDj(name, 'idle');
+          startAckTimer(name, 'idle');
         }
       }
     }
@@ -504,6 +566,7 @@ function runWatchdog() {
       decksWatcher = null;
     }
     if (healthInterval) clearInterval(healthInterval);
+    for (const name of [...ackTimers.keys()]) cancelAckTimer(name);
     stopDjWatcher();
     for (const name of [...watchers.keys()]) {
       stopWatcher(name);
@@ -585,6 +648,7 @@ function runWatchdog() {
         syncDebounce = setTimeout(() => {
           log('decks.json changed — syncing watchers');
           syncWatchers();
+          checkAckTimers();
         }, 500);
       });
       decksWatcher.on('error', () => {
