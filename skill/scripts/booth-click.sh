@@ -8,7 +8,7 @@
 #   _b              — Break joined pane (close, return to background)
 #   _k              — Kill joined deck (with confirm)
 #   _r              — Restart DJ Claude Code (with confirm)
-#   _d              — Detach client (background Booth)
+#   _s              — Sleep (detach client, background Booth)
 #
 # Usage: booth-click.sh <socket-path> <range>
 
@@ -38,7 +38,7 @@ case "$RANGE" in
     $T confirm-before -p 'Restart DJ Claude Code? (y/n)' \
       "run-shell 'tmux -S \"$SOCK\" send-keys -t \"$DJ\" C-c ; sleep 2 ; tmux -S \"$SOCK\" send-keys -t \"$DJ\" \"claude --resume\" Enter'"
     ;;
-  _d)
+  _s)
     $T detach-client
     ;;
   _t)
