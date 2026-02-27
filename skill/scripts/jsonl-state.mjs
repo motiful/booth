@@ -201,12 +201,13 @@ function runWatchdog() {
     try {
       writeAlert(alertsFile, deckName, alertType, message);
       log(`Alert written: ${alertType} ${deckName}`);
-      // If DJ hasn't consumed alerts in 2+ min, show tmux toast as fallback
       checkStaleAlerts();
     } catch (e) {
       log(`Alert write failed: ${e.message}`);
     }
   }
+
+  let lastStaleResend = 0;
 
   function checkStaleAlerts() {
     try {
@@ -215,8 +216,14 @@ function runWatchdog() {
       const oldest = new Date(alerts[0].timestamp).getTime();
       const ageMs = Date.now() - oldest;
       if (ageMs > 2 * 60_000) {
-        displayUrgent(`⚠ Booth: ${alerts.length} unread alert(s) — DJ may be unresponsive`);
-        log(`Stale alerts (oldest ${Math.round(ageMs / 1000)}s) — tmux toast shown`);
+        // Cooldown: don't resend more than once per 2 minutes
+        if (Date.now() - lastStaleResend < 2 * 60_000) return;
+        lastStaleResend = Date.now();
+        // Resend each stale alert through the normal pipeline (stop-hook injection)
+        for (const a of alerts) {
+          sendAlertToDj(a.deck, a.type);
+        }
+        log(`Stale alerts (oldest ${Math.round(ageMs / 1000)}s) — resent ${alerts.length} alert(s) to DJ`);
       }
     } catch { /* ignore read errors */ }
   }
