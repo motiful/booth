@@ -214,6 +214,7 @@ export function sendMessage(socket, target, message, options = {}) {
 
   // 7. Inject message
   sendKeys(socket, target, message, true);
+  sleepSync(100); // Let readline process the text before sending Enter
   sendKeys(socket, target, 'Enter');
 
   // 8. Verify delivery (optional)
@@ -303,6 +304,7 @@ export function stashAndInject(socket, target, message) {
   if (inputText.length === 0) {
     // Empty input — just inject directly
     sendKeys(socket, target, message, true);
+    sleepSync(100); // Let readline process the text before sending Enter
     sendKeys(socket, target, 'Enter');
     return;
   }
@@ -328,6 +330,7 @@ export function stashAndInject(socket, target, message) {
 
   // --- Inject message ---
   sendKeys(socket, target, message, true);
+  sleepSync(100); // Let readline process the text before sending Enter
   sendKeys(socket, target, 'Enter');
 
   // --- Restore stashed text ---

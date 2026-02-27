@@ -59,16 +59,39 @@ if [[ -n "$JSONL_PATH" && -f "$JSONL_PATH" ]]; then
 
   # JSONL can't detect waiting-approval. If state is idle/unknown,
   # double-check capture-pane for Allow/Deny prompts.
-  # Skip if pane is in copy-mode — capture-pane returns the scrolled view,
-  # not the latest output, so approval detection would be unreliable.
+  # If pane is in copy-mode, temporarily exit it to capture the latest
+  # output (same pattern as input-box-check.mjs), then restore.
   if [[ "$STATE" == "idle" || "$STATE" == "unknown" ]]; then
     IN_MODE=$(tmux -L "$SOCKET" display-message -t "$DECK_NAME" -p '#{pane_in_mode}' 2>/dev/null || echo "0")
-    if [[ "$IN_MODE" != "1" ]]; then
-      PANE=$(tmux -L "$SOCKET" capture-pane -t "$DECK_NAME" -p -S -15 2>/dev/null || true)
-      if echo "$PANE" | grep -qE '(Allow|Deny)' 2>/dev/null; then
-        if echo "$PANE" | grep -qE '(Bash|Write|Edit|Read|Glob|Grep|WebFetch|WebSearch|Task|NotebookEdit|LSP)' 2>/dev/null; then
-          STATE="waiting-approval"
-        fi
+    SCROLL_POS=""
+    if [[ "$IN_MODE" == "1" ]]; then
+      # Record scroll position, then exit copy-mode to get latest content
+      SCROLL_POS=$(tmux -L "$SOCKET" display-message -t "$DECK_NAME" -p '#{scroll_position}' 2>/dev/null || echo "0")
+      tmux -L "$SOCKET" send-keys -t "$DECK_NAME" q 2>/dev/null || true
+      sleep 0.1
+    fi
+
+    PANE=$(tmux -L "$SOCKET" capture-pane -t "$DECK_NAME" -p -S -15 2>/dev/null || true)
+    if echo "$PANE" | grep -qE '(Allow|Deny)' 2>/dev/null; then
+      if echo "$PANE" | grep -qE '(Bash|Write|Edit|Read|Glob|Grep|WebFetch|WebSearch|Task|NotebookEdit|LSP)' 2>/dev/null; then
+        STATE="waiting-approval"
+      fi
+    fi
+
+    # Restore copy-mode if we exited it
+    if [[ "$IN_MODE" == "1" ]]; then
+      tmux -L "$SOCKET" copy-mode -t "$DECK_NAME" 2>/dev/null || true
+      if [[ -n "$SCROLL_POS" && "$SCROLL_POS" -gt 0 ]] 2>/dev/null; then
+        # Scroll back up to previous position using page-up for large offsets
+        PANE_HEIGHT=$(tmux -L "$SOCKET" display-message -t "$DECK_NAME" -p '#{pane_height}' 2>/dev/null || echo "20")
+        FULL_PAGES=$((SCROLL_POS / PANE_HEIGHT))
+        REMAINDER=$((SCROLL_POS % PANE_HEIGHT))
+        for (( i=0; i<FULL_PAGES; i++ )); do
+          tmux -L "$SOCKET" send-keys -t "$DECK_NAME" PageUp 2>/dev/null || true
+        done
+        for (( i=0; i<REMAINDER; i++ )); do
+          tmux -L "$SOCKET" send-keys -t "$DECK_NAME" C-y 2>/dev/null || true
+        done
       fi
     fi
   fi
