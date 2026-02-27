@@ -149,9 +149,9 @@ case "$CMD" in
 
     echo ""
     echo "=== decks.json ==="
-    BOOTH_CWD=$(tmux -L "$SOCKET" display-message -t "$SESSION" -p "#{pane_current_path}" 2>/dev/null || true)
-    if [[ -n "$BOOTH_CWD" && -f "$BOOTH_CWD/.booth/decks.json" ]]; then
-      node -e "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync('$BOOTH_CWD/.booth/decks.json','utf-8')),null,2)+'\n')" 2>/dev/null || cat "$BOOTH_CWD/.booth/decks.json"
+    BOOTH_ROOT=$(tmux -L "$SOCKET" show -gvq @booth-root 2>/dev/null || true)
+    if [[ -n "$BOOTH_ROOT" && -f "$BOOTH_ROOT/.booth/decks.json" ]]; then
+      node -e "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync('$BOOTH_ROOT/.booth/decks.json','utf-8')),null,2)+'\n')" 2>/dev/null || cat "$BOOTH_ROOT/.booth/decks.json"
     else
       echo "(no .booth/decks.json found)"
     fi

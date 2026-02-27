@@ -39,20 +39,20 @@ DJ_SESSION=$(tmux -L "$SOCK_NAME" show -gvq @booth-dj 2>/dev/null || echo "dj")
 # Skip internal sessions (prefixed with _)
 [[ "$SESSION_NAME" == _* ]] && exit 0
 
-# Find .booth/ directory via DJ's CWD
-DJ_CWD=$(tmux -L "$SOCK_NAME" display-message -t "$DJ_SESSION" -p "#{pane_current_path}" 2>/dev/null || true)
-[[ -z "$DJ_CWD" || ! -d "$DJ_CWD/.booth" ]] && exit 0
+# Find .booth/ directory via @booth-root (stable, set at boot by booth-start.sh)
+BOOTH_ROOT=$(tmux -L "$SOCK_NAME" show -gvq @booth-root 2>/dev/null || true)
+[[ -z "$BOOTH_ROOT" || ! -d "$BOOTH_ROOT/.booth" ]] && exit 0
 
-DECKS_FILE="$DJ_CWD/.booth/decks.json"
-ALERTS_FILE="$DJ_CWD/.booth/alerts.json"
-PID_FILE="$DJ_CWD/.booth/watchdog.pid"
+DECKS_FILE="$BOOTH_ROOT/.booth/decks.json"
+ALERTS_FILE="$BOOTH_ROOT/.booth/alerts.json"
+PID_FILE="$BOOTH_ROOT/.booth/watchdog.pid"
 
 case "$EVENT" in
   created)
     # --- Session created: add deck to decks.json ---
 
     # Get the new session's working directory and stable pane ID
-    DECK_CWD=$(tmux -L "$SOCK_NAME" display-message -t "$SESSION_NAME" -p "#{pane_current_path}" 2>/dev/null || echo "$DJ_CWD")
+    DECK_CWD=$(tmux -L "$SOCK_NAME" display-message -t "$SESSION_NAME" -p "#{pane_current_path}" 2>/dev/null || echo "$BOOTH_ROOT")
     PANE_ID=$(tmux -L "$SOCK_NAME" list-panes -t "$SESSION_NAME" -F '#{pane_id}' 2>/dev/null | head -1)
 
     # Add to decks.json if not already present (idempotent)
@@ -93,7 +93,7 @@ case "$EVENT" in
     fi
 
     if [[ "$WATCHDOG_ALIVE" == false && -f "$JSONL_STATE" ]]; then
-      cd "$DJ_CWD"
+      cd "$BOOTH_ROOT"
       WATCHDOG_SH="$(dirname "$JSONL_STATE")/booth-watchdog.sh"
       BOOTH_SOCKET="$SOCK_NAME" BOOTH_DJ="$DJ_SESSION" \
         nohup bash "$WATCHDOG_SH" \
@@ -165,7 +165,7 @@ case "$EVENT" in
       # Auto-archive all completed decks
       ARCHIVE_SCRIPT="$SCRIPT_DIR/booth-archive.sh"
       if [[ -f "$ARCHIVE_SCRIPT" ]]; then
-        bash "$ARCHIVE_SCRIPT" --all --booth-dir "$DJ_CWD/.booth" 2>/dev/null || true
+        bash "$ARCHIVE_SCRIPT" --all --booth-dir "$BOOTH_ROOT/.booth" 2>/dev/null || true
       fi
     fi
     ;;

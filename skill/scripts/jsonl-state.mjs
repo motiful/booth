@@ -260,15 +260,15 @@ function runWatchdog() {
   /**
    * Start a JSONL watcher for DJ's own CC session.
    * DJ is treated like any other deck — JSONL events drive state detection.
-   * The watchdog's cwd IS DJ's working directory (set by on-session-event.sh).
+   * Uses @booth-root to find DJ's working directory (stable across CWD drift).
    */
   function startDjWatcher() {
     if (djWatcherHandle) return;  // already running
 
-    // Get DJ's actual CWD from tmux (not process.cwd(), which is where watchdog started)
+    // Get DJ's working directory from @booth-root (stable, set at boot)
     let djCwd;
     try {
-      djCwd = execFileSync('tmux', ['-L', socket, 'display-message', '-t', djSession, '-p', '#{pane_current_path}'], {
+      djCwd = execFileSync('tmux', ['-L', socket, 'show', '-gvq', '@booth-root'], {
         stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000, encoding: 'utf-8',
       }).trim();
     } catch {

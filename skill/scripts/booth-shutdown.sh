@@ -29,13 +29,12 @@ if [[ -z "$SOCK_NAME" ]]; then
   SOCK_NAME="${BOOTH_SOCKET:-booth}"
 fi
 
-# --- Find DJ CWD → .booth/ directory ---
-DJ_SESSION=$(tmux -L "$SOCK_NAME" show -gvq @booth-dj 2>/dev/null || echo "dj")
-DJ_CWD=$(tmux -L "$SOCK_NAME" display-message -t "$DJ_SESSION" -p "#{pane_current_path}" 2>/dev/null || true)
+# --- Find .booth/ directory via @booth-root ---
+BOOTH_ROOT=$(tmux -L "$SOCK_NAME" show -gvq @booth-root 2>/dev/null || true)
 
 BOOTH_DIR=""
-if [[ -n "$DJ_CWD" && -d "$DJ_CWD/.booth" ]]; then
-  BOOTH_DIR="$DJ_CWD/.booth"
+if [[ -n "$BOOTH_ROOT" && -d "$BOOTH_ROOT/.booth" ]]; then
+  BOOTH_DIR="$BOOTH_ROOT/.booth"
 fi
 
 # --- Cleanup state files ---

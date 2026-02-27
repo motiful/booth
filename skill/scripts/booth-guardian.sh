@@ -52,15 +52,15 @@ for sock_path in "$TMUX_DIR"/booth-*; do
     continue
   fi
 
-  # Get DJ's working directory to find .booth/
-  DJ_CWD=$(tmux -L "$SOCK_NAME" display-message -t "$DJ_SESSION" -p "#{pane_current_path}" 2>/dev/null || true)
-  if [[ -z "$DJ_CWD" || ! -d "$DJ_CWD/.booth" ]]; then
+  # Get .booth/ directory via @booth-root
+  BOOTH_ROOT=$(tmux -L "$SOCK_NAME" show -gvq @booth-root 2>/dev/null || true)
+  if [[ -z "$BOOTH_ROOT" || ! -d "$BOOTH_ROOT/.booth" ]]; then
     echo "$LOG_PREFIX $SOCK_NAME: no .booth/ dir found, skipping."
     continue
   fi
 
   # Check if watchdog process is alive via PID file
-  PID_FILE="$DJ_CWD/.booth/watchdog.pid"
+  PID_FILE="$BOOTH_ROOT/.booth/watchdog.pid"
   WATCHDOG_ALIVE=false
   if [[ -f "$PID_FILE" ]]; then
     WD_PID=$(cat "$PID_FILE" 2>/dev/null || true)
@@ -75,7 +75,7 @@ for sock_path in "$TMUX_DIR"/booth-*; do
     echo "$LOG_PREFIX $SOCK_NAME: watchdog DEAD with $DECK_COUNT deck(s). Restarting..."
 
     # Start watchdog as background process
-    cd "$DJ_CWD"
+    cd "$BOOTH_ROOT"
     BOOTH_SOCKET="$SOCK_NAME" BOOTH_DJ="$DJ_SESSION" \
       nohup node "$JSONL_STATE" watchdog \
       >> /tmp/booth-watchdog-${SOCK_NAME}.log 2>&1 &
@@ -84,7 +84,7 @@ for sock_path in "$TMUX_DIR"/booth-*; do
     echo "$LOG_PREFIX $SOCK_NAME: watchdog restarted (pid=$NEW_PID)."
 
     # Write alert to .booth/alerts.json (Layer 2)
-    ALERTS_FILE="$DJ_CWD/.booth/alerts.json"
+    ALERTS_FILE="$BOOTH_ROOT/.booth/alerts.json"
     ALERT_MSG="watchdog was down — restarted by cron. $DECK_COUNT deck(s) being monitored."
     node "$JSONL_STATE" write-alert "$ALERTS_FILE" "_watchdog" "error" "$ALERT_MSG" 2>/dev/null || true
     echo "$LOG_PREFIX Alert written to $ALERTS_FILE"
