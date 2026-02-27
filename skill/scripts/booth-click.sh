@@ -7,6 +7,8 @@
 #   _z              — Zoom/unzoom toggle (fullscreen/shrink)
 #   _b              — Break joined pane (close, return to background)
 #   _k              — Kill joined deck (with confirm)
+#   _r              — Restart DJ Claude Code (with confirm)
+#   _d              — Detach client (background Booth)
 #
 # Usage: booth-click.sh <socket-path> <range>
 
@@ -30,6 +32,14 @@ case "$RANGE" in
   _k)
     $T confirm-before -p 'Kill this deck? (y/n)' \
       "run-shell 'bash \"$SCRIPTS/booth-kill-joined.sh\" \"$SOCK\"'"
+    ;;
+  _r)
+    DJ=$($T show -gvq @booth-dj 2>/dev/null || echo "dj")
+    $T confirm-before -p 'Restart DJ Claude Code? (y/n)' \
+      "run-shell 'tmux -S \"$SOCK\" send-keys -t \"$DJ\" C-c ; sleep 2 ; tmux -S \"$SOCK\" send-keys -t \"$DJ\" \"claude --resume\" Enter'"
+    ;;
+  _d)
+    $T detach-client
     ;;
   _t)
     # Collapsed deck list clicked → open session tree picker

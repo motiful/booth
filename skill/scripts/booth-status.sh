@@ -29,6 +29,16 @@ else
   DJ_BTN="#[range=user|${DJ}]#[fg=colour245,bg=colour238]  DJ  #[norange]#[default]"
 fi
 
+# --- Restart button — only when viewing DJ session (to restart hung CC) ---
+if [[ "$CURRENT" == "$DJ" ]]; then
+  RESTART_BTN="#[range=user|_r]#[fg=colour208,bg=colour236]  Rst  #[norange]#[default]"
+else
+  RESTART_BTN=""
+fi
+
+# --- Detach button — always visible ---
+DETACH_BTN="#[range=user|_d]#[fg=colour141,bg=colour236]  Detach  #[norange]#[default]"
+
 # --- Detect joined deck pane in current window ---
 JOINED_DECK=""
 JOINED_PANE=""
@@ -60,12 +70,12 @@ if [[ -n "$JOINED_DECK" ]]; then
   ACTIVE_ORIGIN=$($T show-options -pqv -t "$ACTIVE_PANE" @booth_origin 2>/dev/null) || true
 
   if [[ -n "$ACTIVE_ORIGIN" ]]; then
-    $T set -gq @booth-status-left-extra "${DJ_BTN} ${ZOOM_BTN}${CLOSE_BTN}${KILL_BTN}"
+    $T set -gq @booth-status-left-extra "${DJ_BTN}${RESTART_BTN} ${ZOOM_BTN}${CLOSE_BTN}${KILL_BTN} ${DETACH_BTN}"
   else
-    $T set -gq @booth-status-left-extra "${DJ_BTN} ${ZOOM_BTN}"
+    $T set -gq @booth-status-left-extra "${DJ_BTN}${RESTART_BTN} ${ZOOM_BTN} ${DETACH_BTN}"
   fi
 else
-  $T set -gq @booth-status-left-extra "$DJ_BTN"
+  $T set -gq @booth-status-left-extra "${DJ_BTN}${RESTART_BTN} ${DETACH_BTN}"
 fi
 
 # --- Deck list ---
@@ -85,7 +95,7 @@ fi
 # --- Adaptive overflow: full → truncate → collapse ---
 # Available width = terminal width minus left status bar (~50 chars for BOOTH + DJ + controls)
 CLIENT_W=$($T display-message -p '#{client_width}' 2>/dev/null || echo 160)
-MAX_WIDTH=$(( CLIENT_W - 50 ))
+MAX_WIDTH=$(( CLIENT_W - 60 ))
 OVERHEAD=7  # padding + indicator per deck entry
 
 # Phase 1: check if full names fit
