@@ -21,7 +21,7 @@ import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSy
 import { createInterface } from 'node:readline';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { stashAndInject } from './input-box-check.mjs';
+import { sendMessage, isInputEmpty } from './input-box-check.mjs';
 
 // ---------------------------------------------------------------------------
 // Shared parsing logic
@@ -214,6 +214,23 @@ function runWatchdog() {
     } catch { /* tmux may not be available */ }
   }
 
+  // --- DJ pane ID (stable target for send-keys) ---
+  let djPaneId = null;
+  function resolveDjPaneId() {
+    try {
+      // list-panes returns one line per pane; take the FIRST (DJ's original pane)
+      // When a deck is joined, DJ session has multiple panes — we always want DJ's own
+      const output = execFileSync('tmux', [
+        '-L', socket, 'list-panes', '-t', djSession, '-F', '#{pane_id}',
+      ], { stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000, encoding: 'utf-8' }).trim();
+      djPaneId = output.split('\n')[0];
+      log(`DJ pane ID: ${djPaneId}`);
+    } catch {
+      log('DJ pane ID: could not resolve, will use session name as fallback');
+    }
+  }
+  resolveDjPaneId();
+
   // --- DJ state tracking via JSONL (DJ = "deck zero") ---
   let djState = 'unknown';
   let djWatcherHandle = null;  // { proc, rl }
@@ -226,7 +243,15 @@ function runWatchdog() {
   function startDjWatcher() {
     if (djWatcherHandle) return;  // already running
 
-    const djCwd = process.cwd();
+    // Get DJ's actual CWD from tmux (not process.cwd(), which is where watchdog started)
+    let djCwd;
+    try {
+      djCwd = execFileSync('tmux', ['-L', socket, 'display-message', '-t', djSession, '-p', '#{pane_current_path}'], {
+        stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000, encoding: 'utf-8',
+      }).trim();
+    } catch {
+      djCwd = process.cwd();
+    }
     const jsonl = findJsonlForDir(djCwd);
     if (!jsonl) {
       log(`DJ: JSONL not found yet (cwd=${djCwd})`);
@@ -285,42 +310,27 @@ function runWatchdog() {
   }
 
   // --- DJ send-keys notification ---
-  /** @type {{deck: string, type: string, message: string}[]} */
-  const pendingAlerts = [];
+  /** @type {Map<string, NodeJS.Timeout>} deckName → idle debounce timer */
+  const idleTimers = new Map();
 
   /**
-   * Send all pending alerts to DJ via tmux send-keys.
-   * Uses stashAndInject to preserve any user-typed text in DJ's input box.
-   * Batches multiple alerts into a single message to avoid spamming.
+   * Send an alert to DJ immediately via sendMessage.
+   * No queuing — sendMessage handles stash/inject/restore natively.
    */
-  function flushAlerts() {
-    if (pendingAlerts.length === 0) return;
-
-    const lines = pendingAlerts.map(a => `[booth-alert] ${a.deck} ${a.type}`);
-    const message = lines.join('; ');
-    pendingAlerts.length = 0;
-
+  function sendAlertToDj(deck, type) {
+    const message = `[booth-alert] ${deck} ${type}`;
+    const target = djPaneId || djSession;
     try {
-      // stashAndInject handles: empty input → direct inject,
-      // non-empty input → stash → inject → restore
-      stashAndInject(socket, djSession, message);
-      log(`Sent to DJ: ${message}`);
+      const result = sendMessage(socket, target, message);
+      if (result.ok) {
+        log(`Sent to DJ (${target}): ${message}`);
+      } else {
+        log(`sendMessage to DJ skipped: ${result.skipped || result.error}`);
+      }
     } catch (e) {
-      log(`send-keys failed: ${e.message}`);
-      // Don't re-queue — alerts are also written to alerts.json as fallback
+      log(`sendMessage to DJ failed: ${e.message}`);
     }
   }
-
-  // Try to flush pending alerts every 3 seconds
-  // Gate: DJ must be idle (JSONL state) before we inject into the input box.
-  const alertFlushInterval = setInterval(() => {
-    if (pendingAlerts.length === 0) return;
-    if (djState !== 'idle') {
-      log(`DJ busy (${djState}), ${pendingAlerts.length} alert(s) queued`);
-      return;
-    }
-    flushAlerts();
-  }, 3000);
 
   function getActiveDecks() {
     const decksJson = '.booth/decks.json';
@@ -328,7 +338,7 @@ function runWatchdog() {
       const data = JSON.parse(readFileSync(decksJson, 'utf-8'));
       return (data.decks ?? [])
         .filter(d => !['completed', 'crashed', 'detached'].includes(d.status))
-        .map(d => ({ name: d.name, dir: d.dir }));
+        .map(d => ({ name: d.name, dir: d.dir, jsonlPath: d.jsonlPath ?? null, paneId: d.paneId ?? null }));
     } catch {
       return [];
     }
@@ -377,15 +387,37 @@ function runWatchdog() {
         w.state = newState;
         w.lastEvent = Date.now();
         log(`${deckName}: ${old} → ${newState}`);
-        // Only alert after catchup — skip historical state transitions
-        if (!catchingUp && newState !== 'working') {
-          doWriteAlert(deckName, newState, `deck ${deckName} ${newState}.`);
-          // Queue send-keys notification for actionable transitions
-          if (newState === 'idle' || newState === 'error' || newState === 'needs-attention') {
-            pendingAlerts.push({ deck: deckName, type: newState, message: `deck ${deckName} ${newState}.` });
+        // Clear notifiedState when deck goes back to working
+        if (newState === 'working') {
+          w.notifiedState = null;
+          if (idleTimers.has(deckName)) {
+            clearTimeout(idleTimers.get(deckName));
+            idleTimers.delete(deckName);
           }
-          if (newState === 'error' || newState === 'needs-attention') {
-            displayUrgent(`⚠ Booth: deck ${deckName} ${newState}`);
+        }
+        // Only alert after catchup, for non-working states, once per state
+        if (!catchingUp && newState !== 'working' && w.notifiedState !== newState) {
+          if (newState === 'idle') {
+            // Debounce idle: wait 10s. CC produces idle between turns briefly.
+            const timer = setTimeout(() => {
+              idleTimers.delete(deckName);
+              const w3 = watchers.get(deckName);
+              if (w3 && w3.state === 'idle' && w3.notifiedState !== 'idle') {
+                w3.notifiedState = 'idle';
+                doWriteAlert(deckName, 'idle', `deck ${deckName} idle.`);
+                sendAlertToDj(deckName, 'idle');
+                log(`${deckName}: idle confirmed (10s debounce)`);
+              }
+            }, 10_000);
+            idleTimers.set(deckName, timer);
+          } else {
+            // error / needs-attention — immediately, once
+            w.notifiedState = newState;
+            doWriteAlert(deckName, newState, `deck ${deckName} ${newState}.`);
+            sendAlertToDj(deckName, newState);
+            if (newState === 'error' || newState === 'needs-attention') {
+              displayUrgent(`⚠ Booth: deck ${deckName} ${newState}`);
+            }
           }
         }
       } else if (newState) {
@@ -406,6 +438,7 @@ function runWatchdog() {
       state: 'unknown',
       lastEvent: Date.now(),
       jsonl: jsonlPath,
+      notifiedState: null, // last state DJ was notified about
     });
     log(`Watcher started: ${deckName} → ${jsonlPath}`);
   }
@@ -424,9 +457,12 @@ function runWatchdog() {
     for (const [name, w] of watchers) {
       if (w.state === 'working' && (now - w.lastEvent) > 60_000) {
         w.state = 'idle';
-        log(`${name}: working → idle (60s timeout)`);
-        doWriteAlert(name, 'idle', `deck ${name} idle (60s timeout).`);
-        pendingAlerts.push({ deck: name, type: 'idle', message: `deck ${name} idle (60s timeout).` });
+        if (w.notifiedState !== 'idle') {
+          w.notifiedState = 'idle';
+          log(`${name}: working → idle (60s timeout)`);
+          doWriteAlert(name, 'idle', `deck ${name} idle (60s timeout).`);
+          sendAlertToDj(name, 'idle');
+        }
       }
     }
   }
@@ -439,7 +475,6 @@ function runWatchdog() {
       decksWatcher = null;
     }
     if (healthInterval) clearInterval(healthInterval);
-    if (alertFlushInterval) clearInterval(alertFlushInterval);
     stopDjWatcher();
     for (const name of [...watchers.keys()]) {
       stopWatcher(name);
@@ -464,8 +499,18 @@ function runWatchdog() {
     const activeNames = new Set(active.map(d => d.name));
 
     // Start or refresh watchers for active decks
-    for (const { name, dir } of active) {
-      const jsonl = findJsonlForDir(dir);
+    for (const { name, dir, jsonlPath } of active) {
+      // Per-deck JSONL path from decks.json (set by spawn-child.sh)
+      // Falls back to findJsonlForDir() only if jsonlPath not stored yet
+      let jsonl = null;
+      if (jsonlPath && existsSync(jsonlPath)) {
+        jsonl = jsonlPath;
+      } else {
+        jsonl = findJsonlForDir(dir);
+        if (jsonl && jsonlPath && jsonl !== jsonlPath) {
+          log(`${name}: stored jsonlPath gone, falling back to dir lookup`);
+        }
+      }
       if (!jsonl) {
         log(`${name}: JSONL not found yet (dir=${dir})`);
         continue;
