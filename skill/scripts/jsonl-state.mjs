@@ -201,9 +201,24 @@ function runWatchdog() {
     try {
       writeAlert(alertsFile, deckName, alertType, message);
       log(`Alert written: ${alertType} ${deckName}`);
+      // If DJ hasn't consumed alerts in 2+ min, show tmux toast as fallback
+      checkStaleAlerts();
     } catch (e) {
       log(`Alert write failed: ${e.message}`);
     }
+  }
+
+  function checkStaleAlerts() {
+    try {
+      const alerts = JSON.parse(readFileSync(alertsFile, 'utf-8'));
+      if (!alerts || alerts.length === 0) return;
+      const oldest = new Date(alerts[0].timestamp).getTime();
+      const ageMs = Date.now() - oldest;
+      if (ageMs > 2 * 60_000) {
+        displayUrgent(`⚠ Booth: ${alerts.length} unread alert(s) — DJ may be unresponsive`);
+        log(`Stale alerts (oldest ${Math.round(ageMs / 1000)}s) — tmux toast shown`);
+      }
+    } catch { /* ignore read errors */ }
   }
 
   function displayUrgent(message) {

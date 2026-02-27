@@ -128,6 +128,9 @@ case "$EVENT" in
         "deck $SESSION_NAME session closed." 2>/dev/null || true
     fi
 
+    # Force immediate status bar refresh so stale deck entries disappear
+    tmux -L "$SOCK_NAME" refresh-client -S 2>/dev/null || true
+
     # Check if any active decks remain — if not, stop watchdog
     ACTIVE_COUNT=$(node -e "
       const fs = require('fs');
