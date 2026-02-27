@@ -256,6 +256,7 @@ function runWatchdog() {
   // --- DJ state tracking via JSONL (DJ = "deck zero") ---
   let djState = 'unknown';
   let djWatcherHandle = null;  // { proc, rl }
+  let djJsonlPath = null;      // tracked for size-based auto-compact
 
   /**
    * Start a JSONL watcher for DJ's own CC session.
@@ -320,6 +321,7 @@ function runWatchdog() {
     });
 
     djWatcherHandle = { proc, rl };
+    djJsonlPath = jsonl;
     log(`DJ watcher started → ${jsonl}`);
   }
 
@@ -592,6 +594,32 @@ function runWatchdog() {
     }
   }
 
+  // --- Auto-compact DJ when JSONL gets large ---
+  const DJ_COMPACT_THRESHOLD = 5 * 1024 * 1024; // 5MB
+  const DJ_COMPACT_COOLDOWN = 10 * 60_000;       // 10 minutes
+  let lastCompactTime = 0;
+
+  function checkDjCompact() {
+    if (!djJsonlPath) return;
+    if (djState !== 'idle') return;
+    if (Date.now() - lastCompactTime < DJ_COMPACT_COOLDOWN) return;
+    try {
+      const st = statSync(djJsonlPath);
+      if (st.size < DJ_COMPACT_THRESHOLD) return;
+      const sizeMB = (st.size / (1024 * 1024)).toFixed(1);
+      const target = djPaneId || djSession;
+      const result = sendMessage(socket, target, '/compact');
+      if (result.ok) {
+        lastCompactTime = Date.now();
+        log(`DJ auto-compact sent (JSONL ${sizeMB}MB > 5MB threshold)`);
+      } else {
+        log(`DJ auto-compact skipped: ${result.skipped || result.error}`);
+      }
+    } catch (e) {
+      log(`DJ auto-compact check failed: ${e.message}`);
+    }
+  }
+
   // --- Health check (30s interval — lightweight fallback) ---
   let healthInterval = setInterval(() => {
     // Check DJ alive
@@ -601,6 +629,8 @@ function runWatchdog() {
     }
     // Check idle timeouts
     checkIdleTimeouts();
+    // Auto-compact DJ if JSONL is large and DJ is idle
+    checkDjCompact();
     // Ensure DJ watcher is alive (JSONL might not exist at startup)
     if (!djWatcherHandle) startDjWatcher();
     // Ensure decks watcher is alive
