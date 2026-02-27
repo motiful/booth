@@ -112,5 +112,5 @@ ELSE                              → unknown
 | idle | Read output, report to user |
 | waiting-approval | Send Enter to approve (or notify user) |
 | needs-attention | Read full output (--lines 100+), present to user |
-| collapsed | Send Ctrl+O (`tmux send-keys -t <name> C-o`), re-poll |
+| collapsed | Send Ctrl+O via `send-to-child.sh` (uses paneId from decks.json), re-poll |
 | unknown | Retry with --lines 100, if still unknown → notify user |

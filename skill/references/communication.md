@@ -4,15 +4,20 @@ How Booth reads from and writes to decks.
 
 ## Reading Deck Output
 
+**CRITICAL: Always use paneId (%N), never session name.** When a deck is joined into DJ's window, `capture-pane -t <session-name>` reads the hold pane (empty), not the CC pane. Look up paneId from `.booth/decks.json` first.
+
 ```bash
+# Look up paneId from decks.json (e.g. %12)
+PANE_ID=$(jq -r '.decks[] | select(.name=="<name>") | .paneId' .booth/decks.json)
+
 # Last 30 lines (default, quick check)
-tmux -L $BOOTH_SOCKET capture-pane -t <name> -p -S -30
+tmux -L $BOOTH_SOCKET capture-pane -t "$PANE_ID" -p -S -30
 
 # More context when needed
-tmux -L $BOOTH_SOCKET capture-pane -t <name> -p -S -100
+tmux -L $BOOTH_SOCKET capture-pane -t "$PANE_ID" -p -S -100
 
 # Full buffer (use sparingly)
-tmux -L $BOOTH_SOCKET capture-pane -t <name> -p -S -500
+tmux -L $BOOTH_SOCKET capture-pane -t "$PANE_ID" -p -S -500
 ```
 
 **Strategy:** Start with 30 lines. If you need more context, go to 100. Only use 500 for debugging.

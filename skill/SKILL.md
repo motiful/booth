@@ -221,6 +221,14 @@ Before killing ANY deck:
 - Prefer sending a "wrap up" message (`send-to-child.sh <deck> "wrap up and report"`) over hard kill — give the deck a chance to clean up, commit, and close resources
 - Hard kill (`tmux kill-session`) is last resort only: deck is unresponsive after wrap-up message + 30s timeout
 
+**18. Pane Routing (CRITICAL — ROOT CAUSE OF "WRONG PANE" BUG)**
+DJ MUST use paneId (`%N`) for ALL tmux operations targeting decks. Never use session names.
+- **Open deck → always `spawn-child.sh`** — never manual `tmux new-session` + `send-keys "claude"`. The script captures paneId, registers it in decks.json, detects JSONL, and triggers hooks. Manual creation skips all of this.
+- **Send message → always `send-to-child.sh`** — never manual `tmux send-keys -t <session-name>` or `paste-buffer -t <session-name>`. The script resolves paneId from decks.json and uses `input-box-check.mjs` for safe injection.
+- **Read output → always use paneId** — `capture-pane -t <paneId>`, never `-t <session-name>`. Look up paneId from `decks.json` first: `jq -r '.decks[] | select(.name=="X") | .paneId' .booth/decks.json`
+- **Why (verified by test):** When user clicks a deck name, `booth-join.sh` moves the CC pane into DJ's window and creates a `_booth_hold` window (running `tail -f /dev/null`) to keep the deck session alive. After this, `tmux send-keys -t <session-name>` resolves to the hold pane — your message goes to `/dev/null`. Pane `%N` is globally unique and stable — it survives `join-pane`, `break-pane`, `swap-pane`, any topology change. Session names point to the *active pane* of that session, which changes when panes are moved.
+- **No exceptions.** Even for "quick" one-off messages or `capture-pane` reads, always resolve paneId first.
+
 ### Monitoring Architecture: JSONL Watchdog + Cron Guardian
 
 **Design goal: zero tokens when decks are working. Event-driven detection when they stop.**
@@ -570,4 +578,5 @@ Detailed operational guides — read on demand when you need the specifics.
 | [State Signals](references/state-signals.md) | When interpreting deck state detection (JSONL events + capture-pane fallback patterns) |
 | [Child Protocol](references/child-protocol.md) | When reviewing what child sessions know about Booth |
 | [DJ Delegation](references/dj-delegation.md) | When deciding what DJ can vs must not do — strict delegation rules |
+| [Pane Routing](references/pane-routing.md) | When debugging "message sent to wrong pane" — why session names break after join-pane |
 | [Deck Forensics](references/deck-forensics.md) | When tracing past deck activity — where to find logs, archives, and artifacts |
