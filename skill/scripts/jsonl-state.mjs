@@ -206,6 +206,27 @@ function runWatchdog() {
     }
   }
 
+  /**
+   * Update a deck's status field in decks.json atomically.
+   * Read → find deck → update status → write tmp → rename.
+   */
+  function updateDeckStatus(deckName, newStatus) {
+    const decksFile = '.booth/decks.json';
+    try {
+      const data = JSON.parse(readFileSync(decksFile, 'utf-8'));
+      const deck = (data.decks ?? []).find(d => d.name === deckName);
+      if (!deck) return;
+      if (deck.status === newStatus) return; // no-op
+      deck.status = newStatus;
+      const tmp = decksFile + `.tmp.${process.pid}`;
+      writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
+      renameSync(tmp, decksFile);
+      log(`${deckName}: decks.json status → ${newStatus}`);
+    } catch (e) {
+      log(`${deckName}: decks.json update failed: ${e.message}`);
+    }
+  }
+
   function displayUrgent(message) {
     try {
       execFileSync('tmux', ['-L', socket, 'display-message', '-d', '5000', message], {
@@ -400,6 +421,7 @@ function runWatchdog() {
         // Clear notifiedState when deck goes back to working
         if (newState === 'working') {
           w.notifiedState = null;
+          updateDeckStatus(deckName, 'working');
           if (idleTimers.has(deckName)) {
             clearTimeout(idleTimers.get(deckName));
             idleTimers.delete(deckName);
@@ -414,6 +436,7 @@ function runWatchdog() {
               const w3 = watchers.get(deckName);
               if (w3 && w3.state === 'idle' && w3.notifiedState !== 'idle') {
                 w3.notifiedState = 'idle';
+                updateDeckStatus(deckName, 'idle');
                 doWriteAlert(deckName, 'idle', `deck ${deckName} idle.`);
                 wakeDj();
                 log(`${deckName}: idle confirmed (10s debounce)`);
@@ -423,6 +446,7 @@ function runWatchdog() {
           } else {
             // error / needs-attention — immediately, once
             w.notifiedState = newState;
+            updateDeckStatus(deckName, newState);
             doWriteAlert(deckName, newState, `deck ${deckName} ${newState}.`);
             wakeDj();
             if (newState === 'error' || newState === 'needs-attention') {
@@ -469,6 +493,7 @@ function runWatchdog() {
         w.state = 'idle';
         if (w.notifiedState !== 'idle') {
           w.notifiedState = 'idle';
+          updateDeckStatus(name, 'idle');
           log(`${name}: working → idle (60s timeout)`);
           doWriteAlert(name, 'idle', `deck ${name} idle (60s timeout).`);
           wakeDj();
