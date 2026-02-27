@@ -59,11 +59,16 @@ if [[ -n "$JSONL_PATH" && -f "$JSONL_PATH" ]]; then
 
   # JSONL can't detect waiting-approval. If state is idle/unknown,
   # double-check capture-pane for Allow/Deny prompts.
+  # Skip if pane is in copy-mode — capture-pane returns the scrolled view,
+  # not the latest output, so approval detection would be unreliable.
   if [[ "$STATE" == "idle" || "$STATE" == "unknown" ]]; then
-    PANE=$(tmux -L "$SOCKET" capture-pane -t "$DECK_NAME" -p -S -15 2>/dev/null || true)
-    if echo "$PANE" | grep -qE '(Allow|Deny)' 2>/dev/null; then
-      if echo "$PANE" | grep -qE '(Bash|Write|Edit|Read|Glob|Grep|WebFetch|WebSearch|Task|NotebookEdit|LSP)' 2>/dev/null; then
-        STATE="waiting-approval"
+    IN_MODE=$(tmux -L "$SOCKET" display-message -t "$DECK_NAME" -p '#{pane_in_mode}' 2>/dev/null || echo "0")
+    if [[ "$IN_MODE" != "1" ]]; then
+      PANE=$(tmux -L "$SOCKET" capture-pane -t "$DECK_NAME" -p -S -15 2>/dev/null || true)
+      if echo "$PANE" | grep -qE '(Allow|Deny)' 2>/dev/null; then
+        if echo "$PANE" | grep -qE '(Bash|Write|Edit|Read|Glob|Grep|WebFetch|WebSearch|Task|NotebookEdit|LSP)' 2>/dev/null; then
+          STATE="waiting-approval"
+        fi
       fi
     fi
   fi
