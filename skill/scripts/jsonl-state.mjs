@@ -583,6 +583,21 @@ function runWatchdog() {
     process.exit(0);
   }
 
+  // --- Self-restart on code change ---
+  const SELF_RESTART_CODE = 42;
+  const scriptPath = new URL(import.meta.url).pathname;
+  const processStartTime = Date.now();
+
+  function checkCodeUpdated() {
+    try {
+      const st = statSync(scriptPath);
+      if (st.mtimeMs > processStartTime) {
+        log(`Code updated (${scriptPath}), self-restarting (exit ${SELF_RESTART_CODE})`);
+        process.exit(SELF_RESTART_CODE);
+      }
+    } catch { /* ignore stat errors */ }
+  }
+
   log(`Started. socket=${socket} dj=${djSession} cwd=${process.cwd()}`);
 
   // --- Sync watchers with decks.json ---
@@ -691,6 +706,8 @@ function runWatchdog() {
 
   // --- Health check (30s interval — lightweight fallback) ---
   let healthInterval = setInterval(() => {
+    // Check if our code was updated — restart to pick up changes
+    checkCodeUpdated();
     // Check DJ alive
     if (!tmuxHasSession(djSession)) {
       log('DJ session gone. Exiting.');

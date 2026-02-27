@@ -9,6 +9,7 @@
 #   - Writes alerts to .booth/alerts.json (Layer 2) on state transitions
 #   - 60s idle timeout: working deck with no events → idle
 #   - Auto-exits when no active decks remain or DJ session dies
+#   - Auto-restarts when jsonl-state.mjs is updated (exit code 42)
 #
 # Started by spawn-child.sh; guarded by booth-heartbeat.sh (cron).
 # Core logic in jsonl-state.mjs (shared with deck-status.sh).
@@ -25,5 +26,14 @@ if [[ ! -f "$JSONL_STATE" ]]; then
   exit 1
 fi
 
-# Pass env vars through and exec into Node.js watchdog mode
-exec node "$JSONL_STATE" watchdog
+# Restart loop: exit code 42 = code updated, restart automatically
+while true; do
+  node "$JSONL_STATE" watchdog
+  EXIT_CODE=$?
+  if [[ $EXIT_CODE -eq 42 ]]; then
+    echo "[watchdog] Code updated, restarting in 1s..."
+    sleep 1
+    continue
+  fi
+  exit $EXIT_CODE
+done
