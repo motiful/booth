@@ -17,6 +17,7 @@ Orchestration (public API):
   booth spawn <name> [--dir <path>]       Create a new deck
          [--prompt <text>] [--worktree]
   booth send <name> <message>             Send a message to a deck
+  booth archive [--name <n>] [--dry-run]  Archive completed decks to JSONL log
 
   booth -h             Show this help
 

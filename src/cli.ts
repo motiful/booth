@@ -11,6 +11,7 @@ import { status } from './commands/status.js';
 import { log } from './commands/log.js';
 import { spawn } from './commands/spawn.js';
 import { send } from './commands/send.js';
+import { archive } from './commands/archive.js';
 
 export function cli(argv: string[]): void {
   const cmd = argv[0] ?? '';
@@ -54,6 +55,9 @@ export function cli(argv: string[]): void {
       break;
     case 'send':
       send(argv.slice(1));
+      break;
+    case 'archive':
+      archive(argv.slice(1));
       break;
     default:
       // booth [<path>] — no subcommand = start

@@ -138,12 +138,21 @@ case "$EVENT" in
       } catch { process.stdout.write('0'); }
     " "$DECKS_FILE" 2>/dev/null || echo "0")
 
-    if [[ "$ACTIVE_COUNT" == "0" && -f "$PID_FILE" ]]; then
-      WD_PID=$(cat "$PID_FILE" 2>/dev/null || true)
-      if [[ -n "$WD_PID" ]] && kill -0 "$WD_PID" 2>/dev/null; then
-        kill "$WD_PID" 2>/dev/null || true
+    if [[ "$ACTIVE_COUNT" == "0" ]]; then
+      # Stop watchdog
+      if [[ -f "$PID_FILE" ]]; then
+        WD_PID=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [[ -n "$WD_PID" ]] && kill -0 "$WD_PID" 2>/dev/null; then
+          kill "$WD_PID" 2>/dev/null || true
+        fi
+        rm -f "$PID_FILE"
       fi
-      rm -f "$PID_FILE"
+
+      # Auto-archive all completed decks
+      ARCHIVE_SCRIPT="$SCRIPT_DIR/booth-archive.sh"
+      if [[ -f "$ARCHIVE_SCRIPT" ]]; then
+        bash "$ARCHIVE_SCRIPT" --all --booth-dir "$DJ_CWD/.booth" 2>/dev/null || true
+      fi
     fi
     ;;
 esac
