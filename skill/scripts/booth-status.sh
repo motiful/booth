@@ -43,18 +43,28 @@ done
 if [[ -n "$JOINED_DECK" ]]; then
   ZOOMED=$($T display-message -p '#{window_zoomed_flag}' 2>/dev/null || echo "0")
 
-  # Zoom toggle: show fullscreen or shrink based on current state
+  # macOS traffic light colors: green=Full/Shrk, yellow=Close, red=Kill
   if [[ "$ZOOMED" == "1" ]]; then
-    ZOOM_BTN="#[range=user|_z]#[fg=colour214,bg=colour236]  Shrk  #[norange]#[default]"
+    ZOOM_BTN="#[range=user|_z]#[fg=colour34,bg=colour236]  Shrk  #[norange]#[default]"
   else
-    ZOOM_BTN="#[range=user|_z]#[fg=colour39,bg=colour236]  Full  #[norange]#[default]"
+    ZOOM_BTN="#[range=user|_z]#[fg=colour34,bg=colour236]  Full  #[norange]#[default]"
   fi
 
   CLOSE_BTN="#[range=user|_b]#[fg=colour214,bg=colour236]  Close  #[norange]#[default]"
   KILL_BTN="#[range=user|_k]#[fg=colour196,bg=colour236]  Kill  #[norange]#[default]"
   DECK_LABEL="#[fg=colour39,bold]${JOINED_DECK}#[default]"
 
-  $T set -gq @booth-status-left-extra "${DJ_BTN} ${DECK_LABEL} ${ZOOM_BTN}${CLOSE_BTN}${KILL_BTN}"
+  # Only show Close/Kill when the active pane IS the joined deck pane
+  ACTIVE_PANE=$($T display-message -p '#{pane_id}' 2>/dev/null || echo "")
+  ACTIVE_ORIGIN=$($T show-options -pqv -t "$ACTIVE_PANE" @booth_origin 2>/dev/null) || true
+
+  if [[ -n "$ACTIVE_ORIGIN" ]]; then
+    # Active pane is the joined deck — show all controls
+    $T set -gq @booth-status-left-extra "${DJ_BTN} ${DECK_LABEL} ${ZOOM_BTN}${CLOSE_BTN}${KILL_BTN}"
+  else
+    # Active pane is DJ's own pane — show only zoom toggle
+    $T set -gq @booth-status-left-extra "${DJ_BTN} ${DECK_LABEL} ${ZOOM_BTN}"
+  fi
 else
   $T set -gq @booth-status-left-extra "$DJ_BTN"
 fi
@@ -103,7 +113,10 @@ for name in "${NAMES[@]}"; do
   esac
 
   # Use full session name as range tag — click to join-pane
-  if [[ "$name" == "$CURRENT" ]]; then
+  # Highlight: joined deck (split view) > current session > default
+  if [[ "$name" == "$JOINED_DECK" ]]; then
+    OUT+="  #[range=user|${name}]${ind}#[fg=colour255,bg=colour24,bold]  ${name}  #[norange]#[default]"
+  elif [[ "$name" == "$CURRENT" ]]; then
     OUT+="  #[range=user|${name}]${ind}#[fg=colour255,bg=colour24,bold]  ${name}  #[norange]#[default]"
   else
     OUT+="  #[range=user|${name}]${ind}#[fg=colour245]  ${name}  #[norange]#[default]"
