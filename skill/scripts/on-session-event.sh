@@ -51,8 +51,9 @@ case "$EVENT" in
   created)
     # --- Session created: add deck to decks.json ---
 
-    # Get the new session's working directory
+    # Get the new session's working directory and stable pane ID
     DECK_CWD=$(tmux -L "$SOCK_NAME" display-message -t "$SESSION_NAME" -p "#{pane_current_path}" 2>/dev/null || echo "$DJ_CWD")
+    PANE_ID=$(tmux -L "$SOCK_NAME" list-panes -t "$SESSION_NAME" -F '#{pane_id}' 2>/dev/null | head -1)
 
     # Add to decks.json if not already present (idempotent)
     node -e "
@@ -60,19 +61,21 @@ case "$EVENT" in
       const f = process.argv[1];
       const name = process.argv[2];
       const dir = process.argv[3];
+      const paneId = process.argv[4];
       let data = { decks: [] };
       try { data = JSON.parse(fs.readFileSync(f, 'utf-8')); } catch {}
       if (data.decks.some(d => d.name === name)) process.exit(0);
       data.decks.push({
         name,
         dir,
+        paneId: paneId || undefined,
         status: 'working',
         created: new Date().toISOString(),
       });
       const tmp = f + '.tmp';
       fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
       fs.renameSync(tmp, f);
-    " "$DECKS_FILE" "$SESSION_NAME" "$DECK_CWD" 2>/dev/null || true
+    " "$DECKS_FILE" "$SESSION_NAME" "$DECK_CWD" "$PANE_ID" 2>/dev/null || true
 
     # Write deck-created alert
     if [[ -f "$JSONL_STATE" ]]; then

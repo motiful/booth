@@ -62,8 +62,20 @@ fi
 # Resolve to absolute path
 WORK_DIR="$(cd "$WORK_DIR" && pwd)"
 
+# Snapshot existing JSONL files before spawning CC
+# (to detect which new JSONL file belongs to THIS deck)
+_ENCODED_DIR=$(printf '%s' "$WORK_DIR" | sed 's|/|-|g; s|\.|-|g')
+_JSONL_DIR="$HOME/.claude/projects/$_ENCODED_DIR"
+_PRE_JSONLS=""
+if [[ -d "$_JSONL_DIR" ]]; then
+  _PRE_JSONLS=$(ls "$_JSONL_DIR"/*.jsonl 2>/dev/null | sort || true)
+fi
+
 # Create tmux session
 tmux -L "$SOCKET" new-session -d -s "$NAME" -c "$WORK_DIR"
+
+# Capture the stable pane ID (%N) — survives join-pane/break-pane operations
+PANE_ID=$(tmux -L "$SOCKET" list-panes -t "$NAME" -F '#{pane_id}' | head -1)
 
 # Read child protocol
 PROTOCOL_FILE="$SCRIPT_DIR/../references/child-protocol.md"
@@ -89,10 +101,12 @@ ${EXTRA_PROMPT}"
 fi
 
 # Build claude command with flags
+# Write system prompt to temp file to avoid shell escaping issues with send-keys
 CLAUDE_CMD="claude"
 if [[ -n "$PROTOCOL" ]]; then
-  ESCAPED_PROTOCOL="${PROTOCOL//\'/\'\\\'\'}"
-  CLAUDE_CMD+=" --append-system-prompt '${ESCAPED_PROTOCOL}'"
+  PROTOCOL_TMP=$(mktemp /tmp/booth-prompt-XXXXXX)
+  printf '%s' "$PROTOCOL" > "$PROTOCOL_TMP"
+  CLAUDE_CMD+=" --append-system-prompt \"\$(cat '$PROTOCOL_TMP')\""
 fi
 if [[ -n "$DISALLOWED_TOOLS" ]]; then
   CLAUDE_CMD+=" --disallowedTools ${DISALLOWED_TOOLS}"
@@ -118,10 +132,66 @@ if [[ $ELAPSED -ge $TIMEOUT ]]; then
   echo "Warning: claude may not have started within ${TIMEOUT}s" >&2
 fi
 
+# --- Register pane ID immediately (available right after new-session) ---
+_DECKS_FILE="$DIR/.booth/decks.json"
+if [[ -f "$_DECKS_FILE" ]]; then
+  node -e "
+    const fs = require('fs');
+    const f = process.argv[1];
+    const name = process.argv[2];
+    const paneId = process.argv[3];
+    let data = { decks: [] };
+    try { data = JSON.parse(fs.readFileSync(f, 'utf-8')); } catch {}
+    const deck = data.decks.find(d => d.name === name);
+    if (deck && paneId) deck.paneId = paneId;
+    const tmp = f + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
+    fs.renameSync(tmp, f);
+  " "$_DECKS_FILE" "$NAME" "$PANE_ID" 2>/dev/null || true
+fi
+echo "paneId=$PANE_ID"
+
+# --- Detect JSONL in background (CC may take 30-60s to create it) ---
+# Non-blocking: spawn a background process that polls for the new JSONL file,
+# then writes jsonlPath to decks.json when found. Max wait: 90 seconds.
+(
+  _MAX_WAIT=90
+  _WAITED=0
+  _JSONL_PATH=""
+  while [[ $_WAITED -lt $_MAX_WAIT ]]; do
+    sleep 2
+    _WAITED=$((_WAITED + 2))
+    if [[ -d "$_JSONL_DIR" ]]; then
+      _POST_JSONLS=$(ls "$_JSONL_DIR"/*.jsonl 2>/dev/null | sort || true)
+      _NEW_JSONL=$(comm -13 <(echo "$_PRE_JSONLS") <(echo "$_POST_JSONLS") 2>/dev/null | head -1)
+      if [[ -n "$_NEW_JSONL" ]]; then
+        _JSONL_PATH="$_NEW_JSONL"
+        break
+      fi
+    fi
+  done
+  if [[ -n "$_JSONL_PATH" && -f "$_DECKS_FILE" ]]; then
+    node -e "
+      const fs = require('fs');
+      const f = process.argv[1];
+      const name = process.argv[2];
+      const jp = process.argv[3];
+      let data = { decks: [] };
+      try { data = JSON.parse(fs.readFileSync(f, 'utf-8')); } catch {}
+      const deck = data.decks.find(d => d.name === name);
+      if (deck) deck.jsonlPath = jp;
+      const tmp = f + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
+      fs.renameSync(tmp, f);
+    " "$_DECKS_FILE" "$NAME" "$_JSONL_PATH" 2>/dev/null
+  fi
+) &
+echo "jsonlPath=(detecting in background, max 90s)"
+
 # Send initial prompt if provided
 if [[ -n "$PROMPT" ]]; then
   sleep 2
-  "$SCRIPT_DIR/send-to-child.sh" "$NAME" "$PROMPT"
+  "$SCRIPT_DIR/send-to-child.sh" --pane "$PANE_ID" "$NAME" "$PROMPT"
 fi
 
 # NOTE: Deck registration, alert writing, and watchdog startup are handled
