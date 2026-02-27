@@ -213,6 +213,74 @@ function runWatchdog() {
     } catch { /* tmux may not be available */ }
   }
 
+  // --- DJ send-keys notification ---
+  /** @type {{deck: string, type: string, message: string}[]} */
+  const pendingAlerts = [];
+
+  /**
+   * Check if DJ's CC prompt is idle (waiting for input).
+   * Captures last 3 lines and looks for a ">" prompt with nothing after it.
+   */
+  function isDjIdle() {
+    try {
+      const output = execFileSync('tmux', [
+        '-L', socket, 'capture-pane', '-t', djSession, '-p', '-S', '-3',
+      ], { stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000, encoding: 'utf-8' });
+      const lines = output.split('\n').filter(l => l.length > 0);
+      // Walk backwards to find the last line starting with CC's prompt
+      // CC uses "❯" (U+276F) as its input prompt character
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        if (/^\s*[>❯]/.test(line)) {
+          // Check if there's user-typed text after the prompt marker
+          const afterPrompt = line.replace(/^\s*[>❯]\s*/, '');
+          return afterPrompt.length === 0;
+        }
+      }
+      // No prompt found — DJ might be processing or not started
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Send all pending alerts to DJ via tmux send-keys.
+   * Batches multiple alerts into a single message to avoid spamming.
+   */
+  function flushAlerts() {
+    if (pendingAlerts.length === 0) return;
+
+    const lines = pendingAlerts.map(a => `[booth-alert] ${a.deck} ${a.type}`);
+    const message = lines.join('; ');
+    pendingAlerts.length = 0;
+
+    try {
+      // send-keys with -l (literal) to avoid tmux key interpretation
+      execFileSync('tmux', [
+        '-L', socket, 'send-keys', '-t', djSession, '-l', message,
+      ], { stdio: 'pipe', timeout: 5000 });
+      // Small delay then press Enter
+      execFileSync('tmux', [
+        '-L', socket, 'send-keys', '-t', djSession, 'Enter',
+      ], { stdio: 'pipe', timeout: 5000 });
+      log(`Sent to DJ: ${message}`);
+    } catch (e) {
+      log(`send-keys failed: ${e.message}`);
+      // Don't re-queue — alerts are also written to alerts.json as fallback
+    }
+  }
+
+  // Try to flush pending alerts every 3 seconds (only when DJ is idle)
+  const alertFlushInterval = setInterval(() => {
+    if (pendingAlerts.length === 0) return;
+    if (!isDjIdle()) {
+      log(`DJ busy, ${pendingAlerts.length} alert(s) queued`);
+      return;
+    }
+    flushAlerts();
+  }, 3000);
+
   function getActiveDecks() {
     const decksJson = '.booth/decks.json';
     try {
@@ -236,6 +304,16 @@ function runWatchdog() {
 
     const rl = createInterface({ input: proc.stdout });
 
+    // Catchup phase: tail -n 50 replays history almost instantly.
+    // During catchup, update state silently (no alerts/notifications).
+    // After 500ms of no new lines, mark catchup done.
+    let catchingUp = true;
+    let catchupTimer = setTimeout(() => {
+      catchingUp = false;
+      const w = watchers.get(deckName);
+      if (w) log(`${deckName}: catchup done, state=${w.state}`);
+    }, 500);
+
     rl.on('line', (line) => {
       line = line.trim();
       if (!line) return;
@@ -243,14 +321,28 @@ function runWatchdog() {
       const w = watchers.get(deckName);
       if (!w) return;
 
+      // Reset catchup timer on each line (history lines arrive in rapid bursts)
+      if (catchingUp) {
+        clearTimeout(catchupTimer);
+        catchupTimer = setTimeout(() => {
+          catchingUp = false;
+          log(`${deckName}: catchup done, state=${w.state}`);
+        }, 500);
+      }
+
       const newState = parseEventState(line);
       if (newState && newState !== w.state) {
         const old = w.state;
         w.state = newState;
         w.lastEvent = Date.now();
         log(`${deckName}: ${old} → ${newState}`);
-        if (newState !== 'working') {
+        // Only alert after catchup — skip historical state transitions
+        if (!catchingUp && newState !== 'working') {
           doWriteAlert(deckName, newState, `deck ${deckName} ${newState}.`);
+          // Queue send-keys notification for actionable transitions
+          if (newState === 'idle' || newState === 'error' || newState === 'needs-attention') {
+            pendingAlerts.push({ deck: deckName, type: newState, message: `deck ${deckName} ${newState}.` });
+          }
           if (newState === 'error' || newState === 'needs-attention') {
             displayUrgent(`⚠ Booth: deck ${deckName} ${newState}`);
           }
@@ -293,6 +385,7 @@ function runWatchdog() {
         w.state = 'idle';
         log(`${name}: working → idle (60s timeout)`);
         doWriteAlert(name, 'idle', `deck ${name} idle (60s timeout).`);
+        pendingAlerts.push({ deck: name, type: 'idle', message: `deck ${name} idle (60s timeout).` });
       }
     }
   }
@@ -305,6 +398,7 @@ function runWatchdog() {
       decksWatcher = null;
     }
     if (healthInterval) clearInterval(healthInterval);
+    if (alertFlushInterval) clearInterval(alertFlushInterval);
     for (const name of [...watchers.keys()]) {
       stopWatcher(name);
     }

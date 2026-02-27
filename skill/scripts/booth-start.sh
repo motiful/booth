@@ -167,12 +167,12 @@ case "$CMD" in
       exit 0
     fi
 
-    # List what we're about to kill
-    echo "Killing all Booth sessions:"
+    # List what we're about to shut down
+    echo "Shutting down Booth (graceful):"
     tmux -L "$SOCKET" list-sessions -F "  #{session_name}" 2>/dev/null
 
-    # Kill all sessions on the socket
-    tmux -L "$SOCKET" kill-server 2>/dev/null || true
+    # Graceful shutdown: clean state files, stop watchdog, then kill-server
+    bash "$SCRIPT_DIR/booth-shutdown.sh" --socket-name "$SOCKET"
     echo "Done."
     ;;
 
