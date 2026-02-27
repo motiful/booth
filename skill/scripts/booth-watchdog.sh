@@ -28,11 +28,12 @@ fi
 
 # Restart loop: exit code 42 = code updated, restart automatically
 while true; do
-  node "$JSONL_STATE" watchdog
-  EXIT_CODE=$?
+  node "$JSONL_STATE" watchdog || EXIT_CODE=$?
+  EXIT_CODE=${EXIT_CODE:-0}
   if [[ $EXIT_CODE -eq 42 ]]; then
     echo "[watchdog] Code updated, restarting in 1s..."
     sleep 1
+    EXIT_CODE=0
     continue
   fi
   exit $EXIT_CODE
