@@ -370,7 +370,7 @@ function runCli() {
 
   // Resolve pane from deck name via decks.json if --pane not provided
   if (!pane && deckName) {
-    pane = lookupPaneId(deckName);
+    pane = lookupPaneId(deckName, socket);
     if (!pane) {
       process.stderr.write(`Error: deck '${deckName}' not found or has no paneId in decks.json\n`);
       process.exit(1);
@@ -389,24 +389,22 @@ function runCli() {
 
 /**
  * Look up a deck's pane ID from .booth/decks.json.
- * Searches cwd and parent directories for .booth/.
+ * Uses @booth-root tmux variable for canonical .booth/ location.
  */
-function lookupPaneId(deckName) {
-  // Try cwd first, then walk up
-  let dir = process.cwd();
-  for (let i = 0; i < 5; i++) {
-    const decksFile = resolve(dir, '.booth', 'decks.json');
-    try {
+function lookupPaneId(deckName, socket = 'booth') {
+  // Try @booth-root first (canonical .booth/ location)
+  try {
+    const boothRoot = execFileSync('tmux', ['-L', socket, 'show', '-gvq', '@booth-root'], {
+      stdio: ['pipe', 'pipe', 'pipe'], timeout: 3000, encoding: 'utf-8',
+    }).trim();
+    if (boothRoot) {
+      const decksFile = resolve(boothRoot, '.booth', 'decks.json');
       const data = JSON.parse(readFileSync(decksFile, 'utf-8'));
       const deck = (data.decks ?? []).find(d => d.name === deckName);
       if (deck?.paneId) return deck.paneId;
-      // Found decks.json but no paneId — fall back to session name
       if (deck) return null;
-    } catch { /* not here, walk up */ }
-    const parent = resolve(dir, '..');
-    if (parent === dir) break;
-    dir = parent;
-  }
+    }
+  } catch { /* fall through */ }
   return null;
 }
 

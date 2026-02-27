@@ -42,25 +42,21 @@ TARGET="$NAME"
 if [[ -n "$PANE_ID" ]]; then
   TARGET="$PANE_ID"
 else
-  # Try to resolve pane ID from decks.json
-  RESOLVED=$(node -e "
-    const fs = require('fs');
-    const path = require('path');
-    // Walk up from cwd looking for .booth/decks.json
-    let dir = process.cwd();
-    for (let i = 0; i < 5; i++) {
-      const f = path.join(dir, '.booth', 'decks.json');
+  # Try to resolve pane ID from decks.json via @booth-root
+  BOOTH_ROOT=$(tmux -L "$SOCKET" show -gvq @booth-root 2>/dev/null || true)
+  RESOLVED=""
+  if [[ -n "$BOOTH_ROOT" && -f "$BOOTH_ROOT/.booth/decks.json" ]]; then
+    RESOLVED=$(node -e "
+      const fs = require('fs');
+      const f = process.argv[1];
+      const name = process.argv[2];
       try {
         const data = JSON.parse(fs.readFileSync(f, 'utf-8'));
-        const deck = (data.decks || []).find(d => d.name === process.argv[1]);
-        if (deck && deck.paneId) { process.stdout.write(deck.paneId); process.exit(0); }
-        if (deck) process.exit(0); // found deck but no paneId
+        const deck = (data.decks || []).find(d => d.name === name);
+        if (deck && deck.paneId) process.stdout.write(deck.paneId);
       } catch {}
-      const parent = path.dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
-    }
-  " "$NAME" 2>/dev/null || true)
+    " "$BOOTH_ROOT/.booth/decks.json" "$NAME" 2>/dev/null || true)
+  fi
   if [[ -n "$RESOLVED" ]]; then
     TARGET="$RESOLVED"
   fi

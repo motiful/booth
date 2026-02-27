@@ -59,6 +59,7 @@ case "$CMD" in
     # Set env vars so child scripts and keybindings can find DJ
     tmux -L "$SOCKET" set-environment -t "$SESSION" BOOTH_SOCKET "$SOCKET"
     tmux -L "$SOCKET" set -g @booth-dj "$SESSION"
+    tmux -L "$SOCKET" set -g @booth-root "$DIR"
 
     # Register tmux hooks for automatic deck lifecycle management
     # session-created: auto-register new decks in decks.json + start watchdog

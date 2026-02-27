@@ -134,7 +134,9 @@ if [[ $ELAPSED -ge $TIMEOUT ]]; then
 fi
 
 # --- Register pane ID immediately (available right after new-session) ---
-_DECKS_FILE="$DIR/.booth/decks.json"
+# Use @booth-root (DJ's CWD) for .booth/ path — $DIR is the deck's --dir, which may differ
+_BOOTH_ROOT=$(tmux -L "$SOCKET" show -gvq @booth-root 2>/dev/null || echo "$DIR")
+_DECKS_FILE="$_BOOTH_ROOT/.booth/decks.json"
 if [[ -f "$_DECKS_FILE" ]]; then
   node -e "
     const fs = require('fs');
