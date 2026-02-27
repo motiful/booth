@@ -31,6 +31,10 @@ case "$RANGE" in
     $T confirm-before -p 'Kill this deck? (y/n)' \
       "run-shell 'bash \"$SCRIPTS/booth-kill-joined.sh\" \"$SOCK\"'"
     ;;
+  _t)
+    # Collapsed deck list clicked → open session tree picker
+    $T choose-tree -Zs
+    ;;
   *)
     DJ=$($T show -gvq @booth-dj 2>/dev/null || echo "dj")
     if [[ "$RANGE" == "$DJ" ]]; then
