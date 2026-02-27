@@ -94,8 +94,9 @@ case "$EVENT" in
 
     if [[ "$WATCHDOG_ALIVE" == false && -f "$JSONL_STATE" ]]; then
       cd "$DJ_CWD"
+      WATCHDOG_SH="$(dirname "$JSONL_STATE")/booth-watchdog.sh"
       BOOTH_SOCKET="$SOCK_NAME" BOOTH_DJ="$DJ_SESSION" \
-        nohup node "$JSONL_STATE" watchdog \
+        nohup bash "$WATCHDOG_SH" \
         >> "/tmp/booth-watchdog-${SOCK_NAME}.log" 2>&1 &
       echo "$!" > "$PID_FILE"
     fi
