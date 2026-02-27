@@ -82,17 +82,42 @@ if [[ $COUNT -eq 0 ]]; then
   exit 0
 fi
 
-# For >5 decks, skip per-deck state detection (just show count)
-if [[ $COUNT -gt 5 ]]; then
-  if [[ "$CURRENT" != "$DJ" && -n "$CURRENT" ]]; then
-    $T set -gq @booth-deck-status "#[fg=colour245]${COUNT} decks #[fg=colour255,bold]●${CURRENT}#[default]"
+# --- Adaptive overflow (Option D): full → truncate → collapse ---
+MAX_WIDTH=140
+OVERHEAD=7  # padding + indicator per deck entry
+
+# Phase 1: check if full names fit
+total_width=0
+for name in "${NAMES[@]}"; do
+  total_width=$(( total_width + ${#name} + OVERHEAD ))
+done
+
+if [[ $total_width -le $MAX_WIDTH ]]; then
+  MODE="full"
+else
+  # Phase 2: check if truncated names fit (min 5 display chars per name)
+  avail=$(( MAX_WIDTH - COUNT * OVERHEAD ))
+  PER_NAME=$(( avail / COUNT ))
+  if [[ $PER_NAME -ge 5 ]]; then
+    MODE="truncate"
+  else
+    # Phase 3: collapse to count + active
+    MODE="collapse"
+  fi
+fi
+
+if [[ "$MODE" == "collapse" ]]; then
+  # Show count badge + joined/current deck name
+  ACTIVE="${JOINED_DECK:-$CURRENT}"
+  if [[ -n "$ACTIVE" && "$ACTIVE" != "$DJ" ]]; then
+    $T set -gq @booth-deck-status "#[fg=colour245]${COUNT} decks #[fg=colour255,bold]●${ACTIVE}#[default]"
   else
     $T set -gq @booth-deck-status "#[fg=colour245]${COUNT} decks"
   fi
   exit 0
 fi
 
-# ≤5 decks: show each with status indicator
+# Phase 1 or 2: render each deck with state indicator
 OUT=""
 for name in "${NAMES[@]}"; do
   # Detect state: joined deck → capture from the joined pane (not the hold window)
@@ -115,14 +140,19 @@ for name in "${NAMES[@]}"; do
     *)                ind="#[fg=colour245]…" ;;
   esac
 
-  # Use full session name as range tag — click to join-pane
+  # Truncate name if needed (range tag keeps full name for click routing)
+  dname="$name"
+  if [[ "$MODE" == "truncate" && ${#name} -gt $PER_NAME ]]; then
+    dname="${name:0:$(( PER_NAME - 1 ))}…"
+  fi
+
   # Highlight: joined deck (inverted) > current session (bold) > default (muted)
   if [[ "$name" == "$JOINED_DECK" ]]; then
-    OUT+=" #[range=user|${name},bg=colour252] ${ind}#[fg=colour16,bold]  ${name}  #[norange]#[default]"
+    OUT+=" #[range=user|${name},bg=colour252] ${ind}#[fg=colour16,bold]  ${dname}  #[norange]#[default]"
   elif [[ "$name" == "$CURRENT" ]]; then
-    OUT+="  #[range=user|${name}]${ind}#[fg=colour255,bold]  ${name}  #[norange]#[default]"
+    OUT+="  #[range=user|${name}]${ind}#[fg=colour255,bold]  ${dname}  #[norange]#[default]"
   else
-    OUT+="  #[range=user|${name}]${ind}#[fg=colour245]  ${name}  #[norange]#[default]"
+    OUT+="  #[range=user|${name}]${ind}#[fg=colour245]  ${dname}  #[norange]#[default]"
   fi
 done
 
