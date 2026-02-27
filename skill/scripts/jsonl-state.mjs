@@ -201,31 +201,9 @@ function runWatchdog() {
     try {
       writeAlert(alertsFile, deckName, alertType, message);
       log(`Alert written: ${alertType} ${deckName}`);
-      checkStaleAlerts();
     } catch (e) {
       log(`Alert write failed: ${e.message}`);
     }
-  }
-
-  let lastStaleResend = 0;
-
-  function checkStaleAlerts() {
-    try {
-      const alerts = JSON.parse(readFileSync(alertsFile, 'utf-8'));
-      if (!alerts || alerts.length === 0) return;
-      const oldest = new Date(alerts[0].timestamp).getTime();
-      const ageMs = Date.now() - oldest;
-      if (ageMs > 2 * 60_000) {
-        // Cooldown: don't resend more than once per 2 minutes
-        if (Date.now() - lastStaleResend < 2 * 60_000) return;
-        lastStaleResend = Date.now();
-        // Resend each stale alert through the normal pipeline (stop-hook injection)
-        for (const a of alerts) {
-          sendAlertToDj(a.deck, a.type);
-        }
-        log(`Stale alerts (oldest ${Math.round(ageMs / 1000)}s) — resent ${alerts.length} alert(s) to DJ`);
-      }
-    } catch { /* ignore read errors */ }
   }
 
   function displayUrgent(message) {
@@ -256,7 +234,7 @@ function runWatchdog() {
   // --- DJ state tracking via JSONL (DJ = "deck zero") ---
   let djState = 'unknown';
   let djWatcherHandle = null;  // { proc, rl }
-  let djJsonlPath = null;      // tracked for size-based auto-compact
+  let djJsonlPath = null;      // current JSONL path for DJ watcher
 
   /**
    * Start a JSONL watcher for DJ's own CC session.
@@ -337,85 +315,30 @@ function runWatchdog() {
   /** @type {Map<string, NodeJS.Timeout>} deckName → idle debounce timer */
   const idleTimers = new Map();
 
-  // --- Alert ACK closed-loop ---
-  /** @type {Map<string, { timer: NodeJS.Timeout, alertType: string, deckStatus: string }>} */
-  const ackTimers = new Map();
-  const ACK_TIMEOUT = 2 * 60_000; // 2 minutes
+  // --- Wake DJ (send-keys heartbeat, 30s global cooldown) ---
+  let lastWakeTime = 0;
+  const WAKE_COOLDOWN = 30_000;
 
-  /**
-   * Start an ACK timer for a deck alert. If DJ doesn't update decks.json
-   * within 2 min (status unchanged), resend the alert.
-   */
-  function startAckTimer(deckName, alertType) {
-    // Cancel existing timer for this deck
-    cancelAckTimer(deckName);
-    // Snapshot current deck status from decks.json
-    const currentStatus = getDeckStatus(deckName);
-    const timer = setTimeout(() => {
-      ackTimers.delete(deckName);
-      const nowStatus = getDeckStatus(deckName);
-      if (nowStatus === currentStatus) {
-        log(`ACK timeout: ${deckName} status unchanged (${nowStatus}), resending alert`);
-        doWriteAlert(deckName, alertType, `deck ${deckName} ${alertType} (ACK retry).`);
-        sendAlertToDj(deckName, alertType);
-      } else {
-        log(`ACK OK: ${deckName} status changed ${currentStatus} → ${nowStatus}`);
-      }
-    }, ACK_TIMEOUT);
-    ackTimers.set(deckName, { timer, alertType, deckStatus: currentStatus });
-  }
-
-  function cancelAckTimer(deckName) {
-    const entry = ackTimers.get(deckName);
-    if (entry) {
-      clearTimeout(entry.timer);
-      ackTimers.delete(deckName);
-    }
-  }
-
-  /** Check all ACK timers against current decks.json — cancel if status changed. */
-  function checkAckTimers() {
-    for (const [deckName, entry] of ackTimers) {
-      const nowStatus = getDeckStatus(deckName);
-      if (nowStatus !== entry.deckStatus) {
-        log(`ACK OK (on change): ${deckName} status ${entry.deckStatus} → ${nowStatus}`);
-        cancelAckTimer(deckName);
-      }
-    }
-  }
-
-  /** Get a deck's current status from decks.json. */
-  function getDeckStatus(deckName) {
-    try {
-      const data = JSON.parse(readFileSync('.booth/decks.json', 'utf-8'));
-      const deck = (data.decks ?? []).find(d => d.name === deckName);
-      return deck?.status ?? 'unknown';
-    } catch {
-      return 'unknown';
-    }
-  }
-
-  /**
-   * Send an alert to DJ via sendMessage — only when DJ is idle.
-   * If DJ is working (mid-API-call), injecting send-keys corrupts the terminal.
-   * In that case, the alert is already in alerts.json; the stop-hook will pick it up.
-   */
-  function sendAlertToDj(deck, type) {
+  function wakeDj() {
     if (djState !== 'idle' && djState !== 'unknown') {
-      log(`DJ busy (${djState}), skipping send-keys for ${deck} ${type} — alert in file`);
+      log(`DJ busy (${djState}), skip wake — stop hook will consume`);
       return;
     }
-    const message = `[booth-alert] ${deck} ${type}`;
+    if (Date.now() - lastWakeTime < WAKE_COOLDOWN) {
+      log('Wake cooldown active, skip');
+      return;
+    }
     const target = djPaneId || djSession;
     try {
-      const result = sendMessage(socket, target, message);
+      const result = sendMessage(socket, target, '[booth-heartbeat]');
       if (result.ok) {
-        log(`Sent to DJ (${target}): ${message}`);
+        lastWakeTime = Date.now();
+        log(`DJ woken (${target})`);
       } else {
-        log(`sendMessage to DJ skipped: ${result.skipped || result.error}`);
+        log(`DJ wake skipped: ${result.skipped || result.error}`);
       }
     } catch (e) {
-      log(`sendMessage to DJ failed: ${e.message}`);
+      log(`DJ wake failed: ${e.message}`);
     }
   }
 
@@ -477,7 +400,6 @@ function runWatchdog() {
         // Clear notifiedState when deck goes back to working
         if (newState === 'working') {
           w.notifiedState = null;
-          cancelAckTimer(deckName);
           if (idleTimers.has(deckName)) {
             clearTimeout(idleTimers.get(deckName));
             idleTimers.delete(deckName);
@@ -493,8 +415,7 @@ function runWatchdog() {
               if (w3 && w3.state === 'idle' && w3.notifiedState !== 'idle') {
                 w3.notifiedState = 'idle';
                 doWriteAlert(deckName, 'idle', `deck ${deckName} idle.`);
-                sendAlertToDj(deckName, 'idle');
-                startAckTimer(deckName, 'idle');
+                wakeDj();
                 log(`${deckName}: idle confirmed (10s debounce)`);
               }
             }, 10_000);
@@ -503,8 +424,7 @@ function runWatchdog() {
             // error / needs-attention — immediately, once
             w.notifiedState = newState;
             doWriteAlert(deckName, newState, `deck ${deckName} ${newState}.`);
-            sendAlertToDj(deckName, newState);
-            startAckTimer(deckName, newState);
+            wakeDj();
             if (newState === 'error' || newState === 'needs-attention') {
               displayUrgent(`⚠ Booth: deck ${deckName} ${newState}`);
             }
@@ -551,8 +471,7 @@ function runWatchdog() {
           w.notifiedState = 'idle';
           log(`${name}: working → idle (60s timeout)`);
           doWriteAlert(name, 'idle', `deck ${name} idle (60s timeout).`);
-          sendAlertToDj(name, 'idle');
-          startAckTimer(name, 'idle');
+          wakeDj();
         }
       }
     }
@@ -566,7 +485,6 @@ function runWatchdog() {
       decksWatcher = null;
     }
     if (healthInterval) clearInterval(healthInterval);
-    for (const name of [...ackTimers.keys()]) cancelAckTimer(name);
     stopDjWatcher();
     for (const name of [...watchers.keys()]) {
       stopWatcher(name);
@@ -663,7 +581,6 @@ function runWatchdog() {
         syncDebounce = setTimeout(() => {
           log('decks.json changed — syncing watchers');
           syncWatchers();
-          checkAckTimers();
         }, 500);
       });
       decksWatcher.on('error', () => {
@@ -678,29 +595,33 @@ function runWatchdog() {
     }
   }
 
-  // --- Auto-compact DJ when JSONL gets large ---
-  const DJ_COMPACT_THRESHOLD = 5 * 1024 * 1024; // 5MB
-  const DJ_COMPACT_COOLDOWN = 10 * 60_000;       // 10 minutes
+  // --- Auto-compact DJ based on real context utilization ---
+  const DJ_COMPACT_CONTEXT_FILE = '.booth/dj-context.json';
+  const DJ_COMPACT_THRESHOLD_PCT = 80;             // compact when context >= 80%
+  const DJ_COMPACT_COOLDOWN = 10 * 60_000;         // 10 minutes
   let lastCompactTime = 0;
 
   function checkDjCompact() {
-    if (!djJsonlPath) return;
     if (djState !== 'idle') return;
     if (Date.now() - lastCompactTime < DJ_COMPACT_COOLDOWN) return;
     try {
-      const st = statSync(djJsonlPath);
-      if (st.size < DJ_COMPACT_THRESHOLD) return;
-      const sizeMB = (st.size / (1024 * 1024)).toFixed(1);
+      const raw = readFileSync(DJ_COMPACT_CONTEXT_FILE, 'utf-8');
+      const ctx = JSON.parse(raw);
+      const pct = ctx.used_percentage ?? 0;
+      if (pct < DJ_COMPACT_THRESHOLD_PCT) return;
       const target = djPaneId || djSession;
       const result = sendMessage(socket, target, '/compact');
       if (result.ok) {
         lastCompactTime = Date.now();
-        log(`DJ auto-compact sent (JSONL ${sizeMB}MB > 5MB threshold)`);
+        log(`DJ auto-compact sent (context ${pct}% >= ${DJ_COMPACT_THRESHOLD_PCT}% threshold)`);
       } else {
         log(`DJ auto-compact skipped: ${result.skipped || result.error}`);
       }
     } catch (e) {
-      log(`DJ auto-compact check failed: ${e.message}`);
+      // dj-context.json missing = statusline not yet configured or CC hasn't responded yet
+      if (e.code !== 'ENOENT') {
+        log(`DJ auto-compact check failed: ${e.message}`);
+      }
     }
   }
 

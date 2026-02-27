@@ -71,6 +71,22 @@ case "$CMD" in
     tmux -L "$SOCKET" set-hook -g client-session-changed \
       "refresh-client -S"
 
+    # Configure CC statusline for context tracking
+    STATUSLINE_SCRIPT="$SCRIPT_DIR/dj-statusline.sh"
+    if [[ -f "$STATUSLINE_SCRIPT" ]]; then
+      mkdir -p "$DIR/.claude"
+      node -e "
+        const fs = require('fs');
+        const f = process.argv[1];
+        const cmd = process.argv[2];
+        let cfg = {};
+        try { cfg = JSON.parse(fs.readFileSync(f, 'utf-8')); } catch {}
+        cfg.statusLine = { type: 'command', command: cmd };
+        fs.writeFileSync(f + '.tmp', JSON.stringify(cfg, null, 2) + '\n');
+        fs.renameSync(f + '.tmp', f);
+      " "$DIR/.claude/settings.json" "$STATUSLINE_SCRIPT"
+    fi
+
     # Launch CC with /booth skill loaded
     BOOTH_PROMPT="You are the Booth DJ. You were started via booth-start.sh. Your tmux session is '$SESSION' on socket '$SOCKET'. Working directory: $DIR. Run /booth to activate Booth mode."
     tmux -L "$SOCKET" send-keys -t "$SESSION" "claude --append-system-prompt '${BOOTH_PROMPT}'" Enter
