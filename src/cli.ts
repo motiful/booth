@@ -7,6 +7,10 @@ import { setup } from './commands/setup.js';
 import { watch } from './commands/watch.js';
 import { info } from './commands/info.js';
 import { ps } from './commands/ps.js';
+import { status } from './commands/status.js';
+import { log } from './commands/log.js';
+import { spawn } from './commands/spawn.js';
+import { send } from './commands/send.js';
 
 export function cli(argv: string[]): void {
   const cmd = argv[0] ?? '';
@@ -38,6 +42,18 @@ export function cli(argv: string[]): void {
       break;
     case 'ps':
       ps();
+      break;
+    case 'status':
+      status(argv.slice(1));
+      break;
+    case 'log':
+      log(argv.slice(1));
+      break;
+    case 'spawn':
+      spawn(argv.slice(1));
+      break;
+    case 'send':
+      send(argv.slice(1));
       break;
     default:
       // booth [<path>] — no subcommand = start

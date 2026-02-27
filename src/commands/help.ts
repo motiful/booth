@@ -10,6 +10,14 @@ Usage:
   booth info           Show current project's Booth status
   booth ps             List all running Booth instances
   booth setup          Install CC skill + crontab heartbeat
+
+Orchestration (public API):
+  booth status [<name>]                   Show deck states (working/idle/error/…)
+  booth log <name> [--lines N]            Tail deck JSONL or capture-pane output
+  booth spawn <name> [--dir <path>]       Create a new deck
+         [--prompt <text>] [--worktree]
+  booth send <name> <message>             Send a message to a deck
+
   booth -h             Show this help
 
 Per-project: each directory with .booth/ has its own DJ + decks.
@@ -25,5 +33,10 @@ Examples:
   booth ps             Show all Booth instances across projects
   booth ls             Show what's running
   booth kill           Kill DJ + all decks
-  booth kill stale-one Kill just one deck`);
+  booth kill stale-one Kill just one deck
+  booth status         Show all deck states
+  booth status api     Show state of "api" deck
+  booth log api -n 30  Last 30 lines from "api" deck
+  booth spawn worker --dir ~/proj --prompt "fix tests"
+  booth send worker "run the linter"`);
 }
