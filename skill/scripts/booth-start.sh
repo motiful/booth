@@ -72,9 +72,9 @@ case "$CMD" in
       "refresh-client -S"
 
     # Launch CC with /booth skill loaded, auto-restart on crash/exit
+    # booth-dj-loop.sh: first run uses --append-system-prompt, restarts use --resume
     BOOTH_PROMPT="You are the Booth DJ. You were started via booth-start.sh. Your tmux session is ${SESSION} on socket ${SOCKET}. Working directory: ${DIR}. Run /booth to activate Booth mode."
-    CLAUDE_CMD="claude --append-system-prompt '${BOOTH_PROMPT}'"
-    tmux -L "$SOCKET" send-keys -t "$SESSION" "while true; do ${CLAUDE_CMD}; echo '[booth] DJ exited, restarting in 3s... (Ctrl-C to stop)'; sleep 3; done" Enter
+    tmux -L "$SOCKET" send-keys -t "$SESSION" "bash '${SCRIPT_DIR}/booth-dj-loop.sh' '${SOCKET}' '${BOOTH_PROMPT}'" Enter
 
     # Wait for CC to start (poll for prompt indicator)
     TIMEOUT=15
