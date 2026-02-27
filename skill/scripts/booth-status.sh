@@ -31,10 +31,12 @@ fi
 
 # --- Detect joined deck pane in current window ---
 JOINED_DECK=""
+JOINED_PANE=""
 for pid in $($T list-panes -F '#{pane_id}' 2>/dev/null); do
   orig=$($T show-options -pqv -t "$pid" @booth_origin 2>/dev/null) || true
   if [[ -n "$orig" ]]; then
     JOINED_DECK="$orig"
+    JOINED_PANE="$pid"
     break
   fi
 done
@@ -93,8 +95,12 @@ fi
 # ≤5 decks: show each with status indicator
 OUT=""
 for name in "${NAMES[@]}"; do
-  # Detect state from last 10 lines of pane output
-  pane_output=$($T capture-pane -t "$name" -p -S -10 2>/dev/null || echo "")
+  # Detect state: joined deck → capture from the joined pane (not the hold window)
+  if [[ "$name" == "$JOINED_DECK" && -n "$JOINED_PANE" ]]; then
+    pane_output=$($T capture-pane -t "$JOINED_PANE" -p -S -10 2>/dev/null || echo "")
+  else
+    pane_output=$($T capture-pane -t "$name" -p -S -10 2>/dev/null || echo "")
+  fi
   state="unknown"
   if [[ -f "$DETECT" && -n "$pane_output" ]]; then
     state=$(echo "$pane_output" | bash "$DETECT" 2>/dev/null || echo "unknown")
