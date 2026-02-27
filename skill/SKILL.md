@@ -191,7 +191,10 @@ Decks are capable but not infallible. DJ's job is to independently verify their 
 - **Product/architecture/design decisions** — Escalate to user. These affect the product's direction and require human judgment (aesthetics, cost trade-offs, API design, public-facing decisions).
 - **先斩后奏 (act first, report later)** — For high-confidence operational decisions, execute immediately and inform user. User can always redirect.
 
-**14. RALPH Loop Discipline**
+**14. Never Go Dark on Monitoring**
+When watchdog is down (killed, restarting, not yet deployed), DJ MUST manually poll decks every 3-5 minutes via `capture-pane`. No exceptions. The user should never have to ask "what's happening with my decks?" — that's DJ's job. If you kill the watchdog, immediately establish a manual polling cadence until the replacement is live.
+
+**15. RALPH Loop Discipline**
 Every task runs to completion through the RALPH loop: assign → execute → test → verify → deliver. "Done" means tested and committed, not "code written."
 
 - Deck says "done" → DJ runs audit checklist (#13)

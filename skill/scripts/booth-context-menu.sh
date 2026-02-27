@@ -21,15 +21,13 @@ fi
 
 SKILL_DIR="$HOME/.claude/skills/booth-skill/scripts"
 
-# Build the glance command
-GLANCE="TMUX='' tmux -S '${SOCK}' attach -t '${DECK}'"
-
 # display-menu for a deck
 # -x M -y S: position at mouse x, status line y
+# Labels: clear Chinese+English, parenthesis letters are keyboard shortcuts for the menu
 $T display-menu -T " ${DECK} " -x M -y S \
-  "看 Switch"       s "switch-client -t '${DECK}'" \
-  "瞄 Glance"       g "split-window -h -l 50% \"${GLANCE}\"" \
+  "进入 (全屏切换)"   s "switch-client -t '${DECK}'" \
+  "预览 (浮窗,ESC关)" g "display-popup -w 80% -h 75% -E -T ' ${DECK} ' \"TMUX='' tmux -S '${SOCK}' attach -t '${DECK}' -r\"" \
   "" \
-  "Send message"    m "command-prompt -p 'Send to ${DECK}:' \"run-shell 'bash ${SKILL_DIR}/send-to-child.sh \\\"${SOCK}\\\" \\\"${DECK}\\\" \\\"%%\\\"'\"" \
+  "发指令"            m "command-prompt -p '发送到 ${DECK}:' \"run-shell 'bash ${SKILL_DIR}/send-to-child.sh \\\"${SOCK}\\\" \\\"${DECK}\\\" \\\"%%\\\"'\"" \
   "" \
-  "#[fg=colour196]Kill" k "confirm-before -p 'Kill deck ${DECK}? (y/n)' 'kill-session -t ${DECK}'"
+  "#[fg=colour196]Kill (销毁)" k "confirm-before -p 'Kill deck ${DECK}? (y/n)' 'kill-session -t ${DECK}'"
