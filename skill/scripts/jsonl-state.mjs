@@ -152,7 +152,7 @@ function writeAlert(alertsFile, deckName, alertType, message) {
     alerts = JSON.parse(readFileSync(alertsFile, 'utf-8'));
   } catch { /* empty or missing */ }
   alerts.push(alert);
-  const tmp = alertsFile + '.tmp';
+  const tmp = alertsFile + `.tmp.${process.pid}`;
   writeFileSync(tmp, JSON.stringify(alerts, null, 2) + '\n');
   renameSync(tmp, alertsFile);
 }
@@ -525,19 +525,24 @@ function runWatchdog() {
 
     // Start or refresh watchers for active decks
     for (const { name, dir, jsonlPath } of active) {
-      // Per-deck JSONL path from decks.json (set by spawn-child.sh)
-      // Falls back to findJsonlForDir() only if jsonlPath not stored yet
+      // Only use the per-deck jsonlPath from decks.json (set by spawn-child.sh).
+      // NEVER fall back to findJsonlForDir() — all decks share the same working
+      // directory, so findJsonlForDir returns the newest JSONL (usually DJ's),
+      // causing all watchers to monitor the wrong session.
       let jsonl = null;
       if (jsonlPath && existsSync(jsonlPath)) {
         jsonl = jsonlPath;
-      } else {
-        jsonl = findJsonlForDir(dir);
-        if (jsonl && jsonlPath && jsonl !== jsonlPath) {
-          log(`${name}: stored jsonlPath gone, falling back to dir lookup`);
+      } else if (!jsonlPath) {
+        // spawn-child.sh background detector hasn't written jsonlPath yet.
+        // Stop any stale watcher that was previously started on the wrong file.
+        if (watchers.has(name)) {
+          log(`${name}: stopping watcher (no confirmed jsonlPath)`);
+          stopWatcher(name);
         }
-      }
-      if (!jsonl) {
-        log(`${name}: JSONL not found yet (dir=${dir})`);
+        continue;
+      } else {
+        // jsonlPath was stored but file no longer exists (CC restarted?)
+        log(`${name}: stored jsonlPath gone (${jsonlPath})`);
         continue;
       }
       const existing = watchers.get(name);
@@ -686,8 +691,8 @@ function runReadAlerts() {
   }
   if (!alerts || alerts.length === 0) process.exit(0);
 
-  // Clear the file atomically
-  const tmp = alertsFile + '.tmp';
+  // Clear the file atomically (use process-unique tmp to avoid race with writeAlert)
+  const tmp = alertsFile + `.tmp.${process.pid}`;
   writeFileSync(tmp, '[]\n');
   renameSync(tmp, alertsFile);
 
