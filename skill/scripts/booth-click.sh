@@ -4,6 +4,7 @@
 #
 # Range values:
 #   <session-name>  — DJ: switch-client; Deck: join-pane split
+#   _booth_menu     — BOOTH badge popup menu (Restart, Sleep, Session Tree, Shutdown)
 #   _z              — Zoom/unzoom toggle (fullscreen/shrink)
 #   _b              — Break joined pane (close, return to background)
 #   _k              — Kill joined deck (with confirm)
@@ -32,6 +33,15 @@ case "$RANGE" in
   _k)
     $T confirm-before -p 'Kill this deck? (y/n)' \
       "run-shell 'bash \"$SCRIPTS/booth-kill-joined.sh\" \"$SOCK\"'"
+    ;;
+  _booth_menu)
+    $T display-menu -M -O -T "#[align=centre,bold] BOOTH " -x M -y S \
+      "Restart DJ…"             r "run-shell 'bash \"${SCRIPTS}/booth-click.sh\" \"${SOCK}\" _r'" \
+      "Sleep"                   s "detach-client" \
+      ""                        "" "" \
+      "Session Tree"            t "choose-tree -Zs" \
+      ""                        "" "" \
+      "#[fg=colour196]Shutdown" Q "confirm-before -p 'Shutdown Booth? (y/n)' \"run-shell 'bash \\\"${SCRIPTS}/booth-shutdown.sh\\\" \\\"${SOCK}\\\"'\""
     ;;
   _r)
     DJ=$($T show -gvq @booth-dj 2>/dev/null || echo "dj")

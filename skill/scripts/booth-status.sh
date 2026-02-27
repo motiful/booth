@@ -29,16 +29,6 @@ else
   DJ_BTN="#[range=user|${DJ}]#[fg=colour245,bg=colour238]  DJ  #[norange]#[default]"
 fi
 
-# --- Restart button — only when viewing DJ session (to restart hung CC) ---
-if [[ "$CURRENT" == "$DJ" ]]; then
-  RESTART_BTN="#[range=user|_r]#[fg=colour208,bg=colour236]  Restart…  #[norange]#[default]"
-else
-  RESTART_BTN=""
-fi
-
-# --- Sleep button (detach) — always visible ---
-SLEEP_BTN="#[range=user|_s]#[fg=colour141,bg=colour236]  Sleep  #[norange]#[default]"
-
 # --- Detect joined deck pane in current window ---
 JOINED_DECK=""
 JOINED_PANE=""
@@ -70,12 +60,12 @@ if [[ -n "$JOINED_DECK" ]]; then
   ACTIVE_ORIGIN=$($T show-options -pqv -t "$ACTIVE_PANE" @booth_origin 2>/dev/null) || true
 
   if [[ -n "$ACTIVE_ORIGIN" ]]; then
-    $T set -gq @booth-status-left-extra "${RESTART_BTN}${SLEEP_BTN} ${DJ_BTN} ${ZOOM_BTN}${CLOSE_BTN}${KILL_BTN}"
+    $T set -gq @booth-status-left-extra "${DJ_BTN} ${ZOOM_BTN}${CLOSE_BTN}${KILL_BTN}"
   else
-    $T set -gq @booth-status-left-extra "${RESTART_BTN}${SLEEP_BTN} ${DJ_BTN} ${ZOOM_BTN}"
+    $T set -gq @booth-status-left-extra "${DJ_BTN} ${ZOOM_BTN}"
   fi
 else
-  $T set -gq @booth-status-left-extra "${RESTART_BTN}${SLEEP_BTN} ${DJ_BTN}"
+  $T set -gq @booth-status-left-extra "${DJ_BTN}"
 fi
 
 # --- Deck list ---
