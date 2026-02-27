@@ -21,6 +21,7 @@ import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSy
 import { createInterface } from 'node:readline';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { stashAndInject } from './input-box-check.mjs';
 
 // ---------------------------------------------------------------------------
 // Shared parsing logic
@@ -213,39 +214,83 @@ function runWatchdog() {
     } catch { /* tmux may not be available */ }
   }
 
+  // --- DJ state tracking via JSONL (DJ = "deck zero") ---
+  let djState = 'unknown';
+  let djWatcherHandle = null;  // { proc, rl }
+
+  /**
+   * Start a JSONL watcher for DJ's own CC session.
+   * DJ is treated like any other deck — JSONL events drive state detection.
+   * The watchdog's cwd IS DJ's working directory (set by on-session-event.sh).
+   */
+  function startDjWatcher() {
+    if (djWatcherHandle) return;  // already running
+
+    const djCwd = process.cwd();
+    const jsonl = findJsonlForDir(djCwd);
+    if (!jsonl) {
+      log(`DJ: JSONL not found yet (cwd=${djCwd})`);
+      return;
+    }
+
+    const proc = spawn('tail', ['-f', '-n', '50', jsonl], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const rl = createInterface({ input: proc.stdout });
+
+    let catchingUp = true;
+    let catchupTimer = setTimeout(() => {
+      catchingUp = false;
+      log(`DJ: catchup done, state=${djState}`);
+    }, 500);
+
+    rl.on('line', (line) => {
+      line = line.trim();
+      if (!line) return;
+
+      if (catchingUp) {
+        clearTimeout(catchupTimer);
+        catchupTimer = setTimeout(() => {
+          catchingUp = false;
+          log(`DJ: catchup done, state=${djState}`);
+        }, 500);
+      }
+
+      const newState = parseEventState(line);
+      if (newState && newState !== djState) {
+        const old = djState;
+        djState = newState;
+        log(`DJ: ${old} → ${newState}`);
+      } else if (newState) {
+        // Same state, refresh timestamp
+        djState = newState;
+      }
+    });
+
+    proc.on('exit', () => {
+      log('DJ watcher process exited');
+      djWatcherHandle = null;
+    });
+
+    djWatcherHandle = { proc, rl };
+    log(`DJ watcher started → ${jsonl}`);
+  }
+
+  function stopDjWatcher() {
+    if (!djWatcherHandle) return;
+    djWatcherHandle.rl.close();
+    djWatcherHandle.proc.kill('SIGTERM');
+    djWatcherHandle = null;
+    log('DJ watcher stopped');
+  }
+
   // --- DJ send-keys notification ---
   /** @type {{deck: string, type: string, message: string}[]} */
   const pendingAlerts = [];
 
   /**
-   * Check if DJ's CC prompt is idle (waiting for input).
-   * Captures last 3 lines and looks for a ">" prompt with nothing after it.
-   */
-  function isDjIdle() {
-    try {
-      const output = execFileSync('tmux', [
-        '-L', socket, 'capture-pane', '-t', djSession, '-p', '-S', '-3',
-      ], { stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000, encoding: 'utf-8' });
-      const lines = output.split('\n').filter(l => l.length > 0);
-      // Walk backwards to find the last line starting with CC's prompt
-      // CC uses "❯" (U+276F) as its input prompt character
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const line = lines[i];
-        if (/^\s*[>❯]/.test(line)) {
-          // Check if there's user-typed text after the prompt marker
-          const afterPrompt = line.replace(/^\s*[>❯]\s*/, '');
-          return afterPrompt.length === 0;
-        }
-      }
-      // No prompt found — DJ might be processing or not started
-      return false;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
    * Send all pending alerts to DJ via tmux send-keys.
+   * Uses stashAndInject to preserve any user-typed text in DJ's input box.
    * Batches multiple alerts into a single message to avoid spamming.
    */
   function flushAlerts() {
@@ -256,14 +301,9 @@ function runWatchdog() {
     pendingAlerts.length = 0;
 
     try {
-      // send-keys with -l (literal) to avoid tmux key interpretation
-      execFileSync('tmux', [
-        '-L', socket, 'send-keys', '-t', djSession, '-l', message,
-      ], { stdio: 'pipe', timeout: 5000 });
-      // Small delay then press Enter
-      execFileSync('tmux', [
-        '-L', socket, 'send-keys', '-t', djSession, 'Enter',
-      ], { stdio: 'pipe', timeout: 5000 });
+      // stashAndInject handles: empty input → direct inject,
+      // non-empty input → stash → inject → restore
+      stashAndInject(socket, djSession, message);
       log(`Sent to DJ: ${message}`);
     } catch (e) {
       log(`send-keys failed: ${e.message}`);
@@ -271,11 +311,12 @@ function runWatchdog() {
     }
   }
 
-  // Try to flush pending alerts every 3 seconds (only when DJ is idle)
+  // Try to flush pending alerts every 3 seconds
+  // Gate: DJ must be idle (JSONL state) before we inject into the input box.
   const alertFlushInterval = setInterval(() => {
     if (pendingAlerts.length === 0) return;
-    if (!isDjIdle()) {
-      log(`DJ busy, ${pendingAlerts.length} alert(s) queued`);
+    if (djState !== 'idle') {
+      log(`DJ busy (${djState}), ${pendingAlerts.length} alert(s) queued`);
       return;
     }
     flushAlerts();
@@ -399,6 +440,7 @@ function runWatchdog() {
     }
     if (healthInterval) clearInterval(healthInterval);
     if (alertFlushInterval) clearInterval(alertFlushInterval);
+    stopDjWatcher();
     for (const name of [...watchers.keys()]) {
       stopWatcher(name);
     }
@@ -484,6 +526,8 @@ function runWatchdog() {
     }
     // Check idle timeouts
     checkIdleTimeouts();
+    // Ensure DJ watcher is alive (JSONL might not exist at startup)
+    if (!djWatcherHandle) startDjWatcher();
     // Ensure decks watcher is alive
     if (!decksWatcher) startDecksWatch();
     // Fallback sync in case fs.watch missed something
@@ -491,6 +535,7 @@ function runWatchdog() {
   }, 30_000);
 
   // Initial sync + start watching
+  startDjWatcher();
   syncWatchers();
   startDecksWatch();
 }
