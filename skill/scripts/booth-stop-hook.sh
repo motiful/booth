@@ -10,28 +10,26 @@
 
 set -euo pipefail
 
-# Only run if .booth/ exists (we're in a Booth project)
-ALERTS_FILE=".booth/alerts.json"
-[[ -d ".booth" ]] || exit 0
-[[ -f "$ALERTS_FILE" ]] || exit 0
-
-# Only run for the DJ session
+# Only run for the DJ session (must be inside tmux)
 SESSION_NAME=$(tmux display-message -p '#S' 2>/dev/null || true)
-if [[ -z "$SESSION_NAME" ]]; then
-  exit 0
-fi
+[[ -z "$SESSION_NAME" ]] && exit 0
 
-# Read the DJ session name from tmux user variable, fallback to "dj"
 SOCK=$(tmux display-message -p '#{socket_path}' 2>/dev/null || true)
+DJ_NAME="dj"
+BOOTH_ROOT=""
 if [[ -n "$SOCK" ]]; then
   DJ_NAME=$(tmux -S "$SOCK" show -gvq @booth-dj 2>/dev/null || echo "dj")
-else
-  DJ_NAME="dj"
+  BOOTH_ROOT=$(tmux -S "$SOCK" show -gvq @booth-root 2>/dev/null || true)
 fi
 
-if [[ "$SESSION_NAME" != "$DJ_NAME" ]]; then
+[[ "$SESSION_NAME" != "$DJ_NAME" ]] && exit 0
+
+# Find alerts via @booth-root (stable path, immune to CWD drift)
+if [[ -z "$BOOTH_ROOT" || ! -d "$BOOTH_ROOT/.booth" ]]; then
   exit 0
 fi
+ALERTS_FILE="$BOOTH_ROOT/.booth/alerts.json"
+[[ -f "$ALERTS_FILE" ]] || exit 0
 
 # Find jsonl-state.mjs (same directory as this script)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

@@ -10,12 +10,16 @@
 input=$(cat)
 
 PCT=$(echo "$input" | jq -r '.context_window.used_percentage // 0' 2>/dev/null | cut -d. -f1)
-CWD=$(echo "$input" | jq -r '.cwd // ""' 2>/dev/null)
 
-# Write context state to .booth/dj-context.json (atomic write)
-if [[ -n "$CWD" && -d "$CWD/.booth" ]]; then
-  TMP="$CWD/.booth/dj-context.json.tmp"
-  TARGET="$CWD/.booth/dj-context.json"
+# Write context state to .booth/dj-context.json via @booth-root (stable path)
+SOCK=$(tmux display-message -p '#{socket_path}' 2>/dev/null || true)
+BOOTH_ROOT=""
+if [[ -n "$SOCK" ]]; then
+  BOOTH_ROOT=$(tmux -S "$SOCK" show -gvq @booth-root 2>/dev/null || true)
+fi
+if [[ -n "$BOOTH_ROOT" && -d "$BOOTH_ROOT/.booth" ]]; then
+  TMP="$BOOTH_ROOT/.booth/dj-context.json.tmp"
+  TARGET="$BOOTH_ROOT/.booth/dj-context.json"
   printf '{"used_percentage":%d,"timestamp":"%s"}\n' \
     "${PCT:-0}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$TMP"
   mv "$TMP" "$TARGET"
