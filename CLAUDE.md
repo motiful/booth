@@ -36,14 +36,14 @@ An AI project manager for Claude Code. You keep thinking, keep branching — Boo
 │   ├── CLAUDE.md           # This file
 │   ├── README.md           # Public documentation
 │   └── LICENSE
-└── backstage/              # Private repo (NOT on public GitHub)
+└── booth-backstage/              # Private repo (NOT on public GitHub)
     ├── design/             # Design truth (booth-definitive-design.md)
     ├── plan/               # Execution plans
     └── research/           # Technical references
 ```
 
-Internal docs live in a sibling repo `../backstage/`. Read design docs with:
-`Read ../backstage/design/booth-definitive-design.md`
+Internal docs live in a sibling repo `../booth-backstage/`. Read design docs with:
+`Read ../booth-backstage/design/booth-definitive-design.md`
 
 ## Code Conventions
 
