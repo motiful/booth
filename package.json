@@ -1,0 +1,37 @@
+{
+  "name": "@motiful/booth",
+  "version": "0.1.0",
+  "description": "AI project manager for Claude Code — parallel task execution with intelligent coordination",
+  "type": "module",
+  "bin": {
+    "booth": "./dist/bin/booth.js"
+  },
+  "files": [
+    "dist/",
+    "skill/"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/motiful/booth"
+  },
+  "keywords": [
+    "claude-code",
+    "ai",
+    "parallel",
+    "task-manager",
+    "tmux"
+  ],
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "typescript": "^5.9.3"
+  }
+}
