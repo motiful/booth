@@ -24,30 +24,20 @@ An AI project manager for Claude Code. You keep thinking, keep branching — Boo
 ## Project Layout
 
 ```
-~/motifpool/booth/
-├── booth/                  # ← THIS REPO (public, GitHub)
-│   ├── bin/                # CLI entry (published)
-│   ├── src/                # TypeScript source
-│   ├── dist/               # Compiled output (published)
-│   ├── skill/              # DJ skill files (published)
-│   ├── .claude/
-│   │   └── progress.md     # Current execution state
-│   ├── package.json        # "files": ["dist/", "bin/", "skill/"]
-│   ├── CLAUDE.md           # This file
-│   ├── README.md           # Public documentation
-│   └── LICENSE
-└── booth-backstage/              # Private repo (NOT on public GitHub)
-    ├── design/             # Design truth (booth-definitive-design.md)
-    ├── plan/               # Execution plans
-    └── research/           # Technical references
+booth/
+├── bin/                    # CLI entry (published)
+├── src/                    # TypeScript source
+├── dist/                   # Compiled output (published)
+├── skill/                  # DJ skill files (published)
+├── .claude/                # CC local config (gitignored)
+├── package.json            # "files": ["dist/", "bin/", "skill/"]
+├── CLAUDE.md               # This file
+├── README.md               # Public documentation
+└── LICENSE
 ```
-
-Internal docs live in a sibling repo `../booth-backstage/`. Read design docs with:
-`Read ../booth-backstage/design/booth-definitive-design.md`
 
 ## Code Conventions
 
-- 用中文跟用户对话. Code, comments, and product files in English.
 - Functional patterns over OOP
 - 2-space indent, no unnecessary comments
 - Conventional commit messages

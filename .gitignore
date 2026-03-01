@@ -2,6 +2,7 @@ node_modules/
 dist/
 .booth/
 .claude/
+CLAUDE.local.md
 *.tsbuildinfo
 .DS_Store
 .env
