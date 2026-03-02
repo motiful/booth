@@ -16,6 +16,7 @@ Every deck has a JSONL stream. The daemon tails it in real-time.
 | idle | `subtype=turn_duration` | JSONL |
 | error | `subtype=api_error` | JSONL |
 | needs-attention | `[NEEDS ATTENTION]` in assistant text | JSONL |
+| stopped | Pane detected dead during health check | Daemon (internal) |
 
 ### Design rules
 
@@ -29,17 +30,43 @@ Every deck has a JSONL stream. The daemon tails it in real-time.
 | Type | Trigger | Action |
 |------|---------|--------|
 | `deck-check-complete` | Deck idle + report has terminal status | DJ: read report, deliver or retry |
-| `deck-error` | API error or pane died | DJ: spin review deck or escalate to user |
+| `deck-error` | Error persists beyond 30s recovery window | DJ: spin review deck or escalate to user |
 | `deck-needs-attention` | Deck flagged `[NEEDS ATTENTION]` | DJ: check what it needs |
 
-### Idle + Check Flow
+### Error Recovery Window
 
-When daemon detects deck idle:
+Deck errors have a 30-second recovery window before alerting DJ:
+
+1. Error detected (API error, pane issue)
+2. Start 30s timer
+3. If deck emits a `working` event within 30s → error silently absorbed, no alert
+4. If 30s elapses with no recovery → alert DJ with context ("during check" or "during work")
+
+This prevents transient errors (rate limits, network blips) from triggering unnecessary escalation.
+
+### Idle + Check Flow (Mode-Dependent)
+
+When daemon detects deck idle, behavior depends on mode:
+
+**Auto mode** (default):
 1. Check if `.booth/reports/<deck>.md` exists
 2. **No report** → send `[booth-check]` to deck (triggers self-verification)
-3. **Report exists with terminal status** → alert DJ to read report and deliver
+3. **Report exists with terminal status** → alert DJ → DJ reads report → kill deck
+
+**Hold mode**:
+1. Same check flow as auto
+2. **Report exists with terminal status** → alert DJ → deck **pauses** (waits for next instruction)
+3. DJ can give the deck a new task or kill it
+
+**Live mode**:
+1. Idle detected → **nothing happens** (no auto check)
+2. Deck stays idle until the human interacts or DJ switches mode
 
 `[booth-check]` is idempotent — safe to resend after compaction or any interruption.
+
+### Mode Switching and Idle
+
+When a deck's mode is switched to auto or hold while it is idle, the daemon immediately triggers the check flow (same as if idle was just detected). In-flight checks are not interrupted by mode switches.
 
 ## Injected Signals
 
@@ -69,6 +96,13 @@ Both channels may fire for the same alert. Redundancy is harmless — DJ sees th
 ### Check signal format
 
 ```
-[booth-check] Read .booth/check.md and follow the self-verification procedure.
-  Your report path: .booth/reports/<deck>.md
+[booth-check] Read /absolute/path/to/.booth/check.md and follow the self-verification procedure. Your report path: /absolute/path/to/.booth/reports/<deck>.md
 ```
+
+Paths are absolute (resolved from the project root). If `.booth/check.md` does not exist, a fallback message is sent instead:
+
+```
+[booth-check] Self-verify your work. Write report to: /absolute/path/to/.booth/reports/<deck>.md with YAML frontmatter `status: SUCCESS` or `status: FAIL`.
+```
+
+If the deck was spun with `--no-loop`, an additional suffix is appended: `Skip the sub-agent review loop. Write your report directly.`

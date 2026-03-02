@@ -41,11 +41,25 @@ When user delegates a batch of tasks, **autonomously** decompose, sequence, and 
 Use the `booth` CLI to manage decks:
 
 ```bash
-# Spin a new deck with a task
+# Spin a new deck (auto mode, with review loop — default)
 booth spin <name> --prompt "<clear task description with acceptance criteria>"
+
+# Spin with mode flags
+booth spin <name> --prompt "..." --no-loop      # auto, skip sub-agent review
+booth spin <name> --live                         # live mode (human drives)
+booth spin <name> --hold --prompt "..."          # hold mode, with review loop
+booth spin <name> --hold --no-loop --prompt "..."  # hold, skip review
+
+# Switch deck mode at runtime
+booth auto <name>     # switch to auto
+booth hold <name>     # switch to hold
+booth live <name>     # switch to live
 
 # List all decks
 booth ls
+
+# Show details for a specific deck
+booth status <name>
 
 # Kill a deck
 booth kill <name>
@@ -53,11 +67,40 @@ booth kill <name>
 # Stop everything
 booth stop
 
-# Configure booth (e.g., set editor for report auto-open)
+# Reload daemon (hot-restart, preserves tmux sessions)
+booth reload
+
+# Configure booth
 booth config set editor cursor
 booth config get editor
 booth config list
 ```
+
+### Deck Modes
+
+| Mode | Behavior | Use when |
+|------|----------|----------|
+| **Auto** (default) | idle → check → report → alert DJ → kill | Fire-and-forget tasks |
+| **Hold** | idle → check → report → **pause** (waits for next instruction) | Multi-step work, iteration |
+| **Live** | No auto check — human is driving the deck | Debugging, exploration |
+
+Modes can be switched at runtime. Switching to auto/hold when a deck is idle immediately triggers a check. In-flight checks are not interrupted.
+
+### --no-loop Flag
+
+By default, the check phase runs a sub-agent review loop (up to 5 rounds). Pass `--no-loop` to skip the review — the deck writes its report directly without sub-agent verification. Use for simple tasks where full review is overkill (typo fixes, analysis, straightforward changes). Only relevant for auto/hold modes (live has no auto check).
+
+### `booth ls` Display
+
+```
+Decks:
+  [A] auth-refactor        working     5m ago
+  [A] api-fix              working     8m ago   checking...
+  [L] explorer             idle        12m ago
+  [H] prototype            idle        3m ago   holding (SUCCESS)
+```
+
+Mode indicators: `[A]` auto, `[H]` hold, `[L]` live.
 
 ### Spin Protocol
 
@@ -66,16 +109,22 @@ booth config list
    - What to do (specific, actionable)
    - Acceptance criteria (how to know it's done)
    - Scope boundaries (what NOT to touch)
-3. Run `booth spin <name> --prompt "<prompt>"`
-4. Deck starts working automatically — daemon monitors via JSONL
+3. Pick mode and loop setting:
+   - Default (auto + looper) for most tasks
+   - `--hold` for tasks requiring iteration or follow-up
+   - `--live` for human-driven exploration
+   - `--no-loop` for simple, low-risk tasks
+4. Run `booth spin <name> --prompt "<prompt>"` (with flags as needed)
+5. Deck starts working automatically — daemon monitors via JSONL
 
 ### Example
 
-User says: "Refactor the auth module and fix the API pagination bug"
+User says: "Refactor the auth module, fix the pagination bug, and let me explore the new API"
 
 ```bash
 booth spin auth-refactor --prompt 'Refactor src/auth/ to use JWT instead of sessions. Acceptance: all auth tests pass, no session references remain.'
-booth spin fix-pagination --prompt 'Fix pagination in src/api/list.ts — offset calculation is off by one. Acceptance: pagination test passes, manual test with 100 items shows correct pages.'
+booth spin fix-pagination --no-loop --prompt 'Fix pagination in src/api/list.ts — offset calculation is off by one. Acceptance: pagination test passes.'
+booth spin api-explorer --live
 ```
 
 ### Design Priorities
@@ -97,8 +146,10 @@ When you see `[booth-alert]` in your conversation (injected via stop hook):
 
 ### What "handling" looks like
 
-- **SUCCESS report** → acknowledge, `booth kill <deck>`, move on to next task
+- **SUCCESS report (auto deck)** → acknowledge, `booth kill <deck>`, move on to next task
+- **SUCCESS report (hold deck)** → deck is paused. Give next instruction or `booth kill <deck>`
 - **FAIL report** → read what failed, decide: re-spin with adjusted prompt, or escalate to user
+- **deck-error** → check context. Deck has 30s recovery window — if it recovers, no alert. If alert fires, it's a real problem.
 - **No more tasks** → tell user everything is done, summarize results
 
 ## Beat

@@ -7,7 +7,9 @@ import { Reactor } from './reactor.js'
 import { initBoothDir, ipcSocketPath, findLatestJsonl, deriveSocket, SESSION } from '../constants.js'
 import { killSession, hasSession, tmuxSafe } from '../tmux.js'
 import { sendMessage } from './send-message.js'
-import type { DeckInfo } from '../types.js'
+import type { DeckInfo, DeckMode } from '../types.js'
+
+const VALID_MODES: DeckMode[] = ['auto', 'hold', 'live']
 
 export interface DaemonOptions {
   projectRoot: string
@@ -83,6 +85,7 @@ export class Daemon {
     if (deck?.jsonlPath) this.assignedJsonlPaths.delete(deck.jsonlPath)
     this.stopJsonlPoll(deckId)
     this.signal.unwatch(deckId)
+    this.reactor.clearDeckTimers(deckId)
     this.state.removeDeck(deckId)
   }
 
@@ -214,6 +217,29 @@ export class Daemon {
         )
         return result
       }
+      case 'set-mode': {
+        const deckId = req.deckId as string
+        const mode = req.mode as DeckMode
+        if (!VALID_MODES.includes(mode)) {
+          return { error: `invalid mode: ${mode}` }
+        }
+        const deck = this.state.getDeck(deckId)
+        if (!deck) {
+          return { error: `deck not found: ${deckId}` }
+        }
+        this.state.updateDeck(deckId, { mode })
+        console.log(`[booth-daemon] deck "${deck.name}" mode → ${mode}`)
+        // If switching to auto/hold and deck is idle, trigger a check
+        if ((mode === 'auto' || mode === 'hold') && deck.status === 'idle') {
+          const updated = this.state.getDeck(deckId)!
+          this.reactor.triggerCheck(updated)
+        }
+        return { ok: true }
+      }
+      case 'reload':
+        // Respond before graceful reload
+        setTimeout(() => this.gracefulReload(), 100)
+        return { ok: true }
       case 'shutdown':
         // Respond before shutting down
         setTimeout(() => this.shutdown(), 100)
@@ -236,6 +262,30 @@ export class Daemon {
         }
       }
     }, 30_000)
+  }
+
+  private gracefulReload(): void {
+    console.log('[booth-daemon] graceful reload — preserving tmux sessions...')
+
+    // Stop all JSONL watchers and pollers
+    for (const [id] of this.jsonlPollers) this.stopJsonlPoll(id)
+    this.signal.unwatchAll()
+
+    // Force persist state so new daemon can recover
+    this.state.stop()
+
+    // Stop health check
+    if (this.healthTimer) clearInterval(this.healthTimer)
+
+    // Close IPC socket
+    if (this.ipcServer) {
+      this.ipcServer.close()
+      const sockPath = ipcSocketPath(this.projectRoot)
+      if (existsSync(sockPath)) unlinkSync(sockPath)
+    }
+
+    console.log('[booth-daemon] state persisted, exiting for reload')
+    process.exit(0)
   }
 
   private shutdown(): void {

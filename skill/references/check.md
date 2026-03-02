@@ -8,6 +8,11 @@
 
 You have finished your task. Before it's delivered, you must verify your own work.
 
+There are two paths depending on whether the deck was spun with `--no-loop`:
+
+- **Default (looper enabled)**: Run the full sub-agent review loop below
+- **No-loop mode**: Skip the review loop entirely — go straight to "Write the report" with your own assessment of the work
+
 ## The Review Loop
 
 1. **Spawn a sub-agent** to review your changes
@@ -32,6 +37,16 @@ Use Claude Code's built-in sub-agent capability:
 - Does the code follow project conventions (CLAUDE.md)?
 - Any security issues, edge cases, or obvious bugs?
 
+## No-Loop Mode
+
+When a deck is spun with `--no-loop`, the sub-agent review loop is skipped entirely. The deck:
+
+1. Assesses its own work (did it meet acceptance criteria?)
+2. Writes the report directly to `.booth/reports/<deck>.md`
+3. Uses `rounds: 0` in the YAML frontmatter
+
+No-loop is appropriate for simple, low-risk tasks (typo fixes, analysis, config changes) where full sub-agent review adds overhead without proportional value. The decision to use `--no-loop` depends on task complexity, not task type.
+
 ## Exit Conditions
 
 | Condition | Status | Action |
@@ -50,7 +65,7 @@ Since reports live in `.booth/reports/`, use `../../` prefix to reach the projec
 
 ```markdown
 ---
-status: SUCCESS | FAIL
+status: SUCCESS | FAIL | FAILED | ERROR
 rounds: 3
 deck: auth-refactor
 timestamp: 2026-03-02T14:30:00Z
@@ -80,6 +95,10 @@ One-sentence description of what was done.
 - No issues found
 ```
 
+### Terminal statuses
+
+The daemon accepts four terminal status values: `SUCCESS`, `FAIL`, `FAILED`, `ERROR`. Status matching is case-insensitive. `FAILED` and `ERROR` are accepted as aliases for robustness — CC sometimes writes these instead of the canonical `FAIL`. Use `SUCCESS` or `FAIL` in your reports; the aliases exist as safety nets, not as preferred values.
+
 ### Link format rules
 
 - Every file reference in the report MUST be a clickable markdown link
@@ -92,7 +111,7 @@ One-sentence description of what was done.
 If you receive `[booth-check]` after a context compaction:
 1. Re-read this document
 2. Check if `.booth/reports/<your-deck-name>.md` already exists
-3. If it exists with a terminal status (SUCCESS/FAIL), you're done — stay idle
+3. If it exists with a terminal status (SUCCESS/FAIL/FAILED/ERROR), you're done — stay idle
 4. If it doesn't exist, start the review loop from the beginning
 
 ## What You Don't Do

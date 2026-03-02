@@ -10,6 +10,7 @@ import type { DeckInfo, Alert, DeckStateChange } from '../types.js'
 const CHECK_DELAY = 500
 const BEAT_INITIAL_COOLDOWN = 5 * 60_000
 const BEAT_MAX_COOLDOWN = 60 * 60_000
+const ERROR_RECOVERY_WINDOW = 30_000
 
 export class Reactor {
   private state: BoothState
@@ -18,7 +19,11 @@ export class Reactor {
   // Beat state
   private beatTimer?: ReturnType<typeof setTimeout>
   private beatCooldown = BEAT_INITIAL_COOLDOWN
-  private lastBeatAt = 0
+  private lastBeatAt = Date.now()
+
+  // Error recovery state
+  private errorTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private errorContext = new Map<string, { checkPhase: boolean }>()
 
   constructor(projectRoot: string, state: BoothState) {
     this.projectRoot = projectRoot
@@ -28,13 +33,20 @@ export class Reactor {
   start(): void {
     this.state.on('deck:idle', (deck: DeckInfo) => this.onDeckIdle(deck))
     this.state.on('deck:error', (deck: DeckInfo) => this.onDeckError(deck))
+    this.state.on('deck:working', (deck: DeckInfo) => this.onDeckWorking(deck))
     this.state.on('deck:needs-attention', (deck: DeckInfo) => this.onDeckNeedsAttention(deck))
     this.state.on('deck:state-changed', (_change: DeckStateChange) => this.resetBeat())
     this.state.on('dj:status-changed', () => this.scheduleBeat())
   }
 
   private onDeckIdle(deck: DeckInfo): void {
-    // Delay before check to ensure CC is ready
+    // Live mode: skip check unless one is already in-flight
+    if (deck.mode === 'live' && !deck.checkSentAt) return
+    // All other cases (auto, hold, or live with in-flight check): proceed
+    this.triggerCheck(deck)
+  }
+
+  triggerCheck(deck: DeckInfo): void {
     setTimeout(() => this.runCheck(deck), CHECK_DELAY)
   }
 
@@ -44,13 +56,21 @@ export class Reactor {
     if (!existsSync(rPath)) {
       // No report yet → trigger deck self-check via .booth/check.md
       const checkPath = boothPath(this.projectRoot, 'check.md')
-      const msg = existsSync(checkPath)
+      let msg = existsSync(checkPath)
         ? `[booth-check] Read ${checkPath} and follow the self-verification procedure. Your report path: ${rPath}`
         : `[booth-check] Self-verify your work. Write report to: ${rPath} with YAML frontmatter \`status: SUCCESS\` or \`status: FAIL\`.`
+
+      // noLoop: tell deck to skip sub-agent review loop
+      if (deck.noLoop) {
+        msg += ' Skip the sub-agent review loop. Write your report directly.'
+      }
+
       const result = sendMessage(this.projectRoot, this.state, deck.id, msg)
       if (!result.ok) {
         console.log(`[booth-reactor] check send failed for "${deck.name}": ${result.error}`)
       } else {
+        // Track that check was sent
+        this.state.updateDeck(deck.id, { checkSentAt: Date.now() })
         console.log(`[booth-reactor] sent check to "${deck.name}"`)
       }
       return
@@ -61,17 +81,36 @@ export class Reactor {
     if (!status) return // malformed, wait for next idle
 
     if (isTerminalStatus(status)) {
-      const alert: Alert = {
-        type: 'deck-check-complete',
-        deckId: deck.id,
-        deckName: deck.name,
-        message: `Deck "${deck.name}" check complete: ${status}. Report: ${rPath}`,
-        timestamp: Date.now(),
+      // Clear checkSentAt now that check is complete
+      this.state.updateDeck(deck.id, { checkSentAt: undefined })
+
+      if (deck.mode === 'hold') {
+        // Hold mode: alert DJ but do NOT kill the deck
+        const alert: Alert = {
+          type: 'deck-check-complete',
+          deckId: deck.id,
+          deckName: deck.name,
+          message: `Deck "${deck.name}" check complete: ${status}. Deck is holding. Report: ${rPath}`,
+          timestamp: Date.now(),
+        }
+        this.pushAlertToDj(alert)
+        this.openReport(rPath)
+        this.systemNotify(`Booth: ${deck.name} → ${status} (holding)`)
+        console.log(`[booth-reactor] deck "${deck.name}" check result: ${status} (holding)`)
+      } else {
+        // Auto mode (and live with in-flight check): alert DJ to read report + kill
+        const alert: Alert = {
+          type: 'deck-check-complete',
+          deckId: deck.id,
+          deckName: deck.name,
+          message: `Deck "${deck.name}" check complete: ${status}. Report: ${rPath}`,
+          timestamp: Date.now(),
+        }
+        this.pushAlertToDj(alert)
+        this.openReport(rPath)
+        this.systemNotify(`Booth: ${deck.name} → ${status}`)
+        console.log(`[booth-reactor] deck "${deck.name}" check result: ${status}`)
       }
-      this.pushAlertToDj(alert)
-      this.openReport(rPath)
-      this.systemNotify(`Booth: ${deck.name} → ${status}`)
-      console.log(`[booth-reactor] deck "${deck.name}" check result: ${status}`)
     }
     // non-terminal status → wait, next idle will retry
   }
@@ -122,6 +161,17 @@ export class Reactor {
     this.scheduleBeat()
   }
 
+  // --- Deck timer cleanup ---
+
+  clearDeckTimers(deckId: string): void {
+    const timer = this.errorTimers.get(deckId)
+    if (timer) {
+      clearTimeout(timer)
+      this.errorTimers.delete(deckId)
+    }
+    this.errorContext.delete(deckId)
+  }
+
   // --- Alert delivery (dual channel) ---
 
   private pushAlertToDj(alert: Alert): void {
@@ -141,15 +191,41 @@ export class Reactor {
   // --- Error / attention handlers ---
 
   private onDeckError(deck: DeckInfo): void {
-    const alert: Alert = {
-      type: 'deck-error',
-      deckId: deck.id,
-      deckName: deck.name,
-      message: `Deck "${deck.name}" encountered an error`,
-      timestamp: Date.now(),
+    // If there's already a recovery timer for this deck, let it run
+    if (this.errorTimers.has(deck.id)) return
+
+    const checkPhase = !!deck.checkSentAt
+    this.errorContext.set(deck.id, { checkPhase })
+
+    const timer = setTimeout(() => {
+      // Timer expired without recovery — alert DJ
+      this.errorTimers.delete(deck.id)
+      this.errorContext.delete(deck.id)
+
+      const phase = checkPhase ? 'during check' : 'during work'
+      const alert: Alert = {
+        type: 'deck-error',
+        deckId: deck.id,
+        deckName: deck.name,
+        message: `Deck "${deck.name}" encountered an error ${phase} (no recovery after ${ERROR_RECOVERY_WINDOW / 1000}s)`,
+        timestamp: Date.now(),
+      }
+      this.pushAlertToDj(alert)
+      this.systemNotify(`Booth: ${alert.message}`)
+    }, ERROR_RECOVERY_WINDOW)
+
+    this.errorTimers.set(deck.id, timer)
+    console.log(`[booth-reactor] deck "${deck.name}" error — recovery window started (${ERROR_RECOVERY_WINDOW / 1000}s)`)
+  }
+
+  private onDeckWorking(deck: DeckInfo): void {
+    const timer = this.errorTimers.get(deck.id)
+    if (timer) {
+      clearTimeout(timer)
+      this.errorTimers.delete(deck.id)
+      this.errorContext.delete(deck.id)
+      console.log(`[booth-reactor] deck "${deck.name}" recovered from error`)
     }
-    this.pushAlertToDj(alert)
-    this.systemNotify(`Booth: ${alert.message}`)
   }
 
   private onDeckNeedsAttention(deck: DeckInfo): void {

@@ -72,6 +72,7 @@ export class BoothState extends EventEmitter {
     const change: DeckStateChange = { deckId, prev, next: status, timestamp: deck.updatedAt }
     this.emit('deck:state-changed', change)
 
+    if (status === 'working') this.emit('deck:working', deck)
     if (status === 'idle') this.emit('deck:idle', deck)
     if (status === 'error') this.emit('deck:error', deck)
     if (status === 'needs-attention') this.emit('deck:needs-attention', deck)
@@ -141,8 +142,11 @@ export class BoothState extends EventEmitter {
       id: d.id,
       name: d.name,
       status: d.status,
+      mode: d.mode,
       dir: d.dir,
       paneId: d.paneId,
+      noLoop: d.noLoop,
+      checkSentAt: d.checkSentAt,
       createdAt: d.createdAt,
       updatedAt: d.updatedAt,
     }))

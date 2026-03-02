@@ -44,6 +44,41 @@ Every task needs criteria. Default standard:
 | Deck stuck > 20 minutes | Spin a review deck to investigate, or escalate to user |
 | Conflicting requirements | Escalate immediately |
 
+## Mode Selection
+
+When spinning a deck, choose the right mode and loop setting:
+
+### Mode
+
+| Mode | When to use | Example |
+|------|-------------|---------|
+| **Auto** (default) | Fire-and-forget tasks with clear completion criteria | Bug fixes, refactors, feature implementations |
+| **Hold** | Multi-step tasks, iteration needed, or DJ wants to review before proceeding | Phased migrations, tasks where follow-up is expected |
+| **Live** | Human wants to drive the deck directly — debugging, exploration, interactive work | `booth spin explorer --live` → user interacts directly |
+
+### --no-loop
+
+| Setting | When to use | Example |
+|---------|-------------|---------|
+| Default (looper) | Tasks with meaningful risk — code changes that could break things | Feature work, refactors, anything touching tests |
+| `--no-loop` | Simple, low-risk tasks where full sub-agent review is overkill | Typo fixes, analysis/research, config changes, file renaming |
+
+The looper decision depends on **task complexity**, not task type. A complex config change deserves review; a trivial code fix may not.
+
+### Mode Switching
+
+You can switch a deck's mode at runtime:
+```bash
+booth auto <name>    # switch to auto
+booth hold <name>    # switch to hold
+booth live <name>    # switch to live
+```
+
+Common patterns:
+- Live deck finished exploring → `booth auto <name>` to trigger check and cleanup
+- Auto deck delivered a partial result → switch to hold, give follow-up instructions
+- Hold deck's iteration is done → `booth kill <name>`
+
 ## Resource Allocation
 
 - Prefer fewer, focused decks over many scattered ones
@@ -56,10 +91,10 @@ Every task needs criteria. Default standard:
 Review → Allocate → Launch → Progress-check → Handoff
 
 1. **Review**: Understand user request fully
-2. **Allocate**: Decompose and plan deck assignments
-3. **Launch**: Spin decks with clear prompts
+2. **Allocate**: Decompose, plan deck assignments, choose mode + loop setting per deck
+3. **Launch**: Spin decks with clear prompts and appropriate flags
 4. **Progress**: Monitor via alerts + beat
-5. **Handoff**: Read check report → Deliver to user → Archive
+5. **Handoff**: Read check report → Deliver to user → Kill (auto) or continue (hold)
 
 ## Handling Check Reports
 
@@ -69,8 +104,10 @@ When a deck completes self-verification (check), you receive an alert:
 2. **Evaluate the outcome** based on the YAML frontmatter `status`:
    - `SUCCESS` — deck passed all checks. Deliver to user.
    - `FAIL` — not all checks passed. Read the report body for details (what was fixed, what remains). Decide: retry, reassign, or escalate to user.
-3. **Deliver** — report verified results to the user (see report format below)
-4. **Archive** — move completed deck info to `.booth/archive/`
+3. **Deliver** — report verified results to the user
+4. **Next action depends on mode**:
+   - **Auto**: `booth kill <deck>` — work is done
+   - **Hold**: Deck is paused. Give it a follow-up task, or `booth kill <deck>` if iteration is complete
 
 ### Delivery Standards
 

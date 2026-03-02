@@ -1,6 +1,29 @@
-import { findProjectRoot } from '../../constants.js'
+import { findProjectRoot, reportPath } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
-import type { DeckInfo } from '../../types.js'
+import { readReportStatus, isTerminalStatus } from '../../daemon/report.js'
+import type { DeckInfo, DeckMode } from '../../types.js'
+
+const modeIcon: Record<DeckMode, string> = {
+  auto: 'A',
+  hold: 'H',
+  live: 'L',
+}
+
+function deckSuffix(d: DeckInfo, projectRoot: string): string {
+  // Show "checking..." when check is in-flight
+  if (d.checkSentAt) return 'checking...'
+
+  // For hold mode, show holding status if check is complete
+  if (d.mode === 'hold' && d.status === 'idle') {
+    const rPath = reportPath(projectRoot, d.name)
+    const status = readReportStatus(rPath)
+    if (status && isTerminalStatus(status)) {
+      return `holding (${status})`
+    }
+  }
+
+  return ''
+}
 
 export async function lsCommand(_args: string[]): Promise<void> {
   const projectRoot = findProjectRoot()
@@ -17,18 +40,12 @@ export async function lsCommand(_args: string[]): Promise<void> {
     return
   }
 
-  const statusIcon: Record<string, string> = {
-    working: 'W',
-    idle: 'I',
-    error: 'E',
-    'needs-attention': '!',
-    stopped: 'X',
-  }
-
   console.log('Decks:')
   for (const d of res.decks) {
-    const icon = statusIcon[d.status] ?? '?'
+    const icon = modeIcon[d.mode] ?? 'A'
     const age = Math.round((Date.now() - d.createdAt) / 60_000)
-    console.log(`  [${icon}] ${d.name.padEnd(20)} ${d.status.padEnd(16)} ${age}m ago`)
+    const suffix = deckSuffix(d, projectRoot)
+    const line = `  [${icon}] ${d.name.padEnd(20)} ${d.status.padEnd(16)} ${age}m ago`
+    console.log(suffix ? `${line}   ${suffix}` : line)
   }
 }
