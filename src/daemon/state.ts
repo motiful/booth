@@ -1,7 +1,21 @@
 import { EventEmitter } from 'node:events'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { boothPath, STATE_FILE, DECKS_FILE, ALERTS_FILE } from '../constants.js'
 import type { DeckInfo, DeckStatus, DeckStateChange, Alert } from '../types.js'
+
+function safeWrite(path: string, data: string): void {
+  try {
+    writeFileSync(path, data)
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, data)
+    } else {
+      throw err
+    }
+  }
+}
 
 export class BoothState extends EventEmitter {
   private decks = new Map<string, DeckInfo>()
@@ -103,7 +117,7 @@ export class BoothState extends EventEmitter {
       djStatus: this.djStatus,
       persistedAt: Date.now(),
     }
-    writeFileSync(boothPath(this.projectRoot, STATE_FILE), JSON.stringify(data, null, 2))
+    safeWrite(boothPath(this.projectRoot, STATE_FILE), JSON.stringify(data, null, 2))
   }
 
   private restore(): void {
@@ -132,11 +146,11 @@ export class BoothState extends EventEmitter {
       createdAt: d.createdAt,
       updatedAt: d.updatedAt,
     }))
-    writeFileSync(boothPath(this.projectRoot, DECKS_FILE), JSON.stringify(decks, null, 2))
+    safeWrite(boothPath(this.projectRoot, DECKS_FILE), JSON.stringify(decks, null, 2))
   }
 
   private persistAlerts(): void {
-    writeFileSync(
+    safeWrite(
       boothPath(this.projectRoot, ALERTS_FILE),
       JSON.stringify(this.alerts, null, 2)
     )

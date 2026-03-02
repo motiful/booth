@@ -6,7 +6,7 @@ export async function lsCommand(_args: string[]): Promise<void> {
   const projectRoot = findProjectRoot()
 
   if (!(await isDaemonRunning(projectRoot))) {
-    console.error('[booth] daemon not running. Run "booth start" first.')
+    console.error('[booth] daemon not running. Run "booth" first.')
     process.exit(1)
   }
 

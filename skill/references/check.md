@@ -1,7 +1,8 @@
 # Check Reference — Deck Self-Verification
 
-> This document is read by **decks** when they receive `[booth-check]`.
-> It defines the self-review loop using a sub-agent.
+> **Rigid entry point.** Code guarantees decks read this file on every `[booth-check]`.
+> It defines the self-review framework. Users can customize `.booth/check.md` per project.
+> Future: can route to domain-specific verification skills based on task type.
 
 ## When You Receive [booth-check]
 
@@ -42,7 +43,10 @@ Use Claude Code's built-in sub-agent capability:
 
 ## Report Format
 
-Write the report to `.booth/reports/<your-deck-name>.md`:
+Write the report to `.booth/reports/<your-deck-name>.md`.
+
+**IMPORTANT:** File references MUST use clickable relative markdown links.
+Since reports live in `.booth/reports/`, use `../../` prefix to reach the project root.
 
 ```markdown
 ---
@@ -52,14 +56,15 @@ deck: auth-refactor
 timestamp: 2026-03-02T14:30:00Z
 ---
 
-## Task Summary
+## Summary
 
 One-sentence description of what was done.
 
-## Changes
+## Files Changed
 
-- file1.ts: added authentication middleware
-- file2.ts: updated route handlers
+- [`src/auth/middleware.ts`](../../src/auth/middleware.ts) — added authentication middleware
+- [`src/routes/login.ts`](../../src/routes/login.ts) — updated route handlers
+- [`tests/auth.test.ts`](../../tests/auth.test.ts) — added auth tests
 
 ## Review Rounds
 
@@ -73,13 +78,14 @@ One-sentence description of what was done.
 
 ### Round 3
 - No issues found
-
-## Final Artifacts
-
-- src/auth/middleware.ts (new)
-- src/routes/login.ts (modified)
-- tests/auth.test.ts (new)
 ```
+
+### Link format rules
+
+- Every file reference in the report MUST be a clickable markdown link
+- Format: `[`path/to/file`](../../path/to/file)` — backtick-wrapped display, relative link
+- The `../../` prefix is required because reports are at `.booth/reports/<name>.md` (two levels deep from project root)
+- For files in subdirectories: `[`src/deep/file.ts`](../../src/deep/file.ts)`
 
 ## Idempotency
 

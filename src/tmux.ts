@@ -55,3 +55,8 @@ export function killSession(socket: string, session: string): void {
 export function sendKeys(socket: string, target: string, keys: string): void {
   tmux(socket, 'send-keys', '-t', target, keys, 'Enter')
 }
+
+export function sendKeysLiteral(socket: string, target: string, text: string): void {
+  tmux(socket, 'send-keys', '-t', target, '-l', text)
+  tmux(socket, 'send-keys', '-t', target, 'Enter')
+}

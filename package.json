@@ -11,7 +11,7 @@
     "skill/"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/bin/booth.js",
     "dev": "tsc --watch",
     "clean": "rm -rf dist"
   },

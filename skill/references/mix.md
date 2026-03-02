@@ -1,5 +1,9 @@
 # Mix Reference — DJ Management Logic
 
+> **Rigid entry point.** This file is the guaranteed starting point for all DJ management decisions.
+> Code ensures DJ reads this file. It defines the management framework.
+> Users can customize `.booth/mix.md` per project. Future: can route to domain-specific skills.
+
 ## Task Decomposition
 
 When the user gives you work:
@@ -37,14 +41,14 @@ Every task needs criteria. Default standard:
 | Clear best option | Decide and execute |
 | User preference known (CLAUDE.md) | Follow preference |
 | Trade-off between options | Escalate to user with options |
-| Deck stuck > 20 minutes | Investigate, then escalate if needed |
+| Deck stuck > 20 minutes | Spin a review deck to investigate, or escalate to user |
 | Conflicting requirements | Escalate immediately |
 
 ## Resource Allocation
 
 - Prefer fewer, focused decks over many scattered ones
 - 2-4 parallel decks is typical
-- Don't spin a deck for work that takes < 2 minutes
+- **No task is too small to delegate.** A one-line fix? Spin a deck. A quick search? Spin a deck. DJ's context is precious.
 - Kill idle decks that have delivered their work
 
 ## RALPH Cycle

@@ -1,25 +1,30 @@
 import { createHash } from 'node:crypto'
-import { resolve, basename, join } from 'node:path'
-import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
+import { resolve, basename, join, dirname } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, statSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 export const SESSION = 'dj'
 export const BOOTH_DIR = '.booth'
 export const STATE_FILE = 'state.json'
 export const ALERTS_FILE = 'alerts.json'
 export const DECKS_FILE = 'decks.json'
-export const HEARTBEAT_FILE = 'heartbeat.md'
+export const REPORTS_DIR = 'reports'
 
 export function findProjectRoot(from: string = process.cwd()): string {
   let dir = resolve(from)
   while (true) {
-    if (existsSync(join(dir, '.git')) || existsSync(join(dir, 'package.json'))) {
-      return dir
-    }
+    // .booth is the strongest anchor — this IS a booth project
+    if (existsSync(join(dir, BOOTH_DIR))) return dir
+    // .git and package.json are reasonable fallbacks
+    if (existsSync(join(dir, '.git')) || existsSync(join(dir, 'package.json'))) return dir
     const parent = resolve(dir, '..')
     if (parent === dir) break
     dir = parent
   }
+  // No anchor found — use cwd (booth will create .booth/ here)
   return resolve(from)
 }
 
@@ -34,11 +39,58 @@ export function boothDir(projectRoot: string): string {
   return join(projectRoot, BOOTH_DIR)
 }
 
+export function reportsDir(projectRoot: string): string {
+  return join(boothDir(projectRoot), REPORTS_DIR)
+}
+
+export function reportPath(projectRoot: string, deckName: string): string {
+  return join(reportsDir(projectRoot), `${deckName}.md`)
+}
+
+// Resolve the skill directory (relative to compiled dist/src/ → ../../skill/)
+function skillDir(): string {
+  return resolve(__dirname, '../..', 'skill')
+}
+
+const BEHAVIOR_TEMPLATES: Array<{ src: string; dest: string }> = [
+  { src: 'references/check.md', dest: 'check.md' },
+  { src: 'references/mix.md', dest: 'mix.md' },
+  { src: 'templates/beat/work.md', dest: 'beat.md' },
+]
+
 export function initBoothDir(projectRoot: string): string {
   const dir = boothDir(projectRoot)
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true })
   }
+  const rDir = reportsDir(projectRoot)
+  if (!existsSync(rDir)) {
+    mkdirSync(rDir, { recursive: true })
+  }
+
+  // Copy behavior templates if not present (user can customize)
+  const skill = skillDir()
+  for (const t of BEHAVIOR_TEMPLATES) {
+    const dest = join(dir, t.dest)
+    if (!existsSync(dest)) {
+      const src = join(skill, t.src)
+      if (existsSync(src)) {
+        copyFileSync(src, dest)
+      }
+    }
+  }
+
+  // Auto-gitignore .booth/
+  const gitignorePath = join(projectRoot, '.gitignore')
+  if (existsSync(gitignorePath)) {
+    const content = readFileSync(gitignorePath, 'utf-8')
+    if (!content.split('\n').some(line => line.trim() === '.booth/' || line.trim() === '.booth')) {
+      writeFileSync(gitignorePath, content.trimEnd() + '\n.booth/\n')
+    }
+  } else {
+    writeFileSync(gitignorePath, '.booth/\n')
+  }
+
   return dir
 }
 
@@ -55,12 +107,13 @@ export function ccProjectsDir(projectRoot: string): string {
   return join(homedir(), '.claude', 'projects', encoded)
 }
 
-export function findLatestJsonl(projectRoot: string): string | undefined {
+export function findLatestJsonl(projectRoot: string, exclude?: Set<string>): string | undefined {
   const dir = ccProjectsDir(projectRoot)
   if (!existsSync(dir)) return undefined
   const files = readdirSync(dir)
     .filter(f => f.endsWith('.jsonl'))
-    .map(f => ({ name: f, mtime: statSync(join(dir, f)).mtimeMs }))
+    .map(f => ({ path: join(dir, f), mtime: statSync(join(dir, f)).mtimeMs }))
+    .filter(f => !exclude || !exclude.has(f.path))
     .sort((a, b) => b.mtime - a.mtime)
-  return files[0] ? join(dir, files[0].name) : undefined
+  return files[0]?.path
 }

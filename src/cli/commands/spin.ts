@@ -21,7 +21,7 @@ export async function spinCommand(args: string[]): Promise<void> {
   const socket = deriveSocket(projectRoot)
 
   if (!(await isDaemonRunning(projectRoot))) {
-    console.error('[booth] daemon not running. Run "booth start" first.')
+    console.error('[booth] daemon not running. Run "booth" first.')
     process.exit(1)
   }
 
@@ -49,7 +49,7 @@ export async function spinCommand(args: string[]): Promise<void> {
     const cmd = `claude --dangerously-skip-permissions ${shellEscape(prompt)}`
     tmux(socket, 'send-keys', '-t', paneId, cmd, 'Enter')
   } else {
-    tmux(socket, 'send-keys', '-t', paneId, 'claude', 'Enter')
+    tmux(socket, 'send-keys', '-t', paneId, 'claude --dangerously-skip-permissions', 'Enter')
   }
 
   console.log(`[booth] deck "${name}" spun up (pane: ${paneId})`)

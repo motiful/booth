@@ -1,16 +1,20 @@
 import { startCommand } from './commands/start.js'
 import { spinCommand } from './commands/spin.js'
 import { lsCommand } from './commands/ls.js'
+import { killCommand } from './commands/kill.js'
+import { stopCommand } from './commands/stop.js'
+import { configCommand } from './commands/config.js'
 
 const HELP = `
 booth — AI project manager for Claude Code
 
 Usage:
-  booth start          Start DJ + daemon in tmux
+  booth                Start booth (or reattach if already running)
   booth spin <name>    Create a new deck (parallel CC instance)
   booth ls             List all deck states
   booth kill <name>    Kill a deck
   booth stop           Stop booth (daemon + all decks)
+  booth config <cmd>   Manage config (set/get/list)
   booth --help         Show this help
 
 Options:
@@ -22,7 +26,7 @@ export async function run(args: string[]): Promise<void> {
   const cmd = args[0]
   const rest = args.slice(1)
 
-  if (!cmd || cmd === '--help' || cmd === '-h') {
+  if (cmd === '--help' || cmd === '-h') {
     console.log(HELP)
     process.exit(0)
   }
@@ -34,6 +38,7 @@ export async function run(args: string[]): Promise<void> {
 
   try {
     switch (cmd) {
+      case undefined:
       case 'start':
         await startCommand(rest)
         break
@@ -44,9 +49,13 @@ export async function run(args: string[]): Promise<void> {
         await lsCommand(rest)
         break
       case 'kill':
+        await killCommand(rest)
+        break
       case 'stop':
-        console.log(`[booth] "${cmd}" not yet implemented`)
-        process.exit(1)
+        await stopCommand(rest)
+        break
+      case 'config':
+        await configCommand(rest)
         break
       default:
         console.error(`Unknown command: ${cmd}`)

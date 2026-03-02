@@ -16,7 +16,7 @@ spin → working → idle → [booth-check] → checking → report → archived
 ### Check Phase
 
 After a deck goes idle, the daemon sends `[booth-check]`. The deck:
-1. Reads `check.md` for self-verification instructions
+1. Reads `.booth/check.md` for self-verification instructions
 2. Runs a sub-agent review loop (review → fix → repeat)
 3. Writes a report to `.booth/reports/<deck>.md`
 4. Goes idle again — daemon sees report + idle → alerts DJ
@@ -26,7 +26,7 @@ After a deck goes idle, the daemon sends `[booth-check]`. The deck:
 - Their task (from the spin prompt)
 - Project conventions (from CLAUDE.md)
 - Their working directory
-- How to self-verify (from check.md, when triggered)
+- How to self-verify (from `.booth/check.md`, when triggered)
 
 ## What Decks Don't Know
 

@@ -28,8 +28,8 @@ Every deck has a JSONL stream. The daemon tails it in real-time.
 
 | Type | Trigger | Action |
 |------|---------|--------|
-| `deck-idle` | Deck turn completed | Daemon: check report file (see below) |
-| `deck-error` | API error | DJ: investigate, retry or escalate |
+| `deck-check-complete` | Deck idle + report has terminal status | DJ: read report, deliver or retry |
+| `deck-error` | API error or pane died | DJ: spin review deck or escalate to user |
 | `deck-needs-attention` | Deck flagged `[NEEDS ATTENTION]` | DJ: check what it needs |
 
 ### Idle + Check Flow
@@ -49,9 +49,16 @@ When daemon detects deck idle:
 | `[booth-check]` | Deck | Deck idle, no report file yet |
 | `[booth-beat]` | DJ | Timer: DJ idle + decks working + cooldown elapsed |
 
-## Alert Format
+## Alert Delivery (Dual Channel)
 
-Alerts are injected into DJ's conversation via stop hook:
+Alerts reach DJ through two independent channels:
+
+1. **Passive (stop hook)**: Alerts written to `alerts.json` → stop hook reads on DJ's next turn end → injects `[booth-alert]`
+2. **Active (sendMessage)**: Reactor directly injects `[booth-alert]` into DJ pane via tmux send-keys
+
+Both channels may fire for the same alert. Redundancy is harmless — DJ sees the alert at least once regardless of its state (idle or working).
+
+### Stop hook format
 
 ```
 [booth-alert]
@@ -59,10 +66,9 @@ Alerts are injected into DJ's conversation via stop hook:
 [/booth-alert]
 ```
 
-Check signals are injected into deck's conversation:
+### Check signal format
 
 ```
-[booth-check]
-  Self-verify your work. Read check.md for instructions.
-[/booth-check]
+[booth-check] Read .booth/check.md and follow the self-verification procedure.
+  Your report path: .booth/reports/<deck>.md
 ```

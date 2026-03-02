@@ -19,7 +19,7 @@ export interface DeckStateChange {
 }
 
 export interface Alert {
-  type: 'deck-idle' | 'deck-error' | 'deck-needs-attention'
+  type: 'deck-check-complete' | 'deck-error' | 'deck-needs-attention'
   deckId: string
   deckName: string
   message: string
