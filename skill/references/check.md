@@ -1,7 +1,8 @@
 # Check Reference — Deck Self-Verification
 
-<!-- SYNC: This file is the Source of Truth. .booth/check.md is a copy.
-     After editing, run: cp skill/references/check.md .booth/check.md -->
+<!-- SYNC: skill/references/check.md is the Source of Truth.
+     .booth/check.md is a runtime copy.
+     After editing the source, run: cp skill/references/check.md .booth/check.md -->
 
 > **Rigid entry point.** Code guarantees decks read this file on every `[booth-check]`.
 > It defines the self-review framework. Users can customize `.booth/check.md` per project.
