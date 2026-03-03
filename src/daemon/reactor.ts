@@ -3,7 +3,8 @@ import { existsSync } from 'node:fs'
 import { BoothState } from './state.js'
 import { sendMessage } from './send-message.js'
 import { readReportStatus, isTerminalStatus } from './report.js'
-import { reportPath, boothPath } from '../constants.js'
+import { reportPath, boothPath, deriveSocket } from '../constants.js'
+import { tmuxSafe } from '../tmux.js'
 import { readConfig } from '../config.js'
 import type { DeckInfo, Alert, DeckStateChange } from '../types.js'
 
@@ -11,6 +12,7 @@ const CHECK_DELAY = 500
 const BEAT_INITIAL_COOLDOWN = 5 * 60_000
 const BEAT_MAX_COOLDOWN = 60 * 60_000
 const ERROR_RECOVERY_WINDOW = 30_000
+const PLAN_APPROVE_DELAY = 3_000
 
 export class Reactor {
   private state: BoothState
@@ -24,6 +26,9 @@ export class Reactor {
   // Error recovery state
   private errorTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private errorContext = new Map<string, { checkPhase: boolean }>()
+
+  // Plan mode auto-approve state
+  private planModeTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   constructor(projectRoot: string, state: BoothState) {
     this.projectRoot = projectRoot
@@ -40,6 +45,11 @@ export class Reactor {
   }
 
   private onDeckIdle(deck: DeckInfo): void {
+    // Cancel plan mode timer — deck completed its turn, approval was auto-granted
+    if (this.planModeTimers.has(deck.id)) {
+      this.clearPlanModeTimer(deck.id)
+      console.log(`[booth-reactor] deck "${deck.name}" plan mode auto-resolved (idle)`)
+    }
     // Live mode: skip check unless one is already in-flight
     if (deck.mode === 'live' && !deck.checkSentAt) return
     // All other cases (auto, hold, or live with in-flight check): proceed
@@ -161,6 +171,46 @@ export class Reactor {
     this.scheduleBeat()
   }
 
+  // --- Plan mode auto-approve ---
+
+  onPlanMode(deckId: string, action: 'enter' | 'exit'): void {
+    const deck = this.state.getDeck(deckId)
+    if (!deck) return
+
+    if (deck.mode === 'live') {
+      console.log(`[booth-reactor] deck "${deck.name}" plan-mode ${action} (live — ignored)`)
+      return
+    }
+
+    if (action === 'enter') {
+      console.log(`[booth-reactor] deck "${deck.name}" entered plan mode — will auto-approve on exit`)
+      return
+    }
+
+    // action === 'exit' — auto-approve for auto/hold after delay
+    // If deck progresses on its own within the delay, the timer is canceled
+    console.log(`[booth-reactor] deck "${deck.name}" plan-mode exit — scheduling auto-approve (${PLAN_APPROVE_DELAY / 1000}s)`)
+
+    this.clearPlanModeTimer(deckId)
+    const timer = setTimeout(() => {
+      this.planModeTimers.delete(deckId)
+      const socket = deriveSocket(this.projectRoot)
+      const d = this.state.getDeck(deckId)
+      if (!d) return
+      tmuxSafe(socket, 'send-keys', '-t', d.paneId, 'Enter')
+      console.log(`[booth-reactor] auto-approved plan mode for "${d.name}"`)
+    }, PLAN_APPROVE_DELAY)
+    this.planModeTimers.set(deckId, timer)
+  }
+
+  private clearPlanModeTimer(deckId: string): void {
+    const timer = this.planModeTimers.get(deckId)
+    if (timer) {
+      clearTimeout(timer)
+      this.planModeTimers.delete(deckId)
+    }
+  }
+
   // --- Deck timer cleanup ---
 
   clearDeckTimers(deckId: string): void {
@@ -170,6 +220,7 @@ export class Reactor {
       this.errorTimers.delete(deckId)
     }
     this.errorContext.delete(deckId)
+    this.clearPlanModeTimer(deckId)
   }
 
   // --- Alert delivery (dual channel) ---
@@ -219,12 +270,18 @@ export class Reactor {
   }
 
   private onDeckWorking(deck: DeckInfo): void {
+    // Cancel error recovery timer if active
     const timer = this.errorTimers.get(deck.id)
     if (timer) {
       clearTimeout(timer)
       this.errorTimers.delete(deck.id)
       this.errorContext.delete(deck.id)
       console.log(`[booth-reactor] deck "${deck.name}" recovered from error`)
+    }
+    // Cancel plan mode timer — deck progressed, approval was auto-granted
+    if (this.planModeTimers.has(deck.id)) {
+      this.clearPlanModeTimer(deck.id)
+      console.log(`[booth-reactor] deck "${deck.name}" plan mode auto-resolved`)
     }
   }
 

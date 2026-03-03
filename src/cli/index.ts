@@ -9,6 +9,8 @@ import { liveCommand } from './commands/live.js'
 import { autoCommand } from './commands/auto.js'
 import { holdCommand } from './commands/hold.js'
 import { statusCommand } from './commands/status.js'
+import { peekCommand } from './commands/peek.js'
+import { sendCommand } from './commands/send.js'
 
 const HELP = `
 booth — AI project manager for Claude Code
@@ -18,6 +20,8 @@ Usage:
   booth spin <name>    Create a new deck (parallel CC instance)
   booth ls             List all deck states
   booth status <name>  Show details for a specific deck
+  booth peek <name>    View a deck's tmux pane content
+  booth send <name> --prompt "..."  Send a prompt to an idle/holding deck
   booth kill <name>    Kill a deck
   booth stop           Stop booth (daemon + all decks)
   booth live <name>    Switch deck to live mode (no auto-check)
@@ -60,6 +64,12 @@ export async function run(args: string[]): Promise<void> {
         break
       case 'status':
         await statusCommand(rest)
+        break
+      case 'peek':
+        await peekCommand(rest)
+        break
+      case 'send':
+        await sendCommand(rest)
         break
       case 'kill':
         await killCommand(rest)

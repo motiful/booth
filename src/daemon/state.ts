@@ -61,6 +61,13 @@ export class BoothState extends EventEmitter {
     }
   }
 
+  clearAllDecks(): void {
+    this.decks.clear()
+    this.alerts = []
+    this.persistDecksJson()
+    this.persistAlerts()
+  }
+
   updateDeckStatus(deckId: string, status: DeckStatus): void {
     const deck = this.decks.get(deckId)
     if (!deck || deck.status === status) return

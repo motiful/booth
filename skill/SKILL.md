@@ -61,6 +61,13 @@ booth ls
 # Show details for a specific deck
 booth status <name>
 
+# View a deck's tmux pane content (last 50 lines by default)
+booth peek <name>
+booth peek <name> --lines 20
+
+# Send a new prompt to an idle/holding deck
+booth send <name> --prompt "..."
+
 # Kill a deck
 booth kill <name>
 
@@ -106,7 +113,7 @@ Mode indicators: `[A]` auto, `[H]` hold, `[L]` live.
 
 1. Choose a short, descriptive name (lowercase, hyphens): `auth-refactor`, `fix-api-bug`
 2. Write a clear prompt with:
-   - What to do (specific, actionable)
+   - What to do (specific, actionable) — **prompt 正文用中文**
    - Acceptance criteria (how to know it's done)
    - Scope boundaries (what NOT to touch)
 3. Pick mode and loop setting:
@@ -147,7 +154,7 @@ When you see `[booth-alert]` in your conversation (injected via stop hook):
 ### What "handling" looks like
 
 - **SUCCESS report (auto deck)** → acknowledge, `booth kill <deck>`, move on to next task
-- **SUCCESS report (hold deck)** → deck is paused. Give next instruction or `booth kill <deck>`
+- **SUCCESS report (hold deck)** → deck is paused. Send next instruction with `booth send <deck> --prompt "..."` or `booth kill <deck>`
 - **FAIL report** → read what failed, decide: re-spin with adjusted prompt, or escalate to user
 - **deck-error** → check context. Deck has 30s recovery window — if it recovers, no alert. If alert fires, it's a real problem.
 - **No more tasks** → tell user everything is done, summarize results

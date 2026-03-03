@@ -4,6 +4,15 @@
 > Code ensures DJ reads this file. It defines the management framework.
 > Users can customize `.booth/mix.md` per project. Future: can route to domain-specific skills.
 
+## Deck Prompt Guidelines
+
+When writing prompts for decks:
+
+- **Be explicit and direct.** Clear instructions reduce the chance of CC entering plan mode.
+- **Include this instruction in every deck prompt**: "Execute directly — do NOT enter plan mode (do NOT call EnterPlanMode)."
+- Provide enough context (files, acceptance criteria) so CC doesn't feel the need to "plan first"
+- If the task genuinely needs a plan, write the plan yourself in the prompt — don't let the deck self-plan
+
 ## Task Decomposition
 
 When the user gives you work:

@@ -9,6 +9,12 @@ export interface SignalEvent {
   timestamp: number
 }
 
+export interface PlanModeEvent {
+  deckId: string
+  action: 'enter' | 'exit'
+  timestamp: number
+}
+
 export class SignalCollector extends EventEmitter {
   private watchers = new Map<string, ChildProcess>()
 
@@ -24,6 +30,10 @@ export class SignalCollector extends EventEmitter {
       const status = parseEventState(line)
       if (status) {
         this.emit('signal', { deckId, status, timestamp: Date.now() } satisfies SignalEvent)
+      }
+      const planAction = parsePlanModeAction(line)
+      if (planAction) {
+        this.emit('plan-mode', { deckId, action: planAction, timestamp: Date.now() } satisfies PlanModeEvent)
       }
     })
 
@@ -61,6 +71,7 @@ export function parseEventState(line: string): DeckStatus | null {
   if (t === 'system') {
     const sub = (ev.subtype ?? '') as string
     if (sub === 'turn_duration') return 'idle'
+    if (sub === 'stop_hook_summary' && ev.preventedContinuation === false) return 'idle'
     if (sub === 'api_error') return 'error'
     return null
   }
@@ -82,6 +93,29 @@ export function parseEventState(line: string): DeckStatus | null {
 
   if (t === 'user') return 'working'
   if (t === 'progress') return 'working'
+
+  return null
+}
+
+export function parsePlanModeAction(line: string): 'enter' | 'exit' | null {
+  let ev: Record<string, unknown>
+  try {
+    ev = JSON.parse(line)
+  } catch {
+    return null
+  }
+
+  if (ev.type !== 'assistant') return null
+
+  const msg = (ev.message ?? {}) as Record<string, unknown>
+  const content = (msg.content ?? []) as Array<Record<string, unknown>>
+
+  for (const c of content) {
+    if (c?.type === 'tool_use') {
+      if (c.name === 'EnterPlanMode') return 'enter'
+      if (c.name === 'ExitPlanMode') return 'exit'
+    }
+  }
 
   return null
 }

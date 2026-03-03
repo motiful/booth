@@ -99,12 +99,19 @@ One-sentence description of what was done.
 
 The daemon accepts four terminal status values: `SUCCESS`, `FAIL`, `FAILED`, `ERROR`. Status matching is case-insensitive. `FAILED` and `ERROR` are accepted as aliases for robustness — CC sometimes writes these instead of the canonical `FAIL`. Use `SUCCESS` or `FAIL` in your reports; the aliases exist as safety nets, not as preferred values.
 
+### Language rules
+
+- Report 正文用**中文**撰写（Summary、Review Rounds、描述性内容）
+- 代码引用、文件路径、命令、YAML frontmatter 保持英文原样
+
 ### Link format rules
 
 - Every file reference in the report MUST be a clickable markdown link
+- All paths are **relative to the report file** at `.booth/reports/<name>.md`, NOT relative to the project root
+- The `../../` prefix reaches the project root (two levels up from `.booth/reports/`)
 - Format: `[`path/to/file`](../../path/to/file)` — backtick-wrapped display, relative link
-- The `../../` prefix is required because reports are at `.booth/reports/<name>.md` (two levels deep from project root)
 - For files in subdirectories: `[`src/deep/file.ts`](../../src/deep/file.ts)`
+- For files outside the project (e.g., a sibling repo `../other-repo/doc.md`): use `../../../other-repo/doc.md` (three levels up to reach the parent of the project root)
 
 ## Idempotency
 

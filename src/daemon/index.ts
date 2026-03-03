@@ -1,7 +1,7 @@
 import { createServer, Server } from 'node:net'
 import { existsSync, unlinkSync } from 'node:fs'
 import { SignalCollector } from './signal.js'
-import type { SignalEvent } from './signal.js'
+import type { SignalEvent, PlanModeEvent } from './signal.js'
 import { BoothState } from './state.js'
 import { Reactor } from './reactor.js'
 import { initBoothDir, ipcSocketPath, findLatestJsonl, deriveSocket, SESSION } from '../constants.js'
@@ -50,10 +50,17 @@ export class Daemon {
       }
     })
 
+    this.signal.on('plan-mode', (ev: PlanModeEvent) => {
+      if (ev.deckId !== 'dj') {
+        this.reactor.onPlanMode(ev.deckId, ev.action)
+      }
+    })
+
     // Poll for DJ's JSONL
     this.pollForDjJsonl()
 
-    // Restore watchers for existing decks
+    // Validate and restore existing decks from state.json
+    this.pruneStaleDecks()
     for (const deck of this.state.getAllDecks()) {
       if (deck.jsonlPath && deck.status !== 'stopped') {
         this.assignedJsonlPaths.add(deck.jsonlPath)
@@ -91,6 +98,28 @@ export class Daemon {
 
   getState(): BoothState {
     return this.state
+  }
+
+  private pruneStaleDecks(): void {
+    const socket = deriveSocket(this.projectRoot)
+    const stale: string[] = []
+
+    for (const deck of this.state.getAllDecks()) {
+      const check = tmuxSafe(socket, 'display-message', '-t', deck.paneId, '-p', '#{pane_pid}')
+      if (!check.ok || !check.output.trim()) {
+        stale.push(deck.id)
+      }
+    }
+
+    for (const id of stale) {
+      const deck = this.state.getDeck(id)
+      console.log(`[booth-daemon] removing stale deck "${deck?.name}" (pane gone)`)
+      this.removeDeck(id)
+    }
+
+    if (stale.length) {
+      console.log(`[booth-daemon] pruned ${stale.length} stale deck(s) from previous session`)
+    }
   }
 
   private pollForJsonl(deckId: string, deckDir: string): void {
@@ -306,13 +335,18 @@ export class Daemon {
 
     for (const [id] of this.jsonlPollers) this.stopJsonlPoll(id)
     this.signal.unwatchAll()
+
+    // Clear all deck entries so state.json is clean on next startup
+    this.state.clearAllDecks()
     this.state.stop()
+
     if (this.healthTimer) clearInterval(this.healthTimer)
     if (this.ipcServer) {
       this.ipcServer.close()
       const sockPath = ipcSocketPath(this.projectRoot)
       if (existsSync(sockPath)) unlinkSync(sockPath)
     }
+    console.log('[booth-daemon] shutdown complete')
     process.exit(0)
   }
 }

@@ -68,6 +68,22 @@ When daemon detects deck idle, behavior depends on mode:
 
 When a deck's mode is switched to auto or hold while it is idle, the daemon immediately triggers the check flow (same as if idle was just detected). In-flight checks are not interrupted by mode switches.
 
+### Plan Mode Auto-Approve (Mode-Dependent)
+
+CC may enter plan mode (`EnterPlanMode` tool_use) during complex tasks, self-restricting to read-only and blocking execution.
+
+**Detection**: JSONL `assistant` messages with `tool_use` blocks named `EnterPlanMode` or `ExitPlanMode`.
+
+**Response by mode**:
+
+| Mode | On EnterPlanMode | On ExitPlanMode |
+|------|-----------------|-----------------|
+| **Auto** | Log warning | Start 3s timer → send Enter to approve |
+| **Hold** | Log warning | Start 3s timer → send Enter to approve |
+| **Live** | Log only (ignored) | Log only (ignored) |
+
+The 3s delay allows `--dangerously-skip-permissions` to auto-resolve if possible. If the deck emits a `working` event within 3s (meaning it moved on), the timer is canceled. Enter is only sent if the deck appears stuck at the approval UI.
+
 ## Injected Signals
 
 | Signal | Target | When |
