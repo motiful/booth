@@ -56,8 +56,15 @@ export class Daemon {
       }
     })
 
-    // Poll for DJ's JSONL
-    this.pollForDjJsonl()
+    // Restore DJ JSONL if persisted, otherwise poll
+    const djJsonlPath = this.state.getDjJsonlPath()
+    if (djJsonlPath && existsSync(djJsonlPath)) {
+      this.assignedJsonlPaths.add(djJsonlPath)
+      this.signal.watch('dj', djJsonlPath)
+      console.log(`[booth-daemon] DJ → restored watching ${djJsonlPath}`)
+    } else {
+      this.pollForDjJsonl()
+    }
 
     // Validate and restore existing decks from state.json
     this.pruneStaleDecks()
@@ -165,6 +172,7 @@ export class Daemon {
         clearInterval(timer)
         this.jsonlPollers.delete('dj')
         this.assignedJsonlPaths.add(latest)
+        this.state.setDjJsonlPath(latest)
         this.signal.watch('dj', latest)
         console.log(`[booth-daemon] DJ → watching ${latest}`)
       } else if (attempts >= JSONL_POLL_MAX_ATTEMPTS) {

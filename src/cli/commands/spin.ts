@@ -1,6 +1,9 @@
+import { writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { findProjectRoot, deriveSocket } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
-import { tmux, sendKeysToCC, sleepMs } from '../../tmux.js'
+import { tmux, sleepMs } from '../../tmux.js'
 import type { DeckInfo, DeckMode } from '../../types.js'
 
 export async function spinCommand(args: string[]): Promise<void> {
@@ -47,15 +50,16 @@ export async function spinCommand(args: string[]): Promise<void> {
 
   await ipcRequest(projectRoot, { cmd: 'register-deck', deck })
 
-  // Launch CC via plain send-keys (shell command, no autocomplete issue).
+  // Launch CC with prompt as CLI argument via temp file.
+  // Shell expands $(cat file) — no need to wait for CC readiness.
   sleepMs(500)
-  tmux(socket, 'send-keys', '-t', paneId, 'claude --dangerously-skip-permissions', 'Enter')
-
-  // Inject prompt after CC is ready. CC takes ~4s to initialize.
-  // sendKeysToCC handles autocomplete dismissal and copy-mode safety.
   if (prompt) {
-    sleepMs(4000)
-    sendKeysToCC(socket, paneId, prompt)
+    const promptFile = join(tmpdir(), `booth-prompt-${name}-${Date.now()}.txt`)
+    writeFileSync(promptFile, prompt)
+    tmux(socket, 'send-keys', '-t', paneId,
+      `claude --dangerously-skip-permissions "$(cat ${promptFile})"`, 'Enter')
+  } else {
+    tmux(socket, 'send-keys', '-t', paneId, 'claude --dangerously-skip-permissions', 'Enter')
   }
 
   const modeLabel = mode === 'auto' ? '' : ` [${mode}]`

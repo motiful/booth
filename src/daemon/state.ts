@@ -20,6 +20,7 @@ function safeWrite(path: string, data: string): void {
 export class BoothState extends EventEmitter {
   private decks = new Map<string, DeckInfo>()
   private djStatus: 'idle' | 'working' = 'idle'
+  private djJsonlPath?: string
   private alerts: Alert[] = []
   private projectRoot: string
   private persistTimer?: ReturnType<typeof setInterval>
@@ -107,6 +108,14 @@ export class BoothState extends EventEmitter {
     this.emit('dj:status-changed', status)
   }
 
+  getDjJsonlPath(): string | undefined {
+    return this.djJsonlPath
+  }
+
+  setDjJsonlPath(path: string): void {
+    this.djJsonlPath = path
+  }
+
   pushAlert(alert: Alert): void {
     this.alerts.push(alert)
     this.persistAlerts()
@@ -123,6 +132,7 @@ export class BoothState extends EventEmitter {
     const data = {
       decks: Object.fromEntries(this.decks),
       djStatus: this.djStatus,
+      djJsonlPath: this.djJsonlPath,
       persistedAt: Date.now(),
     }
     safeWrite(boothPath(this.projectRoot, STATE_FILE), JSON.stringify(data, null, 2))
@@ -139,6 +149,7 @@ export class BoothState extends EventEmitter {
         }
       }
       if (raw.djStatus) this.djStatus = raw.djStatus
+      if (raw.djJsonlPath) this.djJsonlPath = raw.djJsonlPath
     } catch {
       // corrupted state file, start fresh
     }
