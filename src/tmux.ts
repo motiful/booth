@@ -56,11 +56,6 @@ export function sendKeys(socket: string, target: string, keys: string): void {
   tmux(socket, 'send-keys', '-t', target, keys, 'Enter')
 }
 
-export function sendKeysLiteral(socket: string, target: string, text: string): void {
-  tmux(socket, 'send-keys', '-t', target, '-l', text)
-  tmux(socket, 'send-keys', '-t', target, 'Enter')
-}
-
 export function sleepMs(ms: number): void {
   const buf = new SharedArrayBuffer(4)
   const view = new Int32Array(buf)

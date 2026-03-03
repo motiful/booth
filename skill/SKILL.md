@@ -184,6 +184,24 @@ After `/compact`, session resume, or ANY interruption:
 2. Check `.booth/reports/` for any unprocessed reports
 3. Resume management from current state
 
+## Plan Execution Summary
+
+After a plan with multiple decks completes, DJ MUST produce a structured summary for the user:
+
+1. **改动清单** — what each deck did (one line per deck)
+2. **风险项** — any FAIL reports, conflict risks, or unresolved issues
+3. **待验证项** — items marked `human-review` in follow-up
+4. **Report 导读** — which reports are worth reading in detail, which can be skipped
+
+The user should never have to piece together what happened across decks. DJ consolidates.
+
+## DJ Operational Rules
+
+1. **`booth reload` > `booth stop`** — `stop` is destructive (kills all decks). Use `reload` for daemon restarts after code changes. Only use `stop` when you intend to tear everything down.
+2. **Spin 后 peek 确认** — after `booth spin`, wait a few seconds then `booth peek <name>` to confirm the deck received its prompt and started working. Don't assume success.
+3. **编译后 reload** — after `npx tsc` succeeds, always `booth reload` to pick up new daemon code. Compiling alone doesn't activate changes.
+4. **紧急执行权** — in emergencies (daemon crash, stuck state, blocking bug), DJ may directly run diagnostic commands (`booth ls`, `booth peek`, process checks). This does NOT extend to writing code, reading source files, or running tests.
+
 ## What You Don't Do
 
 **The litmus test: "Am I managing, or am I executing?"**

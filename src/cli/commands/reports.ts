@@ -6,17 +6,34 @@ import { readReportStatus } from '../../daemon/report.js'
 import { readConfig } from '../../config.js'
 
 const FRONTMATTER_RE = /^---\s*\n([\s\S]*?)\n---/
-const HUMAN_REVIEW_RE = /^human-review:\s*\n((?:\s+-\s+.+\n?)*)/m
 
-function parseHumanReview(content: string): string[] {
+interface FollowUp {
+  humanReview: number
+  blockedBy: number
+  djAction: number
+}
+
+const FOLLOW_UP_KEYS = ['human-review', 'blocked-by', 'dj-action'] as const
+
+function parseFollowUp(content: string): FollowUp {
+  const result: FollowUp = { humanReview: 0, blockedBy: 0, djAction: 0 }
   const fmMatch = content.match(FRONTMATTER_RE)
-  if (!fmMatch) return []
-  const hrMatch = fmMatch[1].match(HUMAN_REVIEW_RE)
-  if (!hrMatch) return []
-  return hrMatch[1]
-    .split('\n')
-    .map(l => l.replace(/^\s+-\s+/, '').replace(/^["']|["']$/g, '').trim())
-    .filter(Boolean)
+  if (!fmMatch) return result
+
+  const fm = fmMatch[1]
+
+  for (const key of FOLLOW_UP_KEYS) {
+    const re = new RegExp(`^\\s+${key}:\\s*\\n((?:\\s+-\\s+.+\\n?)*)`, 'm')
+    const match = fm.match(re)
+    if (match) {
+      const count = match[1].split('\n').filter(l => /^\s+-\s+/.test(l)).length
+      if (key === 'human-review') result.humanReview = count
+      else if (key === 'blocked-by') result.blockedBy = count
+      else if (key === 'dj-action') result.djAction = count
+    }
+  }
+
+  return result
 }
 
 function relativeTime(ms: number): string {
@@ -34,7 +51,7 @@ interface ReportEntry {
   name: string
   status: string | null
   mtime: number
-  humanReviewCount: number
+  followUp: FollowUp
 }
 
 function listReports(projectRoot: string): ReportEntry[] {
@@ -47,12 +64,12 @@ function listReports(projectRoot: string): ReportEntry[] {
     const name = basename(f, '.md')
     const status = readReportStatus(fullPath)
     const mtime = statSync(fullPath).mtimeMs
-    let humanReviewCount = 0
+    let followUp: FollowUp = { humanReview: 0, blockedBy: 0, djAction: 0 }
     try {
       const content = readFileSync(fullPath, 'utf-8')
-      humanReviewCount = parseHumanReview(content).length
+      followUp = parseFollowUp(content)
     } catch { /* ignore */ }
-    return { name, status, mtime, humanReviewCount }
+    return { name, status, mtime, followUp }
   }).sort((a, b) => b.mtime - a.mtime)
 }
 
@@ -61,6 +78,14 @@ function validateName(name: string): void {
     console.error(`[booth] invalid report name: "${name}"`)
     process.exit(1)
   }
+}
+
+function formatFollowUp(fu: FollowUp): string {
+  const parts: string[] = []
+  if (fu.humanReview > 0) parts.push(`${fu.humanReview} 待验证`)
+  if (fu.blockedBy > 0) parts.push(`${fu.blockedBy} blocked`)
+  if (fu.djAction > 0) parts.push(`${fu.djAction} DJ`)
+  return parts.length > 0 ? `   [${parts.join(', ')}]` : ''
 }
 
 export async function reportsCommand(args: string[]): Promise<void> {
@@ -113,7 +138,7 @@ export async function reportsCommand(args: string[]): Promise<void> {
     const name = r.name.padEnd(maxName)
     const status = (r.status ?? 'UNKNOWN').padEnd(10)
     const time = relativeTime(Date.now() - r.mtime)
-    const review = r.humanReviewCount > 0 ? `   [${r.humanReviewCount} 待验证]` : ''
-    console.log(`  ${name}  ${status}  ${time}${review}`)
+    const followUp = formatFollowUp(r.followUp)
+    console.log(`  ${name}  ${status}  ${time}${followUp}`)
   }
 }

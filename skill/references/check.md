@@ -1,5 +1,8 @@
 # Check Reference — Deck Self-Verification
 
+<!-- SYNC: This file is the Source of Truth. .booth/check.md is a copy.
+     After editing, run: cp skill/references/check.md .booth/check.md -->
+
 > **Rigid entry point.** Code guarantees decks read this file on every `[booth-check]`.
 > It defines the self-review framework. Users can customize `.booth/check.md` per project.
 > Future: can route to domain-specific verification skills based on task type.
@@ -57,6 +60,43 @@ No-loop is appropriate for simple, low-risk tasks (typo fixes, analysis, config 
 | **5 rounds** reached (hard limit) | `FAIL` | Write report with remaining issues |
 | Same findings **2 rounds in a row** | `FAIL` | Write report — stuck, needs escalation |
 | Remaining issues **beyond your scope** (design questions, unclear requirements, needs user decision) | `FAIL` | Write report — fixed items + remaining for DJ |
+
+## Completion Dimensions
+
+Every report MUST include a `## Completion Dimensions` section. The eight dimensions:
+
+| Dimension | Required? | Description |
+|-----------|-----------|-------------|
+| Code | Required | Code changes complete |
+| Commit | Required | Changes committed |
+| Build | Required (if applicable) | `npx tsc` or equivalent passes |
+| Test-Auto | Required | **Compilation ≠ runtime verification.** If you changed CLI/daemon/tmux → must actually run it. |
+| Test-Human | AI judgment | List concrete steps. May mark N/A with justification. |
+| Design-Doc | AI judgment | New features need docs. Small fixes: explain why not needed. |
+| Skills | AI judgment | Changed user-visible behavior → update skill files. |
+| Progress | Required | progress.md updated |
+
+Use ✅, ❌, ⏳ (pending human verification), or N/A (with reason) for each dimension.
+
+## Follow-Up Sub-Items
+
+The report frontmatter supports a `follow-up` field with three categories:
+
+```yaml
+follow-up:
+  human-review:
+    - "验证 copy-mode 恢复到原始滚动位置"
+  blocked-by:
+    - "等 auth-refactor 完成后集成测试"
+  dj-action:
+    - "更新 self-review dimensions"
+```
+
+- **human-review**: Items that need human verification
+- **blocked-by**: Items blocked by other work
+- **dj-action**: Items requiring DJ or global-level action
+
+Only include categories that have items. Omit empty categories.
 
 ## Pre-Report Steps
 
@@ -116,6 +156,13 @@ status: SUCCESS | FAIL | FAILED | ERROR
 rounds: 3
 deck: auth-refactor
 timestamp: 2026-03-02T14:30:00Z
+follow-up:
+  human-review:
+    - "验证 copy-mode 恢复到原始滚动位置"
+  blocked-by:
+    - "等 auth-refactor 完成后集成测试"
+  dj-action:
+    - "更新 self-review dimensions"
 ---
 
 ## Summary
@@ -140,6 +187,19 @@ One-sentence description of what was done.
 
 ### Round 3
 - No issues found
+
+## Completion Dimensions
+
+| Dimension | Status | Notes |
+|-----------|--------|-------|
+| Code | ✅ | 代码完成 |
+| Commit | ✅ | abc1234 |
+| Build | ✅ | `npx tsc` 通过 |
+| Test-Auto | ✅ | 编译 + CLI 运行验证 |
+| Test-Human | ⏳ | 列出步骤或标 N/A 并说明理由 |
+| Design-Doc | N/A | 小修，无需设计文档 |
+| Skills | N/A | 未改变用户可见行为 |
+| Progress | ✅ | progress.md 已更新 |
 
 ## Test Status
 
