@@ -1,4 +1,4 @@
-import { writeFileSync, unlinkSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { findProjectRoot, deriveSocket } from '../../constants.js'
@@ -51,16 +51,14 @@ export async function spinCommand(args: string[]): Promise<void> {
   await ipcRequest(projectRoot, { cmd: 'register-deck', deck })
 
   // Launch CC with prompt as CLI argument via temp file.
-  // Shell expands $(cat file) — no need to wait for CC readiness.
+  // The shell command reads the file, deletes it, then launches CC.
+  // This guarantees the file is read before cleanup — no timing dependency.
   sleepMs(500)
   if (prompt) {
     const promptFile = join(tmpdir(), `booth-prompt-${name}-${Date.now()}.txt`)
     writeFileSync(promptFile, prompt)
     tmux(socket, 'send-keys', '-t', paneId,
-      `claude --dangerously-skip-permissions "$(cat ${promptFile})"`, 'Enter')
-    // Give shell time to expand $(cat file) before cleanup
-    sleepMs(1000)
-    try { unlinkSync(promptFile) } catch {}
+      `PROMPT=$(cat ${promptFile}) && rm -f ${promptFile} && claude --dangerously-skip-permissions "$PROMPT"`, 'Enter')
   } else {
     tmux(socket, 'send-keys', '-t', paneId, 'claude --dangerously-skip-permissions', 'Enter')
   }
