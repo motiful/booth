@@ -19,7 +19,8 @@ There are two paths depending on whether the deck was spun with `--no-loop`:
 2. **Read the sub-agent's findings**
 3. **Fix any issues found**
 4. **Repeat** until exit condition is met
-5. **Write the report**
+5. **Complete pre-report steps** (test, commit, progress update)
+6. **Write the report**
 
 ### Sub-Agent Invocation
 
@@ -42,8 +43,9 @@ Use Claude Code's built-in sub-agent capability:
 When a deck is spun with `--no-loop`, the sub-agent review loop is skipped entirely. The deck:
 
 1. Assesses its own work (did it meet acceptance criteria?)
-2. Writes the report directly to `.booth/reports/<deck>.md`
-3. Uses `rounds: 0` in the YAML frontmatter
+2. Completes **Pre-Report Steps** (test, commit, progress update)
+3. Writes the report directly to `.booth/reports/<deck>.md`
+4. Uses `rounds: 0` in the YAML frontmatter
 
 No-loop is appropriate for simple, low-risk tasks (typo fixes, analysis, config changes) where full sub-agent review adds overhead without proportional value. The decision to use `--no-loop` depends on task complexity, not task type.
 
@@ -55,6 +57,51 @@ No-loop is appropriate for simple, low-risk tasks (typo fixes, analysis, config 
 | **5 rounds** reached (hard limit) | `FAIL` | Write report with remaining issues |
 | Same findings **2 rounds in a row** | `FAIL` | Write report — stuck, needs escalation |
 | Remaining issues **beyond your scope** (design questions, unclear requirements, needs user decision) | `FAIL` | Write report — fixed items + remaining for DJ |
+
+## Pre-Report Steps
+
+After the review loop completes (or immediately after self-assessment in no-loop mode), complete these steps **before** writing the report.
+
+### 1. Git Worktree Awareness
+
+- If the project uses git worktree (you're working in a `.claude/worktrees/` path), all your changes are already isolated — commit freely
+- If you're working in the main repo directory, other decks may be modifying the same repo concurrently
+  - Run `git status` to check for unexpected changes from other decks
+  - If you see conflicts or unexpected modifications to files you didn't touch, do NOT overwrite them
+
+### 2. Test Verification
+
+Run tests **before** committing. Testing is mandatory, not optional.
+
+- **Minimum bar**: `npx tsc --noEmit` (type-check) — always run this, no exceptions
+- **If the project has tests**: run them (`npm test`, `npx vitest`, etc.)
+- **If the project has a lint/format check**: run it
+- **CLI-verifiable behavior**: if your changes affect CLI commands, run the command and verify output
+- **Cannot auto-test**: list specific manual verification steps for the user (e.g., "open browser, click X, verify Y")
+- **Never write "无法测试" and stop** — there is always _something_ you can verify
+
+Record test results; you'll need them for the report.
+
+### 3. Git Commit
+
+Commit your changes **before** writing the report.
+
+- `git add` specific files — **never** use `git add .` or `git add -A`
+- Write a clear conventional commit message describing what you did
+- If `git commit` fails due to conflicts:
+  1. `git pull --rebase`
+  2. Resolve conflicts
+  3. Retry commit
+- If commit still fails, proceed to write the report anyway — but document the failure in the report
+
+### 4. Progress Update
+
+Update the project's progress tracking file.
+
+- Don't hardcode the path — look for `progress.md`, `PROGRESS.md`, `.claude/progress.md`, or similar in the project
+- If no progress file exists, skip this step
+- Add one concise line describing what you completed (e.g., `- [deck-name] 完成 auth middleware 重构`)
+- Don't rewrite existing content — append only
 
 ## Report Format
 
@@ -93,6 +140,16 @@ One-sentence description of what was done.
 
 ### Round 3
 - No issues found
+
+## Test Status
+
+- `npx tsc --noEmit`: ✅ pass
+- `npm test`: ✅ 12/12 pass
+- CLI 验证: `booth status` 输出正确
+
+## Conflict Risk
+
+无冲突风险。
 ```
 
 ### Terminal statuses
@@ -112,6 +169,18 @@ The daemon accepts four terminal status values: `SUCCESS`, `FAIL`, `FAILED`, `ER
 - Format: `[`path/to/file`](../../path/to/file)` — backtick-wrapped display, relative link
 - For files in subdirectories: `[`src/deep/file.ts`](../../src/deep/file.ts)`
 - For files outside the project (e.g., a sibling repo `../other-repo/doc.md`): use `../../../other-repo/doc.md` (three levels up to reach the parent of the project root)
+
+### Test Status section
+
+The report **must** include a `## Test Status` section listing every verification performed and its result. Use ✅/❌ markers. If a test cannot be run automatically, write `⏳ 待用户验证` and describe the manual steps.
+
+### Conflict Risk section
+
+The report **must** include a `## Conflict Risk` section.
+
+- If you modified files that other decks might also be modifying concurrently, list them with a `[CONFLICT RISK]` tag:
+  - `[CONFLICT RISK]` [`src/shared/types.ts`](../../src/shared/types.ts) — 多个 deck 可能同时修改共享类型
+- If no conflict risk, write `无冲突风险。`
 
 ## Idempotency
 
