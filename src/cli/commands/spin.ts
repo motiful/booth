@@ -28,13 +28,10 @@ export async function spinCommand(args: string[]): Promise<void> {
 
   const deckId = `deck-${name}`
 
-  // Direct exec: CC is the window process, no shell startup race.
+  // Create shell window — CC needs a shell env (direct exec exits immediately).
   // -P -F gets paneId atomically in one call.
   const paneId = tmux(socket, 'new-window', '-t', 'dj', '-n', name,
-    '-P', '-F', '#{pane_id}', 'claude --dangerously-skip-permissions')
-
-  // Keep pane alive if CC exits unexpectedly
-  tmux(socket, 'set-option', '-t', paneId, 'remain-on-exit', 'on')
+    '-P', '-F', '#{pane_id}')
 
   const deck: DeckInfo = {
     id: deckId,
@@ -50,11 +47,14 @@ export async function spinCommand(args: string[]): Promise<void> {
 
   await ipcRequest(projectRoot, { cmd: 'register-deck', deck })
 
-  // `claude "prompt"` runs non-interactively and exits, so we start bare
-  // and inject prompt via sendKeysToCC to keep the session interactive.
-  // Wait for CC to initialize before injecting.
+  // Launch CC via plain send-keys (shell command, no autocomplete issue).
+  sleepMs(500)
+  tmux(socket, 'send-keys', '-t', paneId, 'claude --dangerously-skip-permissions', 'Enter')
+
+  // Inject prompt after CC is ready. CC takes ~4s to initialize.
+  // sendKeysToCC handles autocomplete dismissal and copy-mode safety.
   if (prompt) {
-    sleepMs(1500)
+    sleepMs(4000)
     sendKeysToCC(socket, paneId, prompt)
   }
 
