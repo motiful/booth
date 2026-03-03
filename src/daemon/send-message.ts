@@ -1,5 +1,5 @@
 import { deriveSocket } from '../constants.js'
-import { tmuxSafe, sendKeysLiteral } from '../tmux.js'
+import { tmuxSafe, sendKeysToCC } from '../tmux.js'
 import { BoothState } from './state.js'
 
 export interface SendResult {
@@ -41,7 +41,7 @@ export function sendMessage(
 
   // Inject message
   try {
-    sendKeysLiteral(socket, paneId, message)
+    sendKeysToCC(socket, paneId, message)
     return { ok: true }
   } catch (err) {
     return { ok: false, error: `sendKeys failed: ${(err as Error).message}` }
