@@ -9,6 +9,7 @@ import { readConfig } from '../config.js'
 import type { DeckInfo, Alert, DeckStateChange } from '../types.js'
 
 const CHECK_DELAY = 500
+const CHECK_POLL_INTERVAL = 5_000
 const BEAT_INITIAL_COOLDOWN = 5 * 60_000
 const BEAT_MAX_COOLDOWN = 60 * 60_000
 const ERROR_RECOVERY_WINDOW = 30_000
@@ -30,6 +31,9 @@ export class Reactor {
   // Plan mode auto-approve state
   private planModeTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
+  // Check poll timers — safety net for missed idle signals
+  private checkPollTimers = new Map<string, ReturnType<typeof setInterval>>()
+
   constructor(projectRoot: string, state: BoothState) {
     this.projectRoot = projectRoot
     this.state = state
@@ -42,6 +46,14 @@ export class Reactor {
     this.state.on('deck:needs-attention', (deck: DeckInfo) => this.onDeckNeedsAttention(deck))
     this.state.on('deck:state-changed', (_change: DeckStateChange) => this.resetBeat())
     this.state.on('dj:status-changed', () => this.scheduleBeat())
+
+    // Restore check poll timers for decks with in-flight checks (e.g., after daemon reload)
+    for (const deck of this.state.getAllDecks()) {
+      if (deck.checkSentAt) {
+        this.startCheckPoll(deck.id)
+        console.log(`[booth-reactor] restored check poll for "${deck.name}"`)
+      }
+    }
   }
 
   private onDeckIdle(deck: DeckInfo): void {
@@ -64,6 +76,9 @@ export class Reactor {
     const rPath = reportPath(this.projectRoot, deck.name)
 
     if (!existsSync(rPath)) {
+      // Check already sent — waiting for deck to write report (poll will retry)
+      if (deck.checkSentAt) return
+
       // No report yet → trigger deck self-check via .booth/check.md
       const checkPath = boothPath(this.projectRoot, 'check.md')
       let msg = existsSync(checkPath)
@@ -79,8 +94,9 @@ export class Reactor {
       if (!result.ok) {
         console.log(`[booth-reactor] check send failed for "${deck.name}": ${result.error}`)
       } else {
-        // Track that check was sent
+        // Track that check was sent + start poll safety net
         this.state.updateDeck(deck.id, { checkSentAt: Date.now() })
+        this.startCheckPoll(deck.id)
         console.log(`[booth-reactor] sent check to "${deck.name}"`)
       }
       return
@@ -88,11 +104,18 @@ export class Reactor {
 
     // Report exists — check status
     const status = readReportStatus(rPath)
-    if (!status) return // malformed, wait for next idle
+    if (!status) {
+      console.log(`[booth-reactor] deck "${deck.name}" report exists but has no valid YAML status — waiting`)
+      return
+    }
 
     if (isTerminalStatus(status)) {
-      // Clear checkSentAt now that check is complete
+      // Guard: if checkSentAt already cleared, another runCheck already handled this report
+      if (!deck.checkSentAt) return
+
+      // Clear checkSentAt and poll timer now that check is complete
       this.state.updateDeck(deck.id, { checkSentAt: undefined })
+      this.clearCheckPollTimer(deck.id)
 
       if (deck.mode === 'hold') {
         // Hold mode: alert DJ but do NOT kill the deck
@@ -121,8 +144,9 @@ export class Reactor {
         this.systemNotify(`Booth: ${deck.name} → ${status}`)
         console.log(`[booth-reactor] deck "${deck.name}" check result: ${status}`)
       }
+    } else {
+      console.log(`[booth-reactor] deck "${deck.name}" report status "${status}" is non-terminal — waiting`)
     }
-    // non-terminal status → wait, next idle will retry
   }
 
   // --- Beat system ---
@@ -211,6 +235,29 @@ export class Reactor {
     }
   }
 
+  // --- Check poll safety net ---
+
+  private startCheckPoll(deckId: string): void {
+    this.clearCheckPollTimer(deckId)
+    const timer = setInterval(() => {
+      const d = this.state.getDeck(deckId)
+      if (!d || !d.checkSentAt) {
+        this.clearCheckPollTimer(deckId)
+        return
+      }
+      this.runCheck(d)
+    }, CHECK_POLL_INTERVAL)
+    this.checkPollTimers.set(deckId, timer)
+  }
+
+  private clearCheckPollTimer(deckId: string): void {
+    const timer = this.checkPollTimers.get(deckId)
+    if (timer) {
+      clearInterval(timer)
+      this.checkPollTimers.delete(deckId)
+    }
+  }
+
   // --- Deck timer cleanup ---
 
   clearDeckTimers(deckId: string): void {
@@ -221,6 +268,7 @@ export class Reactor {
     }
     this.errorContext.delete(deckId)
     this.clearPlanModeTimer(deckId)
+    this.clearCheckPollTimer(deckId)
   }
 
   // --- Alert delivery (dual channel) ---
