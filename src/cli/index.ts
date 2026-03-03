@@ -12,6 +12,7 @@ import { statusCommand } from './commands/status.js'
 import { peekCommand } from './commands/peek.js'
 import { sendCommand } from './commands/send.js'
 import { reportsCommand } from './commands/reports.js'
+import { resumeCommand } from './commands/resume.js'
 
 const HELP = `
 booth — AI project manager for Claude Code
@@ -24,6 +25,9 @@ Usage:
   booth peek <name>    View a deck's tmux pane content
   booth send <name> --prompt "..."  Send a prompt to an idle/holding deck
   booth kill <name>    Kill a deck
+  booth resume         Resume archived decks
+  booth resume <name>  Resume a specific archived deck
+  booth resume --list  List all archived decks
   booth stop           Stop booth (daemon + all decks)
   booth live <name>    Switch deck to live mode (no auto-check)
   booth auto <name>    Switch deck to auto mode (default)
@@ -77,6 +81,9 @@ export async function run(args: string[]): Promise<void> {
         break
       case 'kill':
         await killCommand(rest)
+        break
+      case 'resume':
+        await resumeCommand(rest)
         break
       case 'stop':
         await stopCommand(rest)

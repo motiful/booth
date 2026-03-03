@@ -23,8 +23,20 @@ export interface DeckStateChange {
   timestamp: number
 }
 
+export interface ArchivedDeck {
+  id: string
+  name: string
+  mode: DeckMode
+  dir: string
+  jsonlPath: string
+  sessionId: string
+  noLoop?: boolean
+  createdAt: number
+  killedAt: number
+}
+
 export interface Alert {
-  type: 'deck-check-complete' | 'deck-error' | 'deck-needs-attention'
+  type: 'deck-check-complete' | 'deck-error' | 'deck-needs-attention' | 'deck-exited'
   deckId: string
   deckName: string
   message: string

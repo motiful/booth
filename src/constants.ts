@@ -12,6 +12,7 @@ export const STATE_FILE = 'state.json'
 export const ALERTS_FILE = 'alerts.json'
 export const DECKS_FILE = 'decks.json'
 export const REPORTS_DIR = 'reports'
+export const DECK_ARCHIVE_FILE = 'deck-archive.json'
 
 export function findProjectRoot(from: string = process.cwd()): string {
   let dir = resolve(from)

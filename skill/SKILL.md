@@ -31,6 +31,7 @@ spin api-refactor                → spin up a new deck named "api-refactor"
 spin: refactor the API layer     → spin up, use the description as the initial prompt
 开一个 / 起一个 auth-fix         → spin up a deck
 kill api-refactor / 杀掉 X      → kill a deck
+resume / 恢复 X                  → resume an archived deck
 status / 状态                    → list all decks
 ```
 
@@ -77,10 +78,19 @@ booth reports <name>
 # Open a report in configured editor
 booth reports open <name>
 
-# Kill a deck
+# Kill a deck (auto-archived for later resume)
 booth kill <name>
 
-# Stop everything
+# Resume archived decks
+booth resume                     # resume all archived decks
+booth resume <name>              # resume a specific deck (latest archive)
+booth resume <name> --hold       # resume and switch to hold mode
+booth resume --id <session-uuid> # resume by CC session ID
+booth resume --list              # list all archived decks
+booth resume <name> --list       # list archives for a specific deck name
+booth resume <name> --pick <n>   # resume nth archive (1=newest, default)
+
+# Stop everything (all decks archived before shutdown)
 booth stop
 
 # Reload daemon (hot-restart, preserves tmux sessions)
@@ -163,7 +173,7 @@ When you see `[booth-alert]` in your conversation (injected via stop hook):
 ### What "handling" looks like
 
 - **SUCCESS report (auto deck)** → acknowledge, `booth kill <deck>`, move on to next task
-- **SUCCESS report (hold deck)** → deck is paused. Send next instruction with `booth send <deck> --prompt "..."` or `booth kill <deck>`
+- **SUCCESS report (hold deck)** → deck is paused. Send next instruction with `booth send <deck> --prompt "..."`. **NEVER kill a hold deck without explicit user permission.** Hold decks are the user's persistent workspaces — killing one destroys the CC session and all conversation context. Only the user decides when a hold deck is done.
 - **FAIL report** → read what failed, decide: re-spin with adjusted prompt, or escalate to user
 - **deck-error** → check context. Deck has 30s recovery window — if it recovers, no alert. If alert fires, it's a real problem.
 - **No more tasks** → tell user everything is done, summarize results
@@ -182,7 +192,19 @@ After `/compact`, session resume, or ANY interruption:
 
 1. Run `booth ls` to see current deck states
 2. Check `.booth/reports/` for any unprocessed reports
-3. Resume management from current state
+3. Run `booth resume --list` to check for archived decks that can be restored
+4. Resume management from current state
+
+### Deck Archive & Resume
+
+When a deck is killed (`booth kill`) or booth shuts down (`booth stop`), decks with active CC sessions are automatically archived to `.booth/deck-archive.json`. This preserves the CC session ID, mode, and configuration.
+
+To restore archived decks:
+- `booth resume` — restore all archived decks at once
+- `booth resume <name>` — restore a specific deck by name
+- `booth resume <name> --hold` — restore and override mode to hold
+
+The resumed deck reconnects to the original CC conversation via `claude --resume`, preserving full context.
 
 ## Plan Execution Summary
 

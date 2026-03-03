@@ -7,8 +7,9 @@ import { Reactor } from './reactor.js'
 import { initBoothDir, ipcSocketPath, findLatestJsonl, deriveSocket, logsDir, boothPath, SESSION } from '../constants.js'
 import { killSession, hasSession, tmuxSafe } from '../tmux.js'
 import { sendMessage } from './send-message.js'
+import { archiveDeck, removeArchiveEntry } from './archive.js'
 import { initLogger, logger } from './logger.js'
-import type { DeckInfo, DeckMode } from '../types.js'
+import type { DeckInfo, DeckMode, Alert } from '../types.js'
 
 const VALID_MODES: DeckMode[] = ['auto', 'hold', 'live']
 
@@ -104,6 +105,7 @@ export class Daemon {
 
   removeDeck(deckId: string): void {
     const deck = this.state.getDeck(deckId)
+    if (deck) archiveDeck(this.projectRoot, deck)
     if (deck?.jsonlPath) this.assignedJsonlPaths.delete(deck.jsonlPath)
     this.stopJsonlPoll(deckId)
     this.signal.unwatch(deckId)
@@ -255,6 +257,30 @@ export class Daemon {
         this.removeDeck(deckId)
         return { ok: true }
       }
+      case 'deck-exited': {
+        const { deckId, deckName, reason, reportPath: rPath } = req as any
+        const deck = this.state.getDeck(deckId as string)
+        if (!deck) return { ok: true }
+
+        // Cleanup
+        if (deck.jsonlPath) this.assignedJsonlPaths.delete(deck.jsonlPath)
+        this.stopJsonlPoll(deckId as string)
+        this.signal.unwatch(deckId as string)
+        this.reactor.clearDeckTimers(deckId as string)
+        this.state.updateDeckStatus(deckId as string, 'stopped')
+
+        // Alert DJ (dual-channel: disk + active push)
+        const alert: Alert = {
+          type: 'deck-exited',
+          deckId: deckId as string,
+          deckName: deckName as string,
+          message: `Deck "${deckName}" session exited (${reason}). Report: ${rPath}`,
+          timestamp: Date.now(),
+        }
+        this.reactor.pushAlertToDj(alert)
+        logger.info(`[booth-daemon] deck "${deckName}" session-end: ${reason}`)
+        return { ok: true }
+      }
       case 'send-message': {
         const result = sendMessage(
           this.projectRoot, this.state,
@@ -279,6 +305,11 @@ export class Daemon {
           const updated = this.state.getDeck(deckId)!
           this.reactor.triggerCheck(updated)
         }
+        return { ok: true }
+      }
+      case 'resume-deck': {
+        this.registerDeck(req.deck as DeckInfo)
+        removeArchiveEntry(this.projectRoot, req.sessionId as string)
         return { ok: true }
       }
       case 'reload':
@@ -337,6 +368,11 @@ export class Daemon {
     logger.info('[booth-daemon] shutting down...')
 
     const socket = deriveSocket(this.projectRoot)
+
+    // Archive all active decks before killing
+    for (const deck of this.state.getAllDecks()) {
+      archiveDeck(this.projectRoot, deck)
+    }
 
     // Kill all deck windows
     for (const deck of this.state.getAllDecks()) {
