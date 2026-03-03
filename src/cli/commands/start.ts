@@ -63,16 +63,14 @@ export async function startCommand(_args: string[]): Promise<void> {
     console.log('[booth] daemon started')
   }
 
-  // Create tmux session + launch DJ
-  newSession(socket, SESSION)
+  // Create tmux session with DJ as direct exec — no shell startup race.
+  const skillMdPath = join(packageRoot, 'skill', 'SKILL.md')
+  const djCmd = `claude --dangerously-skip-permissions --append-system-prompt "$(cat '${skillMdPath}')"`
+  newSession(socket, SESSION, djCmd)
   tmux(socket, 'set', '-g', '@booth-root', projectRoot)
   tmux(socket, 'set', '-g', '@booth-socket', socket)
+  tmux(socket, 'set-option', '-t', `${SESSION}:0`, 'remain-on-exit', 'on')
   console.log(`[booth] tmux session created (socket: ${socket})`)
-
-  // Launch DJ (CC with SKILL.md injected as system prompt)
-  const skillMdPath = join(packageRoot, 'skill', 'SKILL.md')
-  tmux(socket, 'send-keys', '-t', `${SESSION}:0`,
-    `claude --dangerously-skip-permissions --append-system-prompt "$(cat '${skillMdPath}')"`, 'Enter')
   console.log('[booth] DJ launching...')
 
   // Verify DJ pane is alive after launch

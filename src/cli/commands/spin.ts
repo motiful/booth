@@ -1,11 +1,7 @@
 import { findProjectRoot, deriveSocket } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
-import { tmux } from '../../tmux.js'
+import { tmux, sendKeysToCC, sleepMs } from '../../tmux.js'
 import type { DeckInfo, DeckMode } from '../../types.js'
-
-function shellEscape(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'"
-}
 
 export async function spinCommand(args: string[]): Promise<void> {
   const name = args[0]
@@ -17,7 +13,6 @@ export async function spinCommand(args: string[]): Promise<void> {
   const promptIdx = args.indexOf('--prompt')
   const prompt = promptIdx !== -1 ? args[promptIdx + 1] : undefined
 
-  // Parse mode flags
   const isLive = args.includes('--live')
   const isHold = args.includes('--hold')
   const noLoop = args.includes('--no-loop')
@@ -31,13 +26,15 @@ export async function spinCommand(args: string[]): Promise<void> {
     process.exit(1)
   }
 
-  // Spin creates tmux window directly to obtain paneId before daemon registration.
-  // Pragmatic deviation from CLI→Daemon→tmux principle.
   const deckId = `deck-${name}`
-  tmux(socket, 'new-window', '-t', 'dj', '-n', name)
 
-  // Get pane id
-  const paneId = tmux(socket, 'display-message', '-t', `dj:${name}`, '-p', '#{pane_id}')
+  // Direct exec: CC is the window process, no shell startup race.
+  // -P -F gets paneId atomically in one call.
+  const paneId = tmux(socket, 'new-window', '-t', 'dj', '-n', name,
+    '-P', '-F', '#{pane_id}', 'claude --dangerously-skip-permissions')
+
+  // Keep pane alive if CC exits unexpectedly
+  tmux(socket, 'set-option', '-t', paneId, 'remain-on-exit', 'on')
 
   const deck: DeckInfo = {
     id: deckId,
@@ -53,12 +50,12 @@ export async function spinCommand(args: string[]): Promise<void> {
 
   await ipcRequest(projectRoot, { cmd: 'register-deck', deck })
 
-  // Launch CC in the deck pane (interactive mode, shell-escaped prompt)
+  // `claude "prompt"` runs non-interactively and exits, so we start bare
+  // and inject prompt via sendKeysToCC to keep the session interactive.
+  // Wait for CC to initialize before injecting.
   if (prompt) {
-    const cmd = `claude --dangerously-skip-permissions ${shellEscape(prompt)}`
-    tmux(socket, 'send-keys', '-t', paneId, cmd, 'Enter')
-  } else {
-    tmux(socket, 'send-keys', '-t', paneId, 'claude --dangerously-skip-permissions', 'Enter')
+    sleepMs(1500)
+    sendKeysToCC(socket, paneId, prompt)
   }
 
   const modeLabel = mode === 'auto' ? '' : ` [${mode}]`
