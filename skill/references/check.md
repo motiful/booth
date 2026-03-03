@@ -73,7 +73,7 @@ Every report MUST include a `## Completion Dimensions` section. The eight dimens
 | Build | Required (if applicable) | `npx tsc` or equivalent passes |
 | Test-Auto | Required | **Compilation ≠ runtime verification.** If you changed CLI/daemon/tmux → must actually run it. |
 | Test-Human | AI judgment | List concrete steps. May mark N/A with justification. |
-| Design-Doc | AI judgment | New features need docs. Small fixes: explain why not needed. |
+| Design-Doc | AI judgment | **New Phase or major feature**: MUST have a backstage design doc (`../booth-backstage/design/`) covering problem definition, approach rationale, file change scope, and acceptance criteria. Missing doc → mark ❌, add `blocked-by` in follow-up. **Small fix/bugfix**: may mark N/A with justification. |
 | Skills | AI judgment | Changed user-visible behavior → update skill files. |
 | Progress | Required | progress.md updated |
 
