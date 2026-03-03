@@ -1,4 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 
 export interface TmuxResult {
   ok: boolean
@@ -74,14 +76,22 @@ export function getCopyModeScrollPos(socket: string, target: string): number {
   return Number.isNaN(n) ? 0 : n
 }
 
+export function isVimMode(): boolean {
+  try {
+    const raw = readFileSync(`${homedir()}/.claude.json`, 'utf-8')
+    return JSON.parse(raw).editorMode === 'vim'
+  } catch {
+    return false
+  }
+}
+
 export function sendKeysToCC(socket: string, target: string, text: string): void {
+  const vim = isVimMode()
+
   // a. copy-mode detection and exit
   const wasCopyMode = isInCopyMode(socket, target)
   let gotoLine = -1
   if (wasCopyMode) {
-    // scroll_position = lines scrolled up from bottom
-    // history_size = total scrollback lines
-    // absolute line from top = history_size - scroll_position
     const info = tmuxSafe(socket, 'display-message', '-t', target,
       '-p', '#{scroll_position}:#{history_size}')
     if (info.ok) {
@@ -94,22 +104,30 @@ export function sendKeysToCC(socket: string, target: string, text: string): void
     sleepMs(100)
   }
 
-  // b. inject text literally
+  // b. vim: ensure normal mode then enter insert mode
+  if (vim) {
+    tmux(socket, 'send-keys', '-t', target, 'Escape')
+    sleepMs(50)
+    tmux(socket, 'send-keys', '-t', target, 'i')
+    sleepMs(50)
+  }
+
+  // c. inject text literally
   tmux(socket, 'send-keys', '-t', target, '-l', text)
 
-  // c. wait for autocomplete popup
+  // d. wait for autocomplete popup
   sleepMs(300)
 
-  // d. dismiss autocomplete
+  // e. dismiss autocomplete (vim: also exits insert → normal)
   tmux(socket, 'send-keys', '-t', target, 'Escape')
 
-  // e. wait for dismiss
+  // f. wait for dismiss
   sleepMs(100)
 
-  // f. submit
+  // g. submit
   tmux(socket, 'send-keys', '-t', target, 'Enter')
 
-  // g. restore copy-mode if it was active
+  // h. restore copy-mode if it was active
   if (wasCopyMode) {
     sleepMs(100)
     tmuxSafe(socket, 'copy-mode', '-t', target)
