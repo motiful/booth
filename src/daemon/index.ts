@@ -4,9 +4,10 @@ import { SignalCollector } from './signal.js'
 import type { SignalEvent, PlanModeEvent } from './signal.js'
 import { BoothState } from './state.js'
 import { Reactor } from './reactor.js'
-import { initBoothDir, ipcSocketPath, findLatestJsonl, deriveSocket, SESSION } from '../constants.js'
+import { initBoothDir, ipcSocketPath, findLatestJsonl, deriveSocket, logsDir, boothPath, SESSION } from '../constants.js'
 import { killSession, hasSession, tmuxSafe } from '../tmux.js'
 import { sendMessage } from './send-message.js'
+import { initLogger, logger } from './logger.js'
 import type { DeckInfo, DeckMode } from '../types.js'
 
 const VALID_MODES: DeckMode[] = ['auto', 'hold', 'live']
@@ -37,6 +38,13 @@ export class Daemon {
 
   async start(): Promise<void> {
     initBoothDir(this.projectRoot)
+    initLogger(logsDir(this.projectRoot))
+
+    // Clean up legacy daemon.log
+    const oldLog = boothPath(this.projectRoot, 'daemon.log')
+    if (existsSync(oldLog)) {
+      try { unlinkSync(oldLog) } catch { /* ignore */ }
+    }
 
     this.state.start()
     this.reactor.start()
@@ -61,7 +69,7 @@ export class Daemon {
     if (djJsonlPath && existsSync(djJsonlPath)) {
       this.assignedJsonlPaths.add(djJsonlPath)
       this.signal.watch('dj', djJsonlPath)
-      console.log(`[booth-daemon] DJ → restored watching ${djJsonlPath}`)
+      logger.info(`[booth-daemon] DJ → restored watching ${djJsonlPath}`)
     } else {
       this.pollForDjJsonl()
     }
@@ -81,7 +89,7 @@ export class Daemon {
     process.on('SIGTERM', () => this.shutdown())
     process.on('SIGINT', () => this.shutdown())
 
-    console.log(`[booth-daemon] started (pid=${process.pid})`)
+    logger.info(`[booth-daemon] started (pid=${process.pid})`)
   }
 
   registerDeck(info: DeckInfo): void {
@@ -120,12 +128,12 @@ export class Daemon {
 
     for (const id of stale) {
       const deck = this.state.getDeck(id)
-      console.log(`[booth-daemon] removing stale deck "${deck?.name}" (pane gone)`)
+      logger.warn(`[booth-daemon] removing stale deck "${deck?.name}" (pane gone)`)
       this.removeDeck(id)
     }
 
     if (stale.length) {
-      console.log(`[booth-daemon] pruned ${stale.length} stale deck(s) from previous session`)
+      logger.info(`[booth-daemon] pruned ${stale.length} stale deck(s) from previous session`)
     }
   }
 
@@ -142,10 +150,10 @@ export class Daemon {
         this.assignedJsonlPaths.add(latest)
         this.state.updateDeck(deckId, { jsonlPath: latest })
         this.signal.watch(deckId, latest)
-        console.log(`[booth-daemon] deck "${deckId}" → watching ${latest}`)
+        logger.info(`[booth-daemon] deck "${deckId}" → watching ${latest}`)
       } else if (attempts >= JSONL_POLL_MAX_ATTEMPTS) {
         this.stopJsonlPoll(deckId)
-        console.log(`[booth-daemon] deck "${deckId}" — gave up waiting for JSONL`)
+        logger.warn(`[booth-daemon] deck "${deckId}" — gave up waiting for JSONL`)
       }
     }, JSONL_POLL_INTERVAL)
 
@@ -174,11 +182,11 @@ export class Daemon {
         this.assignedJsonlPaths.add(latest)
         this.state.setDjJsonlPath(latest)
         this.signal.watch('dj', latest)
-        console.log(`[booth-daemon] DJ → watching ${latest}`)
+        logger.info(`[booth-daemon] DJ → watching ${latest}`)
       } else if (attempts >= JSONL_POLL_MAX_ATTEMPTS) {
         clearInterval(timer)
         this.jsonlPollers.delete('dj')
-        console.log(`[booth-daemon] DJ — gave up waiting for JSONL`)
+        logger.warn(`[booth-daemon] DJ — gave up waiting for JSONL`)
       }
     }, JSONL_POLL_INTERVAL)
 
@@ -210,7 +218,7 @@ export class Daemon {
 
     return new Promise((resolve) => {
       this.ipcServer!.listen(sockPath, () => {
-        console.log(`[booth-daemon] ipc listening on ${sockPath}`)
+        logger.info(`[booth-daemon] ipc listening on ${sockPath}`)
         resolve()
       })
     })
@@ -265,7 +273,7 @@ export class Daemon {
           return { error: `deck not found: ${deckId}` }
         }
         this.state.updateDeck(deckId, { mode })
-        console.log(`[booth-daemon] deck "${deck.name}" mode → ${mode}`)
+        logger.info(`[booth-daemon] deck "${deck.name}" mode → ${mode}`)
         // If switching to auto/hold and deck is idle, trigger a check
         if ((mode === 'auto' || mode === 'hold') && deck.status === 'idle') {
           const updated = this.state.getDeck(deckId)!
@@ -293,7 +301,7 @@ export class Daemon {
         if (deck.status === 'stopped') continue
         const check = tmuxSafe(socket, 'display-message', '-t', deck.paneId, '-p', '#{pane_pid}')
         if (!check.ok || !check.output.trim()) {
-          console.log(`[booth-daemon] deck "${deck.name}" pane gone — marking error`)
+          logger.warn(`[booth-daemon] deck "${deck.name}" pane gone — marking error`)
           this.signal.unwatch(deck.id)
           this.state.updateDeckStatus(deck.id, 'error')
         }
@@ -302,7 +310,7 @@ export class Daemon {
   }
 
   private gracefulReload(): void {
-    console.log('[booth-daemon] graceful reload — preserving tmux sessions...')
+    logger.info('[booth-daemon] graceful reload — preserving tmux sessions...')
 
     // Stop all JSONL watchers and pollers
     for (const [id] of this.jsonlPollers) this.stopJsonlPoll(id)
@@ -321,12 +329,12 @@ export class Daemon {
       if (existsSync(sockPath)) unlinkSync(sockPath)
     }
 
-    console.log('[booth-daemon] state persisted, exiting for reload')
+    logger.info('[booth-daemon] state persisted, exiting for reload')
     process.exit(0)
   }
 
   private shutdown(): void {
-    console.log('[booth-daemon] shutting down...')
+    logger.info('[booth-daemon] shutting down...')
 
     const socket = deriveSocket(this.projectRoot)
 
@@ -354,7 +362,7 @@ export class Daemon {
       const sockPath = ipcSocketPath(this.projectRoot)
       if (existsSync(sockPath)) unlinkSync(sockPath)
     }
-    console.log('[booth-daemon] shutdown complete')
+    logger.info('[booth-daemon] shutdown complete')
     process.exit(0)
   }
 }

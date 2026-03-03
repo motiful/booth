@@ -67,6 +67,10 @@ export function initBoothDir(projectRoot: string): string {
   if (!existsSync(rDir)) {
     mkdirSync(rDir, { recursive: true })
   }
+  const lDir = logsDir(projectRoot)
+  if (!existsSync(lDir)) {
+    mkdirSync(lDir, { recursive: true })
+  }
 
   // Copy behavior templates if not present (user can customize)
   const skill = skillDir()
@@ -92,6 +96,10 @@ export function initBoothDir(projectRoot: string): string {
   }
 
   return dir
+}
+
+export function logsDir(projectRoot: string): string {
+  return join(boothDir(projectRoot), 'logs')
 }
 
 export function boothPath(projectRoot: string, file: string): string {

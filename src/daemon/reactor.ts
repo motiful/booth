@@ -6,6 +6,7 @@ import { readReportStatus, isTerminalStatus } from './report.js'
 import { reportPath, boothPath, deriveSocket } from '../constants.js'
 import { tmuxSafe } from '../tmux.js'
 import { readConfig } from '../config.js'
+import { logger } from './logger.js'
 import type { DeckInfo, Alert, DeckStateChange } from '../types.js'
 
 const CHECK_DELAY = 500
@@ -51,7 +52,7 @@ export class Reactor {
     for (const deck of this.state.getAllDecks()) {
       if (deck.checkSentAt) {
         this.startCheckPoll(deck.id)
-        console.log(`[booth-reactor] restored check poll for "${deck.name}"`)
+        logger.info(`[booth-reactor] restored check poll for "${deck.name}"`)
       }
     }
   }
@@ -60,7 +61,7 @@ export class Reactor {
     // Cancel plan mode timer — deck completed its turn, approval was auto-granted
     if (this.planModeTimers.has(deck.id)) {
       this.clearPlanModeTimer(deck.id)
-      console.log(`[booth-reactor] deck "${deck.name}" plan mode auto-resolved (idle)`)
+      logger.debug(`[booth-reactor] deck "${deck.name}" plan mode auto-resolved (idle)`)
     }
     // Live mode: skip check unless one is already in-flight
     if (deck.mode === 'live' && !deck.checkSentAt) return
@@ -92,14 +93,14 @@ export class Reactor {
 
       const result = sendMessage(this.projectRoot, this.state, deck.id, msg)
       if (!result.ok) {
-        console.log(`[booth-reactor] check send failed for "${deck.name}": ${result.error}`)
+        logger.error(`[booth-reactor] check send failed for "${deck.name}": ${result.error}`)
       } else {
         // Set checking status BEFORE updating checkSentAt — ensures idle→checking
         // transition fires, so subsequent idle signal won't be deduped
         this.state.updateDeckStatus(deck.id, 'checking')
         this.state.updateDeck(deck.id, { checkSentAt: Date.now() })
         this.startCheckPoll(deck.id)
-        console.log(`[booth-reactor] sent check to "${deck.name}"`)
+        logger.info(`[booth-reactor] sent check to "${deck.name}"`)
       }
       return
     }
@@ -107,7 +108,7 @@ export class Reactor {
     // Report exists — check status
     const status = readReportStatus(rPath)
     if (!status) {
-      console.log(`[booth-reactor] deck "${deck.name}" report exists but has no valid YAML status — waiting`)
+      logger.warn(`[booth-reactor] deck "${deck.name}" report exists but has no valid YAML status — waiting`)
       return
     }
 
@@ -131,7 +132,7 @@ export class Reactor {
         this.pushAlertToDj(alert)
         this.openReport(rPath)
         this.systemNotify(`Booth: ${deck.name} → ${status} (holding)`)
-        console.log(`[booth-reactor] deck "${deck.name}" check result: ${status} (holding)`)
+        logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status} (holding)`)
       } else {
         // Auto mode (and live with in-flight check): alert DJ to read report + kill
         const alert: Alert = {
@@ -144,10 +145,10 @@ export class Reactor {
         this.pushAlertToDj(alert)
         this.openReport(rPath)
         this.systemNotify(`Booth: ${deck.name} → ${status}`)
-        console.log(`[booth-reactor] deck "${deck.name}" check result: ${status}`)
+        logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status}`)
       }
     } else {
-      console.log(`[booth-reactor] deck "${deck.name}" report status "${status}" is non-terminal — waiting`)
+      logger.debug(`[booth-reactor] deck "${deck.name}" report status "${status}" is non-terminal — waiting`)
     }
   }
 
@@ -183,12 +184,12 @@ export class Reactor {
 
     const result = sendMessage(this.projectRoot, this.state, 'dj', summary)
     if (result.ok) {
-      console.log(`[booth-reactor] beat sent to DJ`)
+      logger.info('[booth-reactor] beat sent to DJ')
       this.lastBeatAt = Date.now()
       this.beatCooldown = Math.min(this.beatCooldown * 2, BEAT_MAX_COOLDOWN)
       this.scheduleBeat()
     } else {
-      console.log(`[booth-reactor] beat failed: ${result.error}`)
+      logger.error(`[booth-reactor] beat failed: ${result.error}`)
     }
   }
 
@@ -204,18 +205,18 @@ export class Reactor {
     if (!deck) return
 
     if (deck.mode === 'live') {
-      console.log(`[booth-reactor] deck "${deck.name}" plan-mode ${action} (live — ignored)`)
+      logger.debug(`[booth-reactor] deck "${deck.name}" plan-mode ${action} (live — ignored)`)
       return
     }
 
     if (action === 'enter') {
-      console.log(`[booth-reactor] deck "${deck.name}" entered plan mode — will auto-approve on exit`)
+      logger.debug(`[booth-reactor] deck "${deck.name}" entered plan mode — will auto-approve on exit`)
       return
     }
 
     // action === 'exit' — auto-approve for auto/hold after delay
     // If deck progresses on its own within the delay, the timer is canceled
-    console.log(`[booth-reactor] deck "${deck.name}" plan-mode exit — scheduling auto-approve (${PLAN_APPROVE_DELAY / 1000}s)`)
+    logger.info(`[booth-reactor] deck "${deck.name}" plan-mode exit — scheduling auto-approve (${PLAN_APPROVE_DELAY / 1000}s)`)
 
     this.clearPlanModeTimer(deckId)
     const timer = setTimeout(() => {
@@ -224,7 +225,7 @@ export class Reactor {
       const d = this.state.getDeck(deckId)
       if (!d) return
       tmuxSafe(socket, 'send-keys', '-t', d.paneId, 'Enter')
-      console.log(`[booth-reactor] auto-approved plan mode for "${d.name}"`)
+      logger.info(`[booth-reactor] auto-approved plan mode for "${d.name}"`)
     }, PLAN_APPROVE_DELAY)
     this.planModeTimers.set(deckId, timer)
   }
@@ -283,9 +284,9 @@ export class Reactor {
     const formatted = `[booth-alert] ${alert.message}`
     const result = sendMessage(this.projectRoot, this.state, 'dj', formatted)
     if (result.ok) {
-      console.log(`[booth-reactor] alert pushed to DJ: ${alert.type}`)
+      logger.info(`[booth-reactor] alert pushed to DJ: ${alert.type}`)
     } else {
-      console.log(`[booth-reactor] alert push failed (DJ will read via stop-hook): ${result.error}`)
+      logger.warn(`[booth-reactor] alert push failed (DJ will read via stop-hook): ${result.error}`)
     }
   }
 
@@ -316,7 +317,7 @@ export class Reactor {
     }, ERROR_RECOVERY_WINDOW)
 
     this.errorTimers.set(deck.id, timer)
-    console.log(`[booth-reactor] deck "${deck.name}" error — recovery window started (${ERROR_RECOVERY_WINDOW / 1000}s)`)
+    logger.warn(`[booth-reactor] deck "${deck.name}" error — recovery window started (${ERROR_RECOVERY_WINDOW / 1000}s)`)
   }
 
   private onDeckWorking(deck: DeckInfo): void {
@@ -326,12 +327,12 @@ export class Reactor {
       clearTimeout(timer)
       this.errorTimers.delete(deck.id)
       this.errorContext.delete(deck.id)
-      console.log(`[booth-reactor] deck "${deck.name}" recovered from error`)
+      logger.info(`[booth-reactor] deck "${deck.name}" recovered from error`)
     }
     // Cancel plan mode timer — deck progressed, approval was auto-granted
     if (this.planModeTimers.has(deck.id)) {
       this.clearPlanModeTimer(deck.id)
-      console.log(`[booth-reactor] deck "${deck.name}" plan mode auto-resolved`)
+      logger.debug(`[booth-reactor] deck "${deck.name}" plan mode auto-resolved`)
     }
   }
 

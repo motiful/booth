@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { logger } from './daemon/logger.js'
 
 export interface TmuxResult {
   ok: boolean
@@ -86,13 +87,17 @@ export function isVimMode(): boolean {
 }
 
 export function sendKeysToCC(socket: string, target: string, text: string): void {
+  const preview = text.slice(0, 50) + (text.length > 50 ? '...' : '')
+  logger.debug(`[booth-tmux] sendKeysToCC start target=${target} text="${preview}"`)
   const vim = isVimMode()
+  if (vim) logger.debug('[booth-tmux] vim mode detected')
 
   // a. copy-mode detection and exit
   const wasCopyMode = isInCopyMode(socket, target)
   let savedScrollPos = -1
   let savedHistorySize = -1
   if (wasCopyMode) {
+    logger.debug(`[booth-tmux] copy-mode detected on ${target}, exiting`)
     const info = tmuxSafe(socket, 'display-message', '-t', target,
       '-p', '#{scroll_position}:#{history_size}')
     if (info.ok) {
@@ -149,4 +154,5 @@ export function sendKeysToCC(socket: string, target: string, text: string): void
       }
     }
   }
+  logger.debug(`[booth-tmux] sendKeysToCC done target=${target}`)
 }

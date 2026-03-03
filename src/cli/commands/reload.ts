@@ -1,8 +1,8 @@
 import { fork } from 'node:child_process'
-import { existsSync, openSync } from 'node:fs'
+import { existsSync, mkdirSync, openSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { findProjectRoot, boothPath, ipcSocketPath } from '../../constants.js'
+import { findProjectRoot, logsDir, ipcSocketPath } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 
 const DAEMON_EXIT_TIMEOUT = 5_000
@@ -39,8 +39,10 @@ export async function reloadCommand(_args: string[]): Promise<void> {
 
   // Fork a new daemon — it will recover from state.json
   const daemonEntry = join(dirname(fileURLToPath(import.meta.url)), '../../daemon/run.js')
-  const logPath = boothPath(projectRoot, 'daemon.log')
-  const logFd = openSync(logPath, 'a')
+  const lDir = logsDir(projectRoot)
+  if (!existsSync(lDir)) mkdirSync(lDir, { recursive: true })
+  const stderrPath = join(lDir, 'daemon-stderr.log')
+  const logFd = openSync(stderrPath, 'a')
   const child = fork(daemonEntry, [projectRoot], {
     detached: true,
     stdio: ['ignore', logFd, logFd, 'ipc'],
@@ -54,7 +56,7 @@ export async function reloadCommand(_args: string[]): Promise<void> {
   if (await isDaemonRunning(projectRoot)) {
     console.log('[booth] daemon reloaded successfully')
   } else {
-    console.error(`[booth] daemon failed to restart after reload. Check ${logPath}`)
+    console.error(`[booth] daemon failed to restart after reload. Check ${lDir}`)
     process.exit(1)
   }
 }

@@ -1,8 +1,8 @@
 import { fork } from 'node:child_process'
-import { openSync } from 'node:fs'
+import { existsSync, mkdirSync, openSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
-import { findProjectRoot, deriveSocket, initBoothDir, boothPath, SESSION } from '../../constants.js'
+import { findProjectRoot, deriveSocket, initBoothDir, logsDir, SESSION } from '../../constants.js'
 import { hasSession, newSession, tmux, tmuxSafe, tmuxAttach } from '../../tmux.js'
 import { isDaemonRunning } from '../../ipc.js'
 import { ensureStopHook } from '../../hooks.js'
@@ -17,8 +17,10 @@ export async function startCommand(_args: string[]): Promise<void> {
       // tmux alive but daemon dead — restart daemon
       initBoothDir(projectRoot)
       const daemonEntry = join(dirname(fileURLToPath(import.meta.url)), '../../daemon/run.js')
-      const logPath = boothPath(projectRoot, 'daemon.log')
-      const logFd = openSync(logPath, 'a')
+      const lDir = logsDir(projectRoot)
+      if (!existsSync(lDir)) mkdirSync(lDir, { recursive: true })
+      const stderrPath = join(lDir, 'daemon-stderr.log')
+      const logFd = openSync(stderrPath, 'a')
       const child = fork(daemonEntry, [projectRoot], {
         detached: true,
         stdio: ['ignore', logFd, logFd, 'ipc'],
@@ -29,7 +31,7 @@ export async function startCommand(_args: string[]): Promise<void> {
       if (await isDaemonRunning(projectRoot)) {
         console.log('[booth] daemon restarted')
       } else {
-        console.error(`[booth] daemon failed to restart. Check ${logPath}`)
+        console.error(`[booth] daemon failed to restart. Check ${lDir}`)
       }
     }
     tmuxAttach(socket, 'attach-session', '-t', SESSION)
@@ -46,18 +48,20 @@ export async function startCommand(_args: string[]): Promise<void> {
   // Start daemon if not running
   if (!(await isDaemonRunning(projectRoot))) {
     const daemonEntry = join(dirname(fileURLToPath(import.meta.url)), '../../daemon/run.js')
-    const logPath = boothPath(projectRoot, 'daemon.log')
-    const logFd = openSync(logPath, 'a')
+    const lDir2 = logsDir(projectRoot)
+    if (!existsSync(lDir2)) mkdirSync(lDir2, { recursive: true })
+    const stderrPath2 = join(lDir2, 'daemon-stderr.log')
+    const logFd2 = openSync(stderrPath2, 'a')
     const child = fork(daemonEntry, [projectRoot], {
       detached: true,
-      stdio: ['ignore', logFd, logFd, 'ipc'],
+      stdio: ['ignore', logFd2, logFd2, 'ipc'],
     })
     child.unref()
     child.disconnect()
     await new Promise(r => setTimeout(r, 500))
 
     if (!(await isDaemonRunning(projectRoot))) {
-      console.error(`[booth] daemon failed to start. Check ${logPath}`)
+      console.error(`[booth] daemon failed to start. Check ${lDir2}`)
       process.exit(1)
     }
     console.log('[booth] daemon started')

@@ -1,6 +1,7 @@
 import { deriveSocket } from '../constants.js'
 import { tmuxSafe, sendKeysToCC } from '../tmux.js'
 import { BoothState } from './state.js'
+import { logger } from './logger.js'
 
 export interface SendResult {
   ok: boolean
@@ -40,10 +41,12 @@ export function sendMessage(
   }
 
   // Inject message
+  logger.info(`[booth-send] sendMessage to "${targetId}" (${message.slice(0, 80)}${message.length > 80 ? '...' : ''})`)
   try {
     sendKeysToCC(socket, paneId, message)
     return { ok: true }
   } catch (err) {
+    logger.error(`[booth-send] sendKeys failed for "${targetId}": ${(err as Error).message}`)
     return { ok: false, error: `sendKeys failed: ${(err as Error).message}` }
   }
 }
