@@ -90,14 +90,16 @@ export function sendKeysToCC(socket: string, target: string, text: string): void
 
   // a. copy-mode detection and exit
   const wasCopyMode = isInCopyMode(socket, target)
-  let gotoLine = -1
+  let savedScrollPos = -1
+  let savedHistorySize = -1
   if (wasCopyMode) {
     const info = tmuxSafe(socket, 'display-message', '-t', target,
       '-p', '#{scroll_position}:#{history_size}')
     if (info.ok) {
       const [sp, hs] = info.output.split(':').map(s => parseInt(s, 10))
       if (!Number.isNaN(sp) && !Number.isNaN(hs)) {
-        gotoLine = hs - sp
+        savedScrollPos = sp
+        savedHistorySize = hs
       }
     }
     tmux(socket, 'send-keys', '-t', target, 'q')
@@ -131,8 +133,20 @@ export function sendKeysToCC(socket: string, target: string, text: string): void
   if (wasCopyMode) {
     sleepMs(100)
     tmuxSafe(socket, 'copy-mode', '-t', target)
-    if (gotoLine >= 0) {
-      tmuxSafe(socket, 'send-keys', '-t', target, '-X', 'goto-line', String(gotoLine))
+    if (savedScrollPos >= 0 && savedHistorySize >= 0) {
+      // scroll_position = lines from bottom. After text injection,
+      // history_size grows by N lines. Compensate so the user sees
+      // the same content region they were viewing before.
+      const newInfo = tmuxSafe(socket, 'display-message', '-t', target,
+        '-p', '#{history_size}')
+      const newHs = newInfo.ok ? parseInt(newInfo.output, 10) : NaN
+      const delta = (!Number.isNaN(newHs) && savedHistorySize >= 0)
+        ? newHs - savedHistorySize : 0
+      const scrollLines = savedScrollPos + delta
+      if (scrollLines > 0) {
+        tmuxSafe(socket, 'send-keys', '-t', target,
+          '-X', '-N', String(scrollLines), 'scroll-up')
+      }
     }
   }
 }
