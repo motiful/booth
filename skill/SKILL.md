@@ -68,6 +68,15 @@ booth peek <name> --lines 20
 # Send a new prompt to an idle/holding deck
 booth send <name> --prompt "..."
 
+# List all reports (name, status, time, pending reviews)
+booth reports
+
+# Print a report to stdout
+booth reports <name>
+
+# Open a report in configured editor
+booth reports open <name>
+
 # Kill a deck
 booth kill <name>
 

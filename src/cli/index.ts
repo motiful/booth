@@ -11,6 +11,7 @@ import { holdCommand } from './commands/hold.js'
 import { statusCommand } from './commands/status.js'
 import { peekCommand } from './commands/peek.js'
 import { sendCommand } from './commands/send.js'
+import { reportsCommand } from './commands/reports.js'
 
 const HELP = `
 booth — AI project manager for Claude Code
@@ -28,6 +29,9 @@ Usage:
   booth auto <name>    Switch deck to auto mode (default)
   booth hold <name>    Switch deck to hold mode (check but don't kill)
   booth reload         Hot-restart daemon (preserves tmux sessions)
+  booth reports        List all reports
+  booth reports <name> Print a report to stdout
+  booth reports open <name>  Open a report in editor
   booth config <cmd>   Manage config (set/get/list)
   booth --help         Show this help
 
@@ -88,6 +92,9 @@ export async function run(args: string[]): Promise<void> {
         break
       case 'reload':
         await reloadCommand(rest)
+        break
+      case 'reports':
+        await reportsCommand(rest)
         break
       case 'config':
         await configCommand(rest)
