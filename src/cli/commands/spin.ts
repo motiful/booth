@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs'
+import { writeFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { findProjectRoot, deriveSocket } from '../../constants.js'
@@ -58,6 +58,9 @@ export async function spinCommand(args: string[]): Promise<void> {
     writeFileSync(promptFile, prompt)
     tmux(socket, 'send-keys', '-t', paneId,
       `claude --dangerously-skip-permissions "$(cat ${promptFile})"`, 'Enter')
+    // Give shell time to expand $(cat file) before cleanup
+    sleepMs(1000)
+    try { unlinkSync(promptFile) } catch {}
   } else {
     tmux(socket, 'send-keys', '-t', paneId, 'claude --dangerously-skip-permissions', 'Enter')
   }
