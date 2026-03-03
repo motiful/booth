@@ -8,7 +8,7 @@ export interface TmuxResult {
 export function tmux(socket: string, ...args: string[]): string {
   return execFileSync('tmux', ['-L', socket, ...args], {
     encoding: 'utf-8',
-    timeout: 10_000,
+    timeout: 15_000,
     stdio: ['pipe', 'pipe', 'pipe'],
   }).trim()
 }
@@ -59,4 +59,67 @@ export function sendKeys(socket: string, target: string, keys: string): void {
 export function sendKeysLiteral(socket: string, target: string, text: string): void {
   tmux(socket, 'send-keys', '-t', target, '-l', text)
   tmux(socket, 'send-keys', '-t', target, 'Enter')
+}
+
+export function sleepMs(ms: number): void {
+  const buf = new SharedArrayBuffer(4)
+  const view = new Int32Array(buf)
+  Atomics.wait(view, 0, 0, ms)
+}
+
+export function isInCopyMode(socket: string, target: string): boolean {
+  const result = tmuxSafe(socket, 'display-message', '-t', target, '-p', '#{pane_in_mode}')
+  return result.ok && result.output !== '0'
+}
+
+export function getCopyModeScrollPos(socket: string, target: string): number {
+  const result = tmuxSafe(socket, 'display-message', '-t', target, '-p', '#{scroll_position}')
+  if (!result.ok) return 0
+  const n = parseInt(result.output, 10)
+  return Number.isNaN(n) ? 0 : n
+}
+
+export function sendKeysToCC(socket: string, target: string, text: string): void {
+  // a. copy-mode detection and exit
+  const wasCopyMode = isInCopyMode(socket, target)
+  let gotoLine = -1
+  if (wasCopyMode) {
+    // scroll_position = lines scrolled up from bottom
+    // history_size = total scrollback lines
+    // absolute line from top = history_size - scroll_position
+    const info = tmuxSafe(socket, 'display-message', '-t', target,
+      '-p', '#{scroll_position}:#{history_size}')
+    if (info.ok) {
+      const [sp, hs] = info.output.split(':').map(s => parseInt(s, 10))
+      if (!Number.isNaN(sp) && !Number.isNaN(hs)) {
+        gotoLine = hs - sp
+      }
+    }
+    tmux(socket, 'send-keys', '-t', target, 'q')
+    sleepMs(100)
+  }
+
+  // b. inject text literally
+  tmux(socket, 'send-keys', '-t', target, '-l', text)
+
+  // c. wait for autocomplete popup
+  sleepMs(300)
+
+  // d. dismiss autocomplete
+  tmux(socket, 'send-keys', '-t', target, 'Escape')
+
+  // e. wait for dismiss
+  sleepMs(100)
+
+  // f. submit
+  tmux(socket, 'send-keys', '-t', target, 'Enter')
+
+  // g. restore copy-mode if it was active
+  if (wasCopyMode) {
+    sleepMs(100)
+    tmuxSafe(socket, 'copy-mode', '-t', target)
+    if (gotoLine >= 0) {
+      tmuxSafe(socket, 'send-keys', '-t', target, '-X', 'goto-line', String(gotoLine))
+    }
+  }
 }
