@@ -9,7 +9,7 @@ import { readConfig } from '../config.js'
 import type { DeckInfo, Alert, DeckStateChange } from '../types.js'
 
 const CHECK_DELAY = 500
-const CHECK_POLL_INTERVAL = 5_000
+const CHECK_POLL_INTERVAL = 30_000
 const BEAT_INITIAL_COOLDOWN = 5 * 60_000
 const BEAT_MAX_COOLDOWN = 60 * 60_000
 const ERROR_RECOVERY_WINDOW = 30_000
@@ -94,7 +94,9 @@ export class Reactor {
       if (!result.ok) {
         console.log(`[booth-reactor] check send failed for "${deck.name}": ${result.error}`)
       } else {
-        // Track that check was sent + start poll safety net
+        // Set checking status BEFORE updating checkSentAt — ensures idle→checking
+        // transition fires, so subsequent idle signal won't be deduped
+        this.state.updateDeckStatus(deck.id, 'checking')
         this.state.updateDeck(deck.id, { checkSentAt: Date.now() })
         this.startCheckPoll(deck.id)
         console.log(`[booth-reactor] sent check to "${deck.name}"`)

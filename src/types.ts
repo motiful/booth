@@ -1,4 +1,4 @@
-export type DeckStatus = 'working' | 'idle' | 'error' | 'needs-attention' | 'stopped'
+export type DeckStatus = 'working' | 'idle' | 'checking' | 'error' | 'needs-attention' | 'stopped'
 
 export type DeckMode = 'auto' | 'hold' | 'live'
 
