@@ -282,7 +282,7 @@ export class Daemon {
           if (!result.ok) {
             logger.warn(`[booth-daemon] background send failed: ${result.error}`)
           }
-        })
+        }).catch(err => logger.error(`[booth-daemon] background send threw: ${err}`))
         return { ok: true, queued: true }
       }
       case 'set-mode': {

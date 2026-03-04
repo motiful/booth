@@ -103,7 +103,7 @@ export class Reactor {
         } else {
           logger.info(`[booth-reactor] sent check to "${deck.name}"`)
         }
-      })
+      }).catch(err => logger.error(`[booth-reactor] check send threw for "${deck.name}": ${err}`))
       return
     }
 
@@ -179,7 +179,7 @@ export class Reactor {
       } else {
         logger.error(`[booth-reactor] beat failed: ${result.error}`)
       }
-    })
+    }).catch(err => logger.error(`[booth-reactor] beat threw: ${err}`))
   }
 
   resetBeat(): void {
@@ -273,7 +273,7 @@ export class Reactor {
       } else {
         logger.warn(`[booth-reactor] DJ notify failed: ${result.error}`)
       }
-    })
+    }).catch(err => logger.error(`[booth-reactor] DJ notify threw: ${err}`))
   }
 
   // --- Error / attention handlers ---
