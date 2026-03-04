@@ -25,14 +25,16 @@ Every deck has a JSONL stream. The daemon tails it in real-time.
 - No debounce needed (turn_duration is definitive)
 - capture-pane is debug only, never for core detection
 
-## Alert Types
+## Alert Scenarios
 
-| Type | Trigger | Action |
-|------|---------|--------|
-| `deck-check-complete` | Deck idle + report has terminal status | DJ: read report, deliver or retry |
-| `deck-error` | Error persists beyond 30s recovery window | DJ: spin review deck or escalate to user |
-| `deck-needs-attention` | Deck flagged `[NEEDS ATTENTION]` | DJ: check what it needs |
-| `deck-exited` | CC session self-exited (via SessionEnd hook) | DJ: read exit report, decide re-spin or acknowledge |
+All alerts are delivered as `[booth-alert] <natural language description>`. There are no structured type identifiers — DJ parses the description text to determine the scenario.
+
+| Scenario | Trigger | Action |
+|----------|---------|--------|
+| Check complete | Deck idle + report has terminal status | DJ: read report, deliver or retry |
+| Error | Error persists beyond 30s recovery window | DJ: spin review deck or escalate to user |
+| Needs attention | Deck flagged `[NEEDS ATTENTION]` | DJ: check what it needs |
+| Deck exited | CC session self-exited (via SessionEnd hook) | DJ: read exit report, decide re-spin or acknowledge |
 
 ### Error Recovery Window
 

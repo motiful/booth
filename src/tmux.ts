@@ -141,7 +141,7 @@ export function waitForPrompt(socket: string, target: string, timeoutMs = 30_000
 function cleanEditorState(target: string): void {
   const dir = stateDir(target)
   try {
-    for (const f of ['action', 'save-path', 'alert-file', 'restore-path']) {
+    for (const f of ['action', 'save-path', 'inject-file', 'restore-path']) {
       try { unlinkSync(join(dir, f)) } catch {}
     }
     try { rmdirSync(dir) } catch {}
@@ -201,7 +201,7 @@ export async function protectedSendToCC(socket: string, target: string, text: st
     mkdirSync(sd, { recursive: true })
     writeFileSync(join(sd, 'action'), 'inject')
     writeFileSync(join(sd, 'save-path'), savedInputPath)
-    writeFileSync(join(sd, 'alert-file'), alertPath)
+    writeFileSync(join(sd, 'inject-file'), alertPath)
 
     // 4. Ctrl+G → proxy saves user input + writes alert
     tmux(socket, 'send-keys', '-t', target, 'C-g')

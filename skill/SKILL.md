@@ -161,14 +161,16 @@ booth spin api-explorer --live
 
 ## Alert Handling
 
+All alerts arrive as `[booth-alert] <natural language description>`. DJ parses the description text to determine the scenario — there are no structured type identifiers.
+
 When you see `[booth-alert]` in your conversation (injected directly by the daemon via Ctrl+G editor proxy):
 
-1. Read the alert content
-2. Act on it:
-   - **deck-check-complete**: Read `.booth/reports/<deck>.md`, evaluate, decide next action
-   - **deck-error**: Spin a review deck to investigate, or escalate to user.
-   - **deck-needs-attention**: Spin a deck to address it, or escalate to user.
-   - **deck-exited**: Deck's CC session self-exited. Read `.booth/reports/<deck>.md` (EXIT report). Decide: re-spin if task incomplete, or acknowledge if expected.
+1. Read the alert description
+2. Identify the scenario and act:
+   - **Check complete**: Description mentions a deck's check result. Read `.booth/reports/<deck>.md`, evaluate, decide next action.
+   - **Error**: Description mentions a deck error persisting beyond recovery window. Spin a review deck to investigate, or escalate to user.
+   - **Needs attention**: Description mentions a deck flagged `[NEEDS ATTENTION]`. Spin a deck to address it, or escalate to user.
+   - **Deck exited**: Description mentions a deck's CC session self-exited. Read `.booth/reports/<deck>.md` (EXIT report). Decide: re-spin if task incomplete, or acknowledge if expected.
 3. After handling, clean up: kill completed decks, archive results
 
 ### What "handling" looks like

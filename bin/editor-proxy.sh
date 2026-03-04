@@ -23,7 +23,7 @@ if [ -f "$STATE_DIR/action" ]; then
   case "$ACTION" in
     inject)
       SAVE_PATH=$(cat "$STATE_DIR/save-path")
-      ALERT_FILE=$(cat "$STATE_DIR/alert-file")
+      ALERT_FILE=$(cat "$STATE_DIR/inject-file")
 
       # Save user's current input
       cp "$CC_TEMP_FILE" "$SAVE_PATH"
@@ -32,7 +32,7 @@ if [ -f "$STATE_DIR/action" ]; then
       cp "$ALERT_FILE" "$CC_TEMP_FILE"
 
       # Clean up action files (NOT editor-pid)
-      rm -f "$STATE_DIR/action" "$STATE_DIR/save-path" "$STATE_DIR/alert-file"
+      rm -f "$STATE_DIR/action" "$STATE_DIR/save-path" "$STATE_DIR/inject-file"
       exit 0
       ;;
 
