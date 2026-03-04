@@ -8,12 +8,12 @@ export interface SendResult {
   error?: string
 }
 
-export function sendMessage(
+export async function sendMessage(
   projectRoot: string,
   state: BoothState,
   targetId: string,
   message: string
-): SendResult {
+): Promise<SendResult> {
   const socket = deriveSocket(projectRoot)
 
   // Resolve pane
@@ -43,7 +43,7 @@ export function sendMessage(
   try {
     // All CC sessions use protected send via Ctrl+G editor proxy.
     // Preserves user input, handles copy-mode, waits for Ctrl+G editor.
-    protectedSendToCC(socket, paneId, message)
+    await protectedSendToCC(socket, paneId, message)
     return { ok: true }
   } catch (err) {
     logger.error(`[booth-send] send failed for "${targetId}": ${(err as Error).message}`)

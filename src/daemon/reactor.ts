@@ -91,17 +91,19 @@ export class Reactor {
         msg += ' Skip the sub-agent review loop. Write your report directly.'
       }
 
-      const result = sendMessage(this.projectRoot, this.state, deck.id, msg)
-      if (!result.ok) {
-        logger.error(`[booth-reactor] check send failed for "${deck.name}": ${result.error}`)
-      } else {
-        // Set checking status BEFORE updating checkSentAt — ensures idle→checking
-        // transition fires, so subsequent idle signal won't be deduped
-        this.state.updateDeckStatus(deck.id, 'checking')
-        this.state.updateDeck(deck.id, { checkSentAt: Date.now() })
-        this.startCheckPoll(deck.id)
-        logger.info(`[booth-reactor] sent check to "${deck.name}"`)
-      }
+      // Set checking status optimistically — ensures idle→checking
+      // transition fires, so subsequent idle signal won't be deduped
+      this.state.updateDeckStatus(deck.id, 'checking')
+      this.state.updateDeck(deck.id, { checkSentAt: Date.now() })
+      this.startCheckPoll(deck.id)
+
+      sendMessage(this.projectRoot, this.state, deck.id, msg).then(result => {
+        if (!result.ok) {
+          logger.error(`[booth-reactor] check send failed for "${deck.name}": ${result.error}`)
+        } else {
+          logger.info(`[booth-reactor] sent check to "${deck.name}"`)
+        }
+      })
       return
     }
 
@@ -168,15 +170,16 @@ export class Reactor {
       existsSync(beatPath) ? `  Read ${beatPath} for your checklist.` : `  Check .booth/reports/ for completed deck reports.`,
     ].filter(Boolean).join('\n')
 
-    const result = sendMessage(this.projectRoot, this.state, 'dj', summary)
-    if (result.ok) {
-      logger.info('[booth-reactor] beat sent to DJ')
-      this.lastBeatAt = Date.now()
-      this.beatCooldown = Math.min(this.beatCooldown * 2, BEAT_MAX_COOLDOWN)
-      this.scheduleBeat()
-    } else {
-      logger.error(`[booth-reactor] beat failed: ${result.error}`)
-    }
+    sendMessage(this.projectRoot, this.state, 'dj', summary).then(result => {
+      if (result.ok) {
+        logger.info('[booth-reactor] beat sent to DJ')
+        this.lastBeatAt = Date.now()
+        this.beatCooldown = Math.min(this.beatCooldown * 2, BEAT_MAX_COOLDOWN)
+        this.scheduleBeat()
+      } else {
+        logger.error(`[booth-reactor] beat failed: ${result.error}`)
+      }
+    })
   }
 
   resetBeat(): void {
@@ -264,12 +267,13 @@ export class Reactor {
 
   notifyDj(message: string): void {
     const formatted = `[booth-alert] ${message}`
-    const result = sendMessage(this.projectRoot, this.state, 'dj', formatted)
-    if (result.ok) {
-      logger.info(`[booth-reactor] notified DJ: ${message.slice(0, 80)}`)
-    } else {
-      logger.warn(`[booth-reactor] DJ notify failed: ${result.error}`)
-    }
+    sendMessage(this.projectRoot, this.state, 'dj', formatted).then(result => {
+      if (result.ok) {
+        logger.info(`[booth-reactor] notified DJ: ${message.slice(0, 80)}`)
+      } else {
+        logger.warn(`[booth-reactor] DJ notify failed: ${result.error}`)
+      }
+    })
   }
 
   // --- Error / attention handlers ---

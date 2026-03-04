@@ -201,7 +201,7 @@ export class Daemon {
 
     this.ipcServer = createServer((conn) => {
       let buf = ''
-      conn.on('data', (chunk) => {
+      conn.on('data', async (chunk) => {
         buf += chunk.toString()
         const lines = buf.split('\n')
         buf = lines.pop() ?? ''
@@ -209,7 +209,7 @@ export class Daemon {
           if (!line.trim()) continue
           try {
             const req = JSON.parse(line)
-            const res = this.handleIpc(req)
+            const res = await this.handleIpc(req)
             conn.write(JSON.stringify(res) + '\n')
           } catch {
             conn.write(JSON.stringify({ error: 'invalid request' }) + '\n')
@@ -226,7 +226,7 @@ export class Daemon {
     })
   }
 
-  private handleIpc(req: { cmd: string; [k: string]: unknown }): unknown {
+  private async handleIpc(req: { cmd: string; [k: string]: unknown }): Promise<unknown> {
     switch (req.cmd) {
       case 'ping':
         return { ok: true, pid: process.pid }
@@ -273,11 +273,17 @@ export class Daemon {
         return { ok: true }
       }
       case 'send-message': {
-        const result = sendMessage(
+        // Fire-and-forget: respond immediately, send async in background.
+        // Avoids IPC timeout when protectedSendToCC waits for Ctrl+G close.
+        sendMessage(
           this.projectRoot, this.state,
           req.targetId as string, req.message as string
-        )
-        return result
+        ).then(result => {
+          if (!result.ok) {
+            logger.warn(`[booth-daemon] background send failed: ${result.error}`)
+          }
+        })
+        return { ok: true, queued: true }
       }
       case 'set-mode': {
         const deckId = req.deckId as string

@@ -67,6 +67,11 @@ export function sleepMs(ms: number): void {
   Atomics.wait(view, 0, 0, ms)
 }
 
+// Non-blocking delay for async contexts (daemon must stay responsive)
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 export function isInCopyMode(socket: string, target: string): boolean {
   const result = tmuxSafe(socket, 'display-message', '-t', target, '-p', '#{pane_in_mode}')
   return result.ok && result.output !== '0'
@@ -104,26 +109,33 @@ export function isInEditorMode(target: string): boolean {
 }
 
 // Wait for user to close their editor naturally (PID file disappears)
-function waitForEditorClose(target: string, timeoutMs = 120_000): boolean {
-  const dir = stateDir(target)
-  const pidFile = join(dir, 'editor-pid')
+// Async — does NOT block the event loop
+function waitForEditorClose(target: string, timeoutMs = 120_000): Promise<boolean> {
+  const pidFile = join(stateDir(target), 'editor-pid')
   logger.info(`[booth-tmux] waiting for user to close Ctrl+G editor (${target})`)
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    if (!existsSync(pidFile)) return true
-    sleepMs(500)
-  }
-  return false
+  return new Promise(resolve => {
+    const start = Date.now()
+    const check = () => {
+      if (!existsSync(pidFile)) { resolve(true); return }
+      if (Date.now() - start >= timeoutMs) { resolve(false); return }
+      setTimeout(check, 500)
+    }
+    check()
+  })
 }
 
-export function waitForPrompt(socket: string, target: string, timeoutMs = 30_000): boolean {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    const screen = tmuxSafe(socket, 'capture-pane', '-t', target, '-p', '-S', '-5')
-    if (screen.ok && /[❯>]/.test(screen.output)) return true
-    sleepMs(1_000)
-  }
-  return false
+// Async — does NOT block the event loop
+export function waitForPrompt(socket: string, target: string, timeoutMs = 30_000): Promise<boolean> {
+  return new Promise(resolve => {
+    const start = Date.now()
+    const check = () => {
+      const screen = tmuxSafe(socket, 'capture-pane', '-t', target, '-p', '-S', '-5')
+      if (screen.ok && /[❯>]/.test(screen.output)) { resolve(true); return }
+      if (Date.now() - start >= timeoutMs) { resolve(false); return }
+      setTimeout(check, 1_000)
+    }
+    check()
+  })
 }
 
 function cleanEditorState(target: string): void {
@@ -136,7 +148,7 @@ function cleanEditorState(target: string): void {
   } catch {}
 }
 
-export function protectedSendToCC(socket: string, target: string, text: string): void {
+export async function protectedSendToCC(socket: string, target: string, text: string): Promise<void> {
   const preview = text.slice(0, 50) + (text.length > 50 ? '...' : '')
   logger.info(`[booth-tmux] protectedSend start target=${target} text="${preview}"`)
 
@@ -145,15 +157,16 @@ export function protectedSendToCC(socket: string, target: string, text: string):
 
   // 1. If user has Ctrl+G editor open, wait for them to close it naturally.
   //    CC is fully blocked during execSync — no point injecting until it resumes.
+  //    Async wait — daemon event loop stays responsive.
   if (isInEditorMode(target)) {
-    if (!waitForEditorClose(target)) {
+    if (!await waitForEditorClose(target)) {
       throw new Error('Timeout waiting for user to close Ctrl+G editor')
     }
     // CC resumes after execSync returns — wait for prompt
-    if (!waitForPrompt(socket, target, 10_000)) {
+    if (!await waitForPrompt(socket, target, 10_000)) {
       logger.warn('[booth-tmux] CC did not show prompt after editor close')
     }
-    sleepMs(300)
+    await delay(300)
   }
 
   // 2. Handle copy-mode
@@ -172,7 +185,7 @@ export function protectedSendToCC(socket: string, target: string, text: string):
       }
     }
     tmux(socket, 'send-keys', '-t', target, 'q')
-    sleepMs(150)
+    await delay(150)
   }
 
   // 3-7: Inject + restore, wrapped in try/finally to guarantee cleanup
@@ -192,17 +205,17 @@ export function protectedSendToCC(socket: string, target: string, text: string):
 
     // 4. Ctrl+G → proxy saves user input + writes alert
     tmux(socket, 'send-keys', '-t', target, 'C-g')
-    sleepMs(300)
+    await delay(300)
 
     // 5. Submit the alert
     tmux(socket, 'send-keys', '-t', target, 'Enter')
 
     // 6. Wait for CC to process and show new prompt
-    if (!waitForPrompt(socket, target)) {
+    if (!await waitForPrompt(socket, target)) {
       logger.warn('[booth-tmux] timeout waiting for prompt after injection')
       return  // finally block still runs cleanup
     }
-    sleepMs(300)
+    await delay(300)
 
     // 7. Restore user input if there was any
     if (existsSync(savedInputPath)) {
@@ -212,7 +225,7 @@ export function protectedSendToCC(socket: string, target: string, text: string):
         writeFileSync(join(sd, 'action'), 'restore')
         writeFileSync(join(sd, 'restore-path'), savedInputPath)
         tmux(socket, 'send-keys', '-t', target, 'C-g')
-        sleepMs(200)
+        await delay(200)
         restored = true
         logger.debug('[booth-tmux] user input restored')
       }
@@ -228,7 +241,7 @@ export function protectedSendToCC(socket: string, target: string, text: string):
 
   // 8. Restore copy-mode + scroll position
   if (wasCopyMode) {
-    sleepMs(200)
+    await delay(200)
     tmuxSafe(socket, 'copy-mode', '-t', target)
     if (savedScrollPos >= 0 && savedHistorySize >= 0) {
       const newInfo = tmuxSafe(socket, 'display-message', '-t', target,
