@@ -9,14 +9,15 @@ interface HookEntry {
 interface ClaudeSettings {
   hooks?: {
     Stop?: HookEntry[]
+    SessionEnd?: HookEntry[]
     [key: string]: unknown
   }
   [key: string]: unknown
 }
 
-const HOOK_COMMAND_ID = 'booth-stop-hook'
+const SESSION_END_HOOK_ID = 'booth-session-end-hook'
 
-export function ensureStopHook(projectRoot: string, stopHookScript: string): void {
+export function ensureSessionEndHook(projectRoot: string, sessionEndHookScript: string): void {
   const settingsPath = join(projectRoot, '.claude', 'settings.json')
   const settingsDir = dirname(settingsPath)
 
@@ -34,32 +35,25 @@ export function ensureStopHook(projectRoot: string, stopHookScript: string): voi
   }
 
   if (!settings.hooks) settings.hooks = {}
+  if (!settings.hooks.SessionEnd) settings.hooks.SessionEnd = []
 
-  // Migrate: remove old invalid "StopTurn" key if present
-  if (settings.hooks.StopTurn) {
-    delete settings.hooks.StopTurn
-  }
-
-  if (!settings.hooks.Stop) settings.hooks.Stop = []
-
-  // Check if already registered
-  const alreadyRegistered = settings.hooks.Stop.some(entry =>
-    entry.hooks?.some(h => h.command?.includes(HOOK_COMMAND_ID) || h.command?.includes('stop-hook'))
+  const alreadyRegistered = settings.hooks.SessionEnd.some(entry =>
+    entry.hooks?.some(h => h.command?.includes(SESSION_END_HOOK_ID) || h.command?.includes('session-end-hook'))
   )
   if (alreadyRegistered) return
 
-  settings.hooks.Stop.push({
+  settings.hooks.SessionEnd.push({
     matcher: '',
     hooks: [{
       type: 'command',
-      command: `bash ${stopHookScript}`,
+      command: `bash ${sessionEndHookScript}`,
     }],
   })
 
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
 }
 
-export function removeStopHook(projectRoot: string): void {
+export function removeSessionEndHook(projectRoot: string): void {
   const settingsPath = join(projectRoot, '.claude', 'settings.json')
   if (!existsSync(settingsPath)) return
 
@@ -68,13 +62,13 @@ export function removeStopHook(projectRoot: string): void {
     settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
   } catch { return }
 
-  if (!settings.hooks?.Stop) return
+  if (!settings.hooks?.SessionEnd) return
 
-  settings.hooks.Stop = settings.hooks.Stop.filter(entry =>
-    !entry.hooks?.some(h => h.command?.includes(HOOK_COMMAND_ID) || h.command?.includes('stop-hook'))
+  settings.hooks.SessionEnd = settings.hooks.SessionEnd.filter(entry =>
+    !entry.hooks?.some(h => h.command?.includes(SESSION_END_HOOK_ID) || h.command?.includes('session-end-hook'))
   )
 
-  if (settings.hooks.Stop.length === 0) delete settings.hooks.Stop
+  if (settings.hooks.SessionEnd.length === 0) delete settings.hooks.SessionEnd
   if (settings.hooks && Object.keys(settings.hooks).length === 0) delete settings.hooks
 
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2))

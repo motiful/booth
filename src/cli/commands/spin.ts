@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { findProjectRoot, deriveSocket } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { tmux, sleepMs } from '../../tmux.js'
@@ -50,6 +51,12 @@ export async function spinCommand(args: string[]): Promise<void> {
 
   await ipcRequest(projectRoot, { cmd: 'register-deck', deck })
 
+  // Set EDITOR proxy for input protection on all CC sessions.
+  // Zero cost when not intercepting — pure pass-through to user's real editor.
+  const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
+  const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
+  const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
+
   // Launch CC with prompt as CLI argument via temp file.
   // The shell command reads the file, deletes it, then launches CC.
   // This guarantees the file is read before cleanup — no timing dependency.
@@ -58,9 +65,9 @@ export async function spinCommand(args: string[]): Promise<void> {
     const promptFile = join(tmpdir(), `booth-prompt-${name}-${Date.now()}.txt`)
     writeFileSync(promptFile, prompt)
     tmux(socket, 'send-keys', '-t', paneId,
-      `PROMPT=$(cat ${promptFile}) && rm -f ${promptFile} && claude --dangerously-skip-permissions "$PROMPT"`, 'Enter')
+      `${editorSetup} && PROMPT=$(cat ${promptFile}) && rm -f ${promptFile} && claude --dangerously-skip-permissions "$PROMPT"`, 'Enter')
   } else {
-    tmux(socket, 'send-keys', '-t', paneId, 'claude --dangerously-skip-permissions', 'Enter')
+    tmux(socket, 'send-keys', '-t', paneId, `${editorSetup} && claude --dangerously-skip-permissions`, 'Enter')
   }
 
   const modeLabel = mode === 'auto' ? '' : ` [${mode}]`

@@ -106,7 +106,7 @@ booth config list
 
 | Mode | Behavior | Use when |
 |------|----------|----------|
-| **Auto** (default) | idle → check → report → alert DJ → kill | Fire-and-forget tasks |
+| **Auto** (default) | idle → check → report → notify DJ → kill | Fire-and-forget tasks |
 | **Hold** | idle → check → report → **pause** (waits for next instruction) | Multi-step work, iteration |
 | **Live** | No auto check — human is driving the deck | Debugging, exploration |
 
@@ -161,13 +161,14 @@ booth spin api-explorer --live
 
 ## Alert Handling
 
-When you see `[booth-alert]` in your conversation (injected via stop hook):
+When you see `[booth-alert]` in your conversation (injected directly by the daemon via Ctrl+G editor proxy):
 
 1. Read the alert content
 2. Act on it:
    - **deck-check-complete**: Read `.booth/reports/<deck>.md`, evaluate, decide next action
    - **deck-error**: Spin a review deck to investigate, or escalate to user.
    - **deck-needs-attention**: Spin a deck to address it, or escalate to user.
+   - **deck-exited**: Deck's CC session self-exited. Read `.booth/reports/<deck>.md` (EXIT report). Decide: re-spin if task incomplete, or acknowledge if expected.
 3. After handling, clean up: kill completed decks, archive results
 
 ### What "handling" looks like
@@ -176,6 +177,7 @@ When you see `[booth-alert]` in your conversation (injected via stop hook):
 - **SUCCESS report (hold deck)** → deck is paused. Send next instruction with `booth send <deck> --prompt "..."`. **NEVER kill a hold deck without explicit user permission.** Hold decks are the user's persistent workspaces — killing one destroys the CC session and all conversation context. Only the user decides when a hold deck is done.
 - **FAIL report** → read what failed, decide: re-spin with adjusted prompt, or escalate to user
 - **deck-error** → check context. Deck has 30s recovery window — if it recovers, no alert. If alert fires, it's a real problem.
+- **deck-exited** → read the EXIT report in `.booth/reports/<deck>.md`. Check the last activity to understand why. If task was incomplete, re-spin. If the user `/exit`'d intentionally, acknowledge and move on. Deck stays in `booth ls` as `stopped` — kill it when done reviewing.
 - **No more tasks** → tell user everything is done, summarize results
 
 ## Beat
@@ -238,7 +240,7 @@ The user should never have to piece together what happened across decks. DJ cons
 - Use capture-pane for state detection
 - Make up status — if you don't know, run `booth ls`
 
-**What you CAN read:** `.booth/` files only (reports, state, alerts, mix.md, check.md, beat.md). Everything else → spin a deck.
+**What you CAN read:** `.booth/` files only (reports, state, decks.json, mix.md, check.md, beat.md). Everything else → spin a deck.
 
 ## References
 

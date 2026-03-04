@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { findProjectRoot, deriveSocket, initBoothDir, logsDir, SESSION } from '../../constants.js'
 import { hasSession, newSession, tmux, tmuxSafe, tmuxAttach } from '../../tmux.js'
 import { isDaemonRunning } from '../../ipc.js'
-import { ensureStopHook } from '../../hooks.js'
+import { ensureSessionEndHook } from '../../hooks.js'
 
 export async function startCommand(_args: string[]): Promise<void> {
   const projectRoot = findProjectRoot()
@@ -42,8 +42,8 @@ export async function startCommand(_args: string[]): Promise<void> {
 
   // Resolve package root (skill/ lives here, not in dist/)
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
-  const stopHookScript = join(packageRoot, 'skill', 'scripts', 'booth-stop-hook.sh')
-  ensureStopHook(projectRoot, stopHookScript)
+  const sessionEndHookScript = join(packageRoot, 'skill', 'scripts', 'session-end-hook.sh')
+  ensureSessionEndHook(projectRoot, sessionEndHookScript)
 
   // Start daemon if not running
   if (!(await isDaemonRunning(projectRoot))) {
@@ -70,7 +70,17 @@ export async function startCommand(_args: string[]): Promise<void> {
   // Create tmux session with shell, then launch DJ via send-keys.
   // CC needs a shell env — direct exec causes CC to exit immediately.
   const skillMdPath = join(packageRoot, 'skill', 'SKILL.md')
-  const djCmd = `claude --dangerously-skip-permissions --append-system-prompt "$(cat '${skillMdPath}')"`
+  const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
+
+  // Set EDITOR to booth's proxy before launching CC.
+  // The proxy transparently passes through to the user's real editor on normal Ctrl+G.
+  // When booth needs to inject alerts, it writes a state file and sends Ctrl+G —
+  // the proxy intercepts, saves user input, writes alert, and exits in <50ms.
+  // Save user's original EDITOR/VISUAL before overriding.
+  // If both are empty, BOOTH_REAL_EDITOR stays empty — the proxy auto-detects at runtime.
+  const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
+  const djCmd = `${editorSetup} && claude --dangerously-skip-permissions --append-system-prompt "$(cat '${skillMdPath}')"`
+
   newSession(socket, SESSION)
   tmux(socket, 'set', '-g', '@booth-root', projectRoot)
   tmux(socket, 'set', '-g', '@booth-socket', socket)

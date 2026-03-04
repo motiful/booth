@@ -11,8 +11,8 @@ Every deck has a mode that determines its lifecycle after completing work:
 
 | Mode | Flag | Behavior after work |
 |------|------|-------------------|
-| **Auto** | (default) | check → report → alert DJ → killed |
-| **Hold** | `--hold` | check → report → alert DJ → **paused** (awaits next instruction) |
+| **Auto** | (default) | check → report → notify DJ → killed |
+| **Hold** | `--hold` | check → report → notify DJ → **paused** (awaits next instruction) |
 | **Live** | `--live` | No auto check — human drives the deck directly |
 
 Modes can be switched at runtime via `booth auto/hold/live <name>`.
@@ -22,7 +22,7 @@ Modes can be switched at runtime via `booth auto/hold/live <name>`.
 ### Auto Mode (default)
 
 ```
-spin → working → idle → [booth-check] → checking → report → alert DJ → kill
+spin → working → idle → [booth-check] → checking → report → notify DJ → kill
                       → error (30s window) → recovered / escalated
                       → needs-attention → handled
 ```
@@ -32,7 +32,7 @@ The standard fire-and-forget lifecycle. Deck works, self-verifies, reports, and 
 ### Hold Mode
 
 ```
-spin → working → idle → [booth-check] → checking → report → alert DJ → pause
+spin → working → idle → [booth-check] → checking → report → notify DJ → pause
   ↑                                                                       │
   └──────────────── next instruction ─────────────────────────────────────┘
 ```
@@ -55,7 +55,7 @@ After a deck goes idle (auto/hold modes only), the daemon sends `[booth-check]`.
 1. Reads `.booth/check.md` for self-verification instructions
 2. Runs a sub-agent review loop (review → fix → repeat) — unless `--no-loop` was set, in which case it writes the report directly
 3. Writes a report to `.booth/reports/<deck>.md`
-4. Goes idle again — daemon sees report + idle → alerts DJ
+4. Goes idle again — daemon sees report + idle → notifies DJ
 
 ## What Decks Know
 
@@ -95,7 +95,7 @@ Deck finishes task → JSONL turn_duration → idle detected
 → Daemon checks for report file
 → No report → [booth-check] injected into deck
 → Deck self-verifies (sub-agent loop, or direct report if --no-loop) → writes report → idle
-→ Daemon detects idle + report exists → alerts DJ
+→ Daemon detects idle + report exists → notifies DJ
 → Auto: DJ reads report → kill deck
 → Hold: DJ reads report → deck pauses → DJ gives next instruction or kills
 ```

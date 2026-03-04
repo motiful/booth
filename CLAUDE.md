@@ -36,6 +36,11 @@ booth/
 └── LICENSE
 ```
 
+## CC Launch Rules
+
+- **Never use `claude -p`** — print mode is non-interactive, CC exits after one response, tmux window dies. Always use interactive mode (`claude` or `claude --dangerously-skip-permissions`). Pass initial prompts via `send-keys` after CC starts, or via temp file.
+- **Always set EDITOR proxy** — DJ sessions must have `EDITOR`/`VISUAL` pointing to `bin/editor-proxy.sh` for input protection.
+
 ## Code Conventions
 
 - Functional patterns over OOP

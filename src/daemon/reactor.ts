@@ -7,7 +7,7 @@ import { reportPath, boothPath, deriveSocket } from '../constants.js'
 import { tmuxSafe } from '../tmux.js'
 import { readConfig } from '../config.js'
 import { logger } from './logger.js'
-import type { DeckInfo, Alert, DeckStateChange } from '../types.js'
+import type { DeckInfo, DeckStateChange } from '../types.js'
 
 const CHECK_DELAY = 500
 const CHECK_POLL_INTERVAL = 30_000
@@ -121,28 +121,14 @@ export class Reactor {
       this.clearCheckPollTimer(deck.id)
 
       if (deck.mode === 'hold') {
-        // Hold mode: alert DJ but do NOT kill the deck
-        const alert: Alert = {
-          type: 'deck-check-complete',
-          deckId: deck.id,
-          deckName: deck.name,
-          message: `Deck "${deck.name}" check complete: ${status}. Deck is holding. Report: ${rPath}`,
-          timestamp: Date.now(),
-        }
-        this.pushAlertToDj(alert)
+        const msg = `Deck "${deck.name}" check complete: ${status}. Deck is holding. Report: ${rPath}`
+        this.notifyDj(msg)
         this.openReport(rPath)
         this.systemNotify(`Booth: ${deck.name} → ${status} (holding)`)
         logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status} (holding)`)
       } else {
-        // Auto mode (and live with in-flight check): alert DJ to read report + kill
-        const alert: Alert = {
-          type: 'deck-check-complete',
-          deckId: deck.id,
-          deckName: deck.name,
-          message: `Deck "${deck.name}" check complete: ${status}. Report: ${rPath}`,
-          timestamp: Date.now(),
-        }
-        this.pushAlertToDj(alert)
+        const msg = `Deck "${deck.name}" check complete: ${status}. Report: ${rPath}`
+        this.notifyDj(msg)
         this.openReport(rPath)
         this.systemNotify(`Booth: ${deck.name} → ${status}`)
         logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status}`)
@@ -274,19 +260,15 @@ export class Reactor {
     this.clearCheckPollTimer(deckId)
   }
 
-  // --- Alert delivery (dual channel) ---
+  // --- DJ notification ---
 
-  private pushAlertToDj(alert: Alert): void {
-    // Always persist (stop-hook reads this when DJ finishes a turn)
-    this.state.pushAlert(alert)
-
-    // Also actively push to DJ pane (covers DJ-idle case where stop-hook won't fire)
-    const formatted = `[booth-alert] ${alert.message}`
+  notifyDj(message: string): void {
+    const formatted = `[booth-alert] ${message}`
     const result = sendMessage(this.projectRoot, this.state, 'dj', formatted)
     if (result.ok) {
-      logger.info(`[booth-reactor] alert pushed to DJ: ${alert.type}`)
+      logger.info(`[booth-reactor] notified DJ: ${message.slice(0, 80)}`)
     } else {
-      logger.warn(`[booth-reactor] alert push failed (DJ will read via stop-hook): ${result.error}`)
+      logger.warn(`[booth-reactor] DJ notify failed: ${result.error}`)
     }
   }
 
@@ -305,15 +287,9 @@ export class Reactor {
       this.errorContext.delete(deck.id)
 
       const phase = checkPhase ? 'during check' : 'during work'
-      const alert: Alert = {
-        type: 'deck-error',
-        deckId: deck.id,
-        deckName: deck.name,
-        message: `Deck "${deck.name}" encountered an error ${phase} (no recovery after ${ERROR_RECOVERY_WINDOW / 1000}s)`,
-        timestamp: Date.now(),
-      }
-      this.pushAlertToDj(alert)
-      this.systemNotify(`Booth: ${alert.message}`)
+      const msg = `Deck "${deck.name}" encountered an error ${phase} (no recovery after ${ERROR_RECOVERY_WINDOW / 1000}s)`
+      this.notifyDj(msg)
+      this.systemNotify(`Booth: ${msg}`)
     }, ERROR_RECOVERY_WINDOW)
 
     this.errorTimers.set(deck.id, timer)
@@ -337,15 +313,9 @@ export class Reactor {
   }
 
   private onDeckNeedsAttention(deck: DeckInfo): void {
-    const alert: Alert = {
-      type: 'deck-needs-attention',
-      deckId: deck.id,
-      deckName: deck.name,
-      message: `Deck "${deck.name}" needs attention`,
-      timestamp: Date.now(),
-    }
-    this.pushAlertToDj(alert)
-    this.systemNotify(`Booth: ${alert.message}`)
+    const msg = `Deck "${deck.name}" needs attention`
+    this.notifyDj(msg)
+    this.systemNotify(`Booth: ${msg}`)
   }
 
   private openReport(filePath: string): void {

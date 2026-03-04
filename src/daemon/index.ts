@@ -9,7 +9,7 @@ import { killSession, hasSession, tmuxSafe } from '../tmux.js'
 import { sendMessage } from './send-message.js'
 import { archiveDeck, removeArchiveEntry } from './archive.js'
 import { initLogger, logger } from './logger.js'
-import type { DeckInfo, DeckMode, Alert } from '../types.js'
+import type { DeckInfo, DeckMode } from '../types.js'
 
 const VALID_MODES: DeckMode[] = ['auto', 'hold', 'live']
 
@@ -245,8 +245,6 @@ export class Daemon {
       case 'remove-deck':
         this.removeDeck(req.deckId as string)
         return { ok: true }
-      case 'consume-alerts':
-        return { ok: true, alerts: this.state.consumeAlerts() }
       case 'kill-deck': {
         const deckId = req.deckId as string
         const socket = deriveSocket(this.projectRoot)
@@ -262,22 +260,15 @@ export class Daemon {
         const deck = this.state.getDeck(deckId as string)
         if (!deck) return { ok: true }
 
-        // Cleanup
+        // Cleanup — mark stopped but don't remove/archive.
+        // Deck stays visible in `booth ls` for DJ to inspect and decide.
         if (deck.jsonlPath) this.assignedJsonlPaths.delete(deck.jsonlPath)
         this.stopJsonlPoll(deckId as string)
         this.signal.unwatch(deckId as string)
         this.reactor.clearDeckTimers(deckId as string)
         this.state.updateDeckStatus(deckId as string, 'stopped')
 
-        // Alert DJ (dual-channel: disk + active push)
-        const alert: Alert = {
-          type: 'deck-exited',
-          deckId: deckId as string,
-          deckName: deckName as string,
-          message: `Deck "${deckName}" session exited (${reason}). Report: ${rPath}`,
-          timestamp: Date.now(),
-        }
-        this.reactor.pushAlertToDj(alert)
+        this.reactor.notifyDj(`Deck "${deckName}" session exited (${reason}). Report: ${rPath}`)
         logger.info(`[booth-daemon] deck "${deckName}" session-end: ${reason}`)
         return { ok: true }
       }

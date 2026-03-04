@@ -1,6 +1,8 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync, rmdirSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { logger } from './daemon/logger.js'
 
 export interface TmuxResult {
@@ -86,18 +88,80 @@ export function isVimMode(): boolean {
   }
 }
 
-export function sendKeysToCC(socket: string, target: string, text: string): void {
-  const preview = text.slice(0, 50) + (text.length > 50 ? '...' : '')
-  logger.debug(`[booth-tmux] sendKeysToCC start target=${target} text="${preview}"`)
-  const vim = isVimMode()
-  if (vim) logger.debug('[booth-tmux] vim mode detected')
+// --- Ctrl+G Protected Send (input protection for all CC sessions) ---
 
-  // a. copy-mode detection and exit
+// Per-pane state directory to avoid conflicts between DJ and decks.
+// Pane ID like "%26" → ~/.booth/editor-state/%26/
+const EDITOR_STATE_ROOT = join(homedir(), '.booth', 'editor-state')
+
+function stateDir(target: string): string {
+  return join(EDITOR_STATE_ROOT, target.replace('%', 'pane-'))
+}
+
+// Detect Ctrl+G state via editor-proxy PID file
+export function isInEditorMode(target: string): boolean {
+  return existsSync(join(stateDir(target), 'editor-pid'))
+}
+
+// Wait for user to close their editor naturally (PID file disappears)
+function waitForEditorClose(target: string, timeoutMs = 120_000): boolean {
+  const dir = stateDir(target)
+  const pidFile = join(dir, 'editor-pid')
+  logger.info(`[booth-tmux] waiting for user to close Ctrl+G editor (${target})`)
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (!existsSync(pidFile)) return true
+    sleepMs(500)
+  }
+  return false
+}
+
+export function waitForPrompt(socket: string, target: string, timeoutMs = 30_000): boolean {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const screen = tmuxSafe(socket, 'capture-pane', '-t', target, '-p', '-S', '-5')
+    if (screen.ok && /[❯>]/.test(screen.output)) return true
+    sleepMs(1_000)
+  }
+  return false
+}
+
+function cleanEditorState(target: string): void {
+  const dir = stateDir(target)
+  try {
+    for (const f of ['action', 'save-path', 'alert-file', 'restore-path']) {
+      try { unlinkSync(join(dir, f)) } catch {}
+    }
+    try { rmdirSync(dir) } catch {}
+  } catch {}
+}
+
+export function protectedSendToCC(socket: string, target: string, text: string): void {
+  const preview = text.slice(0, 50) + (text.length > 50 ? '...' : '')
+  logger.info(`[booth-tmux] protectedSend start target=${target} text="${preview}"`)
+
+  // Clean any stale inject/restore state (preserves editor-pid)
+  cleanEditorState(target)
+
+  // 1. If user has Ctrl+G editor open, wait for them to close it naturally.
+  //    CC is fully blocked during execSync — no point injecting until it resumes.
+  if (isInEditorMode(target)) {
+    if (!waitForEditorClose(target)) {
+      throw new Error('Timeout waiting for user to close Ctrl+G editor')
+    }
+    // CC resumes after execSync returns — wait for prompt
+    if (!waitForPrompt(socket, target, 10_000)) {
+      logger.warn('[booth-tmux] CC did not show prompt after editor close')
+    }
+    sleepMs(300)
+  }
+
+  // 2. Handle copy-mode
   const wasCopyMode = isInCopyMode(socket, target)
   let savedScrollPos = -1
   let savedHistorySize = -1
   if (wasCopyMode) {
-    logger.debug(`[booth-tmux] copy-mode detected on ${target}, exiting`)
+    logger.debug('[booth-tmux] copy-mode detected, saving scroll state')
     const info = tmuxSafe(socket, 'display-message', '-t', target,
       '-p', '#{scroll_position}:#{history_size}')
     if (info.ok) {
@@ -108,51 +172,77 @@ export function sendKeysToCC(socket: string, target: string, text: string): void
       }
     }
     tmux(socket, 'send-keys', '-t', target, 'q')
-    sleepMs(100)
+    sleepMs(150)
   }
 
-  // b. vim: ensure normal mode then enter insert mode
-  if (vim) {
-    tmux(socket, 'send-keys', '-t', target, 'Escape')
-    sleepMs(50)
-    tmux(socket, 'send-keys', '-t', target, 'i')
-    sleepMs(50)
+  // 3-7: Inject + restore, wrapped in try/finally to guarantee cleanup
+  const savedInputPath = join(tmpdir(), `booth-saved-${Date.now()}.md`)
+  const alertPath = join(tmpdir(), `booth-alert-${Date.now()}.md`)
+  let restored = false
+
+  try {
+    writeFileSync(alertPath, text)
+
+    // 3. Write inject state for editor-proxy.sh
+    const sd = stateDir(target)
+    mkdirSync(sd, { recursive: true })
+    writeFileSync(join(sd, 'action'), 'inject')
+    writeFileSync(join(sd, 'save-path'), savedInputPath)
+    writeFileSync(join(sd, 'alert-file'), alertPath)
+
+    // 4. Ctrl+G → proxy saves user input + writes alert
+    tmux(socket, 'send-keys', '-t', target, 'C-g')
+    sleepMs(300)
+
+    // 5. Submit the alert
+    tmux(socket, 'send-keys', '-t', target, 'Enter')
+
+    // 6. Wait for CC to process and show new prompt
+    if (!waitForPrompt(socket, target)) {
+      logger.warn('[booth-tmux] timeout waiting for prompt after injection')
+      return  // finally block still runs cleanup
+    }
+    sleepMs(300)
+
+    // 7. Restore user input if there was any
+    if (existsSync(savedInputPath)) {
+      const saved = readFileSync(savedInputPath, 'utf-8')
+      if (saved.length > 0) {
+        mkdirSync(sd, { recursive: true })
+        writeFileSync(join(sd, 'action'), 'restore')
+        writeFileSync(join(sd, 'restore-path'), savedInputPath)
+        tmux(socket, 'send-keys', '-t', target, 'C-g')
+        sleepMs(200)
+        restored = true
+        logger.debug('[booth-tmux] user input restored')
+      }
+    }
+  } finally {
+    // ALWAYS clean up — prevents stale state poisoning future Ctrl+G
+    cleanEditorState(target)
+    try { unlinkSync(alertPath) } catch {}
+    if (!restored) {
+      try { unlinkSync(savedInputPath) } catch {}
+    }
   }
 
-  // c. inject text literally
-  tmux(socket, 'send-keys', '-t', target, '-l', text)
-
-  // d. wait for autocomplete popup
-  sleepMs(300)
-
-  // e. dismiss autocomplete (vim: also exits insert → normal)
-  tmux(socket, 'send-keys', '-t', target, 'Escape')
-
-  // f. wait for dismiss
-  sleepMs(100)
-
-  // g. submit
-  tmux(socket, 'send-keys', '-t', target, 'Enter')
-
-  // h. restore copy-mode if it was active
+  // 8. Restore copy-mode + scroll position
   if (wasCopyMode) {
-    sleepMs(100)
+    sleepMs(200)
     tmuxSafe(socket, 'copy-mode', '-t', target)
     if (savedScrollPos >= 0 && savedHistorySize >= 0) {
-      // scroll_position = lines from bottom. After text injection,
-      // history_size grows by N lines. Compensate so the user sees
-      // the same content region they were viewing before.
       const newInfo = tmuxSafe(socket, 'display-message', '-t', target,
         '-p', '#{history_size}')
       const newHs = newInfo.ok ? parseInt(newInfo.output, 10) : NaN
-      const delta = (!Number.isNaN(newHs) && savedHistorySize >= 0)
-        ? newHs - savedHistorySize : 0
+      const delta = !Number.isNaN(newHs) ? newHs - savedHistorySize : 0
       const scrollLines = savedScrollPos + delta
       if (scrollLines > 0) {
         tmuxSafe(socket, 'send-keys', '-t', target,
           '-X', '-N', String(scrollLines), 'scroll-up')
       }
     }
+    logger.debug('[booth-tmux] copy-mode restored')
   }
-  logger.debug(`[booth-tmux] sendKeysToCC done target=${target}`)
+
+  logger.info(`[booth-tmux] protectedSend done target=${target} restored=${restored}`)
 }

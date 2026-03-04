@@ -1,8 +1,8 @@
 import { EventEmitter } from 'node:events'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { boothPath, STATE_FILE, DECKS_FILE, ALERTS_FILE } from '../constants.js'
-import type { DeckInfo, DeckStatus, DeckStateChange, Alert } from '../types.js'
+import { boothPath, STATE_FILE, DECKS_FILE } from '../constants.js'
+import type { DeckInfo, DeckStatus, DeckStateChange } from '../types.js'
 
 function safeWrite(path: string, data: string): void {
   try {
@@ -21,7 +21,6 @@ export class BoothState extends EventEmitter {
   private decks = new Map<string, DeckInfo>()
   private djStatus: 'idle' | 'working' = 'idle'
   private djJsonlPath?: string
-  private alerts: Alert[] = []
   private projectRoot: string
   private persistTimer?: ReturnType<typeof setInterval>
 
@@ -64,9 +63,7 @@ export class BoothState extends EventEmitter {
 
   clearAllDecks(): void {
     this.decks.clear()
-    this.alerts = []
     this.persistDecksJson()
-    this.persistAlerts()
   }
 
   updateDeckStatus(deckId: string, status: DeckStatus): void {
@@ -116,18 +113,6 @@ export class BoothState extends EventEmitter {
     this.djJsonlPath = path
   }
 
-  pushAlert(alert: Alert): void {
-    this.alerts.push(alert)
-    this.persistAlerts()
-  }
-
-  consumeAlerts(): Alert[] {
-    const out = [...this.alerts]
-    this.alerts = []
-    this.persistAlerts()
-    return out
-  }
-
   private persist(): void {
     const data = {
       decks: Object.fromEntries(this.decks),
@@ -171,10 +156,4 @@ export class BoothState extends EventEmitter {
     safeWrite(boothPath(this.projectRoot, DECKS_FILE), JSON.stringify(decks, null, 2))
   }
 
-  private persistAlerts(): void {
-    safeWrite(
-      boothPath(this.projectRoot, ALERTS_FILE),
-      JSON.stringify(this.alerts, null, 2)
-    )
-  }
 }

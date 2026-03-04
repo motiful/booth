@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from 'node:fs'
 const FRONTMATTER_RE = /^---\s*\n([\s\S]*?)\n---/
 const STATUS_RE = /^status:\s*(.+)$/m
 
-const TERMINAL_STATUSES = new Set(['SUCCESS', 'FAIL', 'FAILED', 'ERROR'])
+const TERMINAL_STATUSES = new Set(['SUCCESS', 'FAIL', 'FAILED', 'ERROR', 'EXIT'])
 
 export function readReportStatus(reportPath: string): string | null {
   if (!existsSync(reportPath)) return null

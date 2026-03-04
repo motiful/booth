@@ -1,5 +1,5 @@
 import { deriveSocket } from '../constants.js'
-import { tmuxSafe, sendKeysToCC } from '../tmux.js'
+import { tmuxSafe, protectedSendToCC } from '../tmux.js'
 import { BoothState } from './state.js'
 import { logger } from './logger.js'
 
@@ -18,7 +18,8 @@ export function sendMessage(
 
   // Resolve pane
   let paneId: string
-  if (targetId === 'dj') {
+  const isDj = targetId === 'dj'
+  if (isDj) {
     // DJ is always the first pane in the session — no status guard for DJ
     const check = tmuxSafe(socket, 'display-message', '-t', 'dj:0', '-p', '#{pane_id}')
     if (!check.ok || !check.output.trim()) {
@@ -28,9 +29,6 @@ export function sendMessage(
   } else {
     const deck = state.getDeck(targetId)
     if (!deck) return { ok: false, error: `Deck "${targetId}" not found` }
-    if (deck.status !== 'idle') {
-      return { ok: false, error: `Deck "${targetId}" is ${deck.status}, not idle` }
-    }
     paneId = deck.paneId
   }
 
@@ -40,13 +38,15 @@ export function sendMessage(
     return { ok: false, error: `Pane ${paneId} does not exist` }
   }
 
-  // Inject message
   logger.info(`[booth-send] sendMessage to "${targetId}" (${message.slice(0, 80)}${message.length > 80 ? '...' : ''})`)
+
   try {
-    sendKeysToCC(socket, paneId, message)
+    // All CC sessions use protected send via Ctrl+G editor proxy.
+    // Preserves user input, handles copy-mode, waits for Ctrl+G editor.
+    protectedSendToCC(socket, paneId, message)
     return { ok: true }
   } catch (err) {
-    logger.error(`[booth-send] sendKeys failed for "${targetId}": ${(err as Error).message}`)
-    return { ok: false, error: `sendKeys failed: ${(err as Error).message}` }
+    logger.error(`[booth-send] send failed for "${targetId}": ${(err as Error).message}`)
+    return { ok: false, error: `send failed: ${(err as Error).message}` }
   }
 }

@@ -34,11 +34,3 @@ export interface ArchivedDeck {
   createdAt: number
   killedAt: number
 }
-
-export interface Alert {
-  type: 'deck-check-complete' | 'deck-error' | 'deck-needs-attention' | 'deck-exited'
-  deckId: string
-  deckName: string
-  message: string
-  timestamp: number
-}

@@ -71,7 +71,6 @@ export function parseEventState(line: string): DeckStatus | null {
   if (t === 'system') {
     const sub = (ev.subtype ?? '') as string
     if (sub === 'turn_duration') return 'idle'
-    if (sub === 'stop_hook_summary' && ev.preventedContinuation === false) return 'idle'
     if (sub === 'api_error') return 'error'
     return null
   }
