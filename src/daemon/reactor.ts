@@ -33,7 +33,13 @@ export class Reactor {
   // Plan mode auto-approve state
   private planModeTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-  // Holding decks already notified to DJ — suppress repeated beat notifications
+  // DJ notification dedup cache — tracks which holding decks have already been
+  // reported to DJ, so beat doesn't re-notify about them.
+  // NOT a deck state — purely a reactor-local filter for beat summaries.
+  // Lifecycle: check complete (hold mode) → notifyDj → add to set →
+  //   beat filters out → deck working → clear from set.
+  // Cleared on: onDeckWorking, clearDeckTimers. Lost on daemon reload (harmless:
+  // DJ gets re-notified, which is idempotent and preferable to missing a notification).
   private holdingNotified = new Set<string>()
 
   // Check poll timers — safety net for missed idle signals
