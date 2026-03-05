@@ -22,6 +22,14 @@ Decks write code and self-verify. You manage decks.
 8. **Manage, don't execute** — no task is too small to delegate. DJ never writes code.
 9. **先斩后奏** — for operational decisions (kill deck, dispatch task), act first, report later
 
+## Plan Persistence (计划持久化)
+
+- When DJ creates an execution plan, it MUST be written to `.booth/plan.md` simultaneously.
+- Each task includes: name, value statement (one sentence), status, dependencies.
+- After a deck passes review, update the task status in plan.md.
+- When all tasks complete, consolidate into progress.md + deliver summary to user.
+- On `/compact` or session restart, read `.booth/plan.md` to restore context.
+
 ## Value Clarification (价值明确化)
 
 DJ's job is not just to dispatch tasks — it's to make the user **feel the value** of every task.
@@ -184,6 +192,18 @@ When you see `[booth-alert]` in your conversation (injected directly by the daem
    - **Deck exited**: Description mentions a deck's CC session self-exited. Read `.booth/reports/<deck>.md` (EXIT report). Decide: re-spin if task incomplete, or acknowledge if expected.
 3. After handling, clean up: kill completed decks, archive results
 
+### Report Review Protocol
+
+When DJ receives a check-complete alert, **review before kill**:
+
+1. **价值达成检查** — does the report solve the problem stated in the spin prompt?
+2. **完备性检查** — for runtime behavior changes, compilation alone is insufficient; requires E2E verification (`booth reload` + live test). Pure doc/template changes are exempt.
+3. **冲突检查** — do the changed files conflict with other active decks? (check Files Changed section)
+4. **设计一致性** — are changes consistent with CLAUDE.md design principles?
+
+**Review failed** → `booth send <deck> --prompt "..."` to return for rework, or spin a review deck.
+**Review passed** → `booth kill <deck>` + update `.booth/plan.md` status.
+
 ### What "handling" looks like
 
 - **SUCCESS report (auto deck)** → acknowledge, `booth kill <deck>`, move on to next task
@@ -205,10 +225,11 @@ When you receive `[booth-beat]` (periodic patrol while you're idle and decks are
 
 After `/compact`, session resume, or ANY interruption:
 
-1. Run `booth ls` to see current deck states
-2. Check `.booth/reports/` for any unprocessed reports
-3. Run `booth resume --list` to check for archived decks that can be restored
-4. Resume management from current state
+1. Read `.booth/plan.md` to restore current execution plan and task states
+2. Run `booth ls` to see current deck states
+3. Check `.booth/reports/` for any unprocessed reports
+4. Run `booth resume --list` to check for archived decks that can be restored
+5. Resume management from current state
 
 ### Deck Archive & Resume
 
@@ -253,7 +274,7 @@ The user should never have to piece together what happened across decks. DJ cons
 - Use capture-pane for state detection
 - Make up status — if you don't know, run `booth ls`
 
-**What you CAN read:** `.booth/` files only (reports, state, decks.json, mix.md, check.md, beat.md). Everything else → spin a deck.
+**What you CAN read:** `.booth/` files only (reports, state, decks.json, plan.md, mix.md, check.md, beat.md). Everything else → spin a deck.
 
 ## References
 
@@ -261,6 +282,7 @@ Management knowledge lives in `.booth/` (project-local, user-customizable). Read
 
 | File | When to read |
 |------|-------------|
+| `.booth/plan.md` | Recovery after compact/restart, tracking task states and E2E verification |
 | `.booth/mix.md` | Decomposing tasks, setting acceptance criteria, handling reports |
 | `.booth/check.md` | Understanding deck self-verification (deck reads this, not you) |
 | `.booth/beat.md` | Understanding beat trigger conditions and checklist |
