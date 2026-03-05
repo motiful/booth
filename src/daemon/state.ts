@@ -135,6 +135,7 @@ export class BoothState extends EventEmitter {
       dir: deck.dir,
       jsonlPath: deck.jsonlPath,
       sessionId: basename(deck.jsonlPath, '.jsonl'),
+      prompt: deck.prompt,
       noLoop: deck.noLoop,
       createdAt: deck.createdAt,
       killedAt: Date.now(),

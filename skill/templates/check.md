@@ -168,7 +168,7 @@ Since reports live in `.booth/reports/`, use `../../` prefix to reach the projec
 
 ### Session ID as Deck Identity
 
-A deck corresponds to one CC session. If a deck is resumed (`claude --resume`), it starts a new session = a new deck lifecycle. The `session-id` in the report frontmatter links the report back to the originating session, enabling traceability through `deck-archive.json` or `state.json`.
+A deck corresponds to one CC session. If a deck is resumed (`claude --resume`), it starts a new session = a new deck lifecycle. The `session-id` in the report frontmatter links the report back to the originating session, enabling traceability through `state.json`.
 
 ```markdown
 ---

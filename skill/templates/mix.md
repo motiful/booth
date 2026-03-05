@@ -352,7 +352,7 @@ After `/compact`, session resume, or ANY interruption:
 
 ### Deck Archive & Resume
 
-When a deck is killed (`booth kill`) or booth shuts down (`booth stop`), decks with active CC sessions are automatically archived to `.booth/deck-archive.json`. This preserves the CC session ID, mode, and configuration.
+When a deck is killed (`booth kill`) or booth shuts down (`booth stop`), decks with active CC sessions are automatically archived to the `archives` field in `.booth/state.json`. This preserves the CC session ID, mode, and configuration.
 
 To restore archived decks:
 - `booth resume` — restore all archived decks at once
