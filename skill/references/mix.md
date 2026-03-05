@@ -4,12 +4,19 @@
 > Code ensures DJ reads this file. It defines the management framework.
 > Users can customize `.booth/mix.md` per project. Future: can route to domain-specific skills.
 
+## Language
+
+- Report 正文、Summary、Review Rounds 等描述性内容用**中文**撰写
+- 代码引用、文件路径、命令、技术术语保持英文原样
+- DJ 给 deck 写 prompt 时，prompt 正文用中文
+- 此规则适用于所有 deck，无需额外提醒
+
 ## Deck Prompt Guidelines
 
 When writing prompts for decks:
 
 - **Be explicit and direct.** Clear instructions reduce the chance of CC entering plan mode.
-- **Include this instruction in every deck prompt**: "Execute directly — do NOT enter plan mode (do NOT call EnterPlanMode)."
+- **Include this instruction in every deck prompt**: "直接执行，不要进入 plan mode（不要调用 EnterPlanMode）。"
 - Provide enough context (files, acceptance criteria) so CC doesn't feel the need to "plan first"
 - If the task genuinely needs a plan, write the plan yourself in the prompt — don't let the deck self-plan
 
