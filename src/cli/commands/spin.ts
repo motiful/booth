@@ -66,9 +66,9 @@ export async function spinCommand(args: string[]): Promise<void> {
     const promptFile = join(tmpdir(), `booth-prompt-${name}-${Date.now()}.txt`)
     writeFileSync(promptFile, prompt)
     tmux(socket, 'send-keys', '-t', paneId,
-      `${editorSetup} && PROMPT=$(cat ${promptFile}) && rm -f ${promptFile} && claude --dangerously-skip-permissions "$PROMPT"`, 'Enter')
+      `${editorSetup} && PROMPT=$(cat ${promptFile}) && rm -f ${promptFile} && claude --dangerously-skip-permissions "$PROMPT"; reset`, 'Enter')
   } else {
-    tmux(socket, 'send-keys', '-t', paneId, `${editorSetup} && claude --dangerously-skip-permissions`, 'Enter')
+    tmux(socket, 'send-keys', '-t', paneId, `${editorSetup} && claude --dangerously-skip-permissions; reset`, 'Enter')
   }
 
   const modeLabel = mode === 'auto' ? '' : ` [${mode}]`

@@ -79,7 +79,7 @@ export async function startCommand(_args: string[]): Promise<void> {
   // Save user's original EDITOR/VISUAL before overriding.
   // If both are empty, BOOTH_REAL_EDITOR stays empty — the proxy auto-detects at runtime.
   const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
-  const djCmd = `${editorSetup} && claude --dangerously-skip-permissions --append-system-prompt "$(cat '${mixPath}')"`
+  const djCmd = `${editorSetup} && claude --dangerously-skip-permissions --append-system-prompt "$(cat '${mixPath}')"; reset`
 
   newSession(socket, SESSION)
   tmux(socket, 'set', '-g', '@booth-root', projectRoot)

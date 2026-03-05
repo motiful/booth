@@ -140,7 +140,7 @@ async function resumeOne(
 
   sleepMs(500)
   tmux(socket, 'send-keys', '-t', paneId,
-    `${editorSetup} && claude --dangerously-skip-permissions --resume "${entry.sessionId}"`, 'Enter')
+    `${editorSetup} && claude --dangerously-skip-permissions --resume "${entry.sessionId}"; reset`, 'Enter')
 
   const modeLabel = mode !== entry.mode ? ` [${mode}<-${entry.mode}]` : ` [${mode}]`
   console.log(`[booth] deck "${entry.name}" resumed${modeLabel} (pane: ${paneId})`)
