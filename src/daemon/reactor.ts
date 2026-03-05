@@ -33,6 +33,9 @@ export class Reactor {
   // Plan mode auto-approve state
   private planModeTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
+  // Holding decks already notified to DJ — suppress repeated beat notifications
+  private holdingNotified = new Set<string>()
+
   // Check poll timers — safety net for missed idle signals
   private checkPollTimers = new Map<string, ReturnType<typeof setInterval>>()
 
@@ -146,6 +149,7 @@ export class Reactor {
       if (deck.mode === 'hold') {
         const msg = `Deck "${deck.name}" check complete: ${status}. Deck is holding. Report: ${rPath}`
         this.notifyDj(msg)
+        this.holdingNotified.add(deck.id)
         this.openReport(rPath)
         this.systemNotify(`Booth: ${deck.name} → ${status} (holding)`)
         logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status} (holding)`)
@@ -212,7 +216,13 @@ export class Reactor {
     const decks = this.state.getAllDecks()
     const working = decks.filter(d => d.status === 'working').map(d => d.name)
     const checking = decks.filter(d => d.status === 'checking').map(d => d.name)
-    const idle = decks.filter(d => d.status === 'idle').map(d => d.name)
+    const idle = decks.filter(d => d.status === 'idle' && !this.holdingNotified.has(d.id)).map(d => d.name)
+
+    // All active decks are holding and already notified — nothing for DJ to act on
+    if (!working.length && !checking.length && !idle.length) {
+      logger.debug('[booth-reactor] beat skipped: all active decks are notified holding')
+      return
+    }
 
     const beatPath = boothPath(this.projectRoot, 'beat.md')
     const summary = [
@@ -312,6 +322,7 @@ export class Reactor {
       this.errorTimers.delete(deckId)
     }
     this.errorContext.delete(deckId)
+    this.holdingNotified.delete(deckId)
     this.clearPlanModeTimer(deckId)
     this.clearCheckPollTimer(deckId)
   }
@@ -354,6 +365,9 @@ export class Reactor {
   }
 
   private onDeckWorking(deck: DeckInfo): void {
+    // Clear holding-notified flag — deck is active again
+    this.holdingNotified.delete(deck.id)
+
     // Cancel error recovery timer if active
     const timer = this.errorTimers.get(deck.id)
     if (timer) {
