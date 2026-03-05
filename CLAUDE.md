@@ -30,7 +30,7 @@ booth/
 ├── dist/                   # Compiled output (published)
 ├── skill/                  # Booth skill (published) — entrypoint + references
 │   ├── SKILL.md            # General entrypoint (loaded by CC skill system)
-│   └── references/         # dj-protocol, signals, check, mix, beat, child-protocol
+│   └── references/         # mix, signals, check, beat, child-protocol
 ├── .claude/                # CC local config (gitignored)
 ├── package.json            # "files": ["dist/", "bin/", "skill/"]
 ├── CLAUDE.md               # This file

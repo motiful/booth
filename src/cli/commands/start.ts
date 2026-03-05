@@ -69,7 +69,7 @@ export async function startCommand(_args: string[]): Promise<void> {
 
   // Create tmux session with shell, then launch DJ via send-keys.
   // CC needs a shell env — direct exec causes CC to exit immediately.
-  const djProtocolPath = join(packageRoot, 'skill', 'references', 'dj-protocol.md')
+  const mixPath = join(packageRoot, 'skill', 'references', 'mix.md')
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
 
   // Set EDITOR to booth's proxy before launching CC.
@@ -79,7 +79,7 @@ export async function startCommand(_args: string[]): Promise<void> {
   // Save user's original EDITOR/VISUAL before overriding.
   // If both are empty, BOOTH_REAL_EDITOR stays empty — the proxy auto-detects at runtime.
   const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
-  const djCmd = `${editorSetup} && claude --dangerously-skip-permissions --append-system-prompt "$(cat '${djProtocolPath}')"`
+  const djCmd = `${editorSetup} && claude --dangerously-skip-permissions --append-system-prompt "$(cat '${mixPath}')"`
 
   newSession(socket, SESSION)
   tmux(socket, 'set', '-g', '@booth-root', projectRoot)

@@ -54,9 +54,8 @@ Detailed protocols and specifications:
 
 | Reference | Content |
 |-----------|---------|
-| `references/dj-protocol.md` | DJ identity, management rules, CLI reference, alert/beat handling |
+| `references/mix.md` | DJ complete management handbook (identity, rules, CLI, alerts, prompts, decomposition) |
 | `references/child-protocol.md` | Deck behavior contract, lifecycle, report format |
 | `references/signals.md` | Signal architecture, injection mechanism, editor proxy |
 | `references/check.md` | Deck self-verification framework |
-| `references/mix.md` | DJ management logic, prompt guidelines |
 | `references/beat.md` | Periodic patrol trigger conditions and checklist |
