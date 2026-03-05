@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from 'node:child_process'
-import { createInterface } from 'node:readline'
+import { createInterface, Interface } from 'node:readline'
 import { EventEmitter } from 'node:events'
 import type { DeckStatus } from '../types.js'
 
@@ -15,8 +15,13 @@ export interface PlanModeEvent {
   timestamp: number
 }
 
+interface Watcher {
+  child: ChildProcess
+  rl: Interface
+}
+
 export class SignalCollector extends EventEmitter {
-  private watchers = new Map<string, ChildProcess>()
+  private watchers = new Map<string, Watcher>()
 
   watch(deckId: string, jsonlPath: string): void {
     if (this.watchers.has(deckId)) return
@@ -40,13 +45,14 @@ export class SignalCollector extends EventEmitter {
     child.on('error', () => this.unwatch(deckId))
     child.on('exit', () => this.watchers.delete(deckId))
 
-    this.watchers.set(deckId, child)
+    this.watchers.set(deckId, { child, rl })
   }
 
   unwatch(deckId: string): void {
-    const child = this.watchers.get(deckId)
-    if (child) {
-      child.kill()
+    const watcher = this.watchers.get(deckId)
+    if (watcher) {
+      watcher.rl.close()
+      watcher.child.kill()
       this.watchers.delete(deckId)
     }
   }
@@ -116,13 +122,5 @@ export function parsePlanModeAction(line: string): 'enter' | 'exit' | null {
     }
   }
 
-  return null
-}
-
-export function parseLastState(lines: string[]): DeckStatus | null {
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const s = parseEventState(lines[i])
-    if (s) return s
-  }
   return null
 }
