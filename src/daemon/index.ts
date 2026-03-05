@@ -27,6 +27,7 @@ export class Daemon {
   private ipcServer?: Server
   private healthTimer?: ReturnType<typeof setInterval>
   private jsonlWaiters = new Map<string, ReturnType<typeof setInterval>>()
+  private reloading = false
 
   constructor(opts: DaemonOptions) {
     this.projectRoot = opts.projectRoot
@@ -222,8 +223,13 @@ export class Daemon {
     })
   }
 
-  private async handleIpc(req: { cmd: string; [k: string]: unknown }): Promise<unknown> {
-    switch (req.cmd) {
+  private async handleIpc(req: unknown): Promise<unknown> {
+    if (!req || typeof req !== 'object' || !('cmd' in req) || typeof (req as any).cmd !== 'string') {
+      return { error: 'invalid request: cmd string required' }
+    }
+    const msg = req as { cmd: string; [k: string]: unknown }
+
+    switch (msg.cmd) {
       case 'ping':
         return { ok: true, pid: process.pid }
       case 'ls':
@@ -235,44 +241,62 @@ export class Daemon {
           decks: this.state.getAllDecks(),
           workingDecks: this.state.hasWorkingDecks(),
         }
-      case 'register-deck':
-        this.registerDeck(req.deck as DeckInfo)
+      case 'register-deck': {
+        const deck = msg.deck as DeckInfo | undefined
+        if (!deck || typeof deck !== 'object' || typeof deck.id !== 'string' || typeof deck.name !== 'string') {
+          return { error: 'valid deck object required (id, name)' }
+        }
+        this.registerDeck(deck)
         return { ok: true }
-      case 'remove-deck':
-        this.removeDeck(req.deckId as string)
+      }
+      case 'remove-deck': {
+        const deckId = typeof msg.deckId === 'string' && msg.deckId ? msg.deckId : null
+        if (!deckId) return { error: 'deckId string required' }
+        this.removeDeck(deckId)
         return { ok: true }
+      }
       case 'kill-deck': {
-        const deckId = req.deckId as string
+        const deckId = typeof msg.deckId === 'string' && msg.deckId ? msg.deckId : null
+        if (!deckId) return { error: 'deckId string required' }
         const socket = deriveSocket(this.projectRoot)
         const deck = this.state.getDeck(deckId)
-        if (deck) {
-          tmuxSafe(socket, 'kill-window', '-t', `${SESSION}:${deck.name}`)
+        // Use deck name from state, or fallback name from request
+        const name = deck?.name ?? (typeof msg.name === 'string' ? msg.name : null)
+        if (name) {
+          tmuxSafe(socket, 'kill-window', '-t', `${SESSION}:${name}`)
         }
         this.removeDeck(deckId)
         return { ok: true }
       }
       case 'deck-exited': {
-        const { deckId, deckName, reason, reportPath: rPath } = req as any
-        const deck = this.state.getDeck(deckId as string)
+        const deckId = typeof msg.deckId === 'string' && msg.deckId ? msg.deckId : null
+        if (!deckId) return { error: 'deckId string required' }
+        const deckName = typeof msg.deckName === 'string' ? msg.deckName : deckId
+        const reason = typeof msg.reason === 'string' ? msg.reason : 'unknown'
+        const rPath = typeof msg.reportPath === 'string' ? msg.reportPath : '(no report)'
+
+        const deck = this.state.getDeck(deckId)
         if (!deck) return { ok: true }
 
         // Cleanup — mark stopped but don't remove/archive.
         // Deck stays visible in `booth ls` for DJ to inspect and decide.
-        this.stopWaiter(deckId as string)
-        this.signal.unwatch(deckId as string)
-        this.reactor.clearDeckTimers(deckId as string)
-        this.state.updateDeckStatus(deckId as string, 'stopped')
+        this.stopWaiter(deckId)
+        this.signal.unwatch(deckId)
+        this.reactor.clearDeckTimers(deckId)
+        this.state.updateDeckStatus(deckId, 'stopped')
 
         this.reactor.notifyDj(`Deck "${deckName}" session exited (${reason}). Report: ${rPath}`)
         logger.info(`[booth-daemon] deck "${deckName}" session-end: ${reason}`)
         return { ok: true }
       }
       case 'send-message': {
+        const targetId = typeof msg.targetId === 'string' && msg.targetId ? msg.targetId : null
+        const message = typeof msg.message === 'string' && msg.message ? msg.message : null
+        if (!targetId || !message) return { error: 'targetId and message strings required' }
         // Fire-and-forget: respond immediately, send async in background.
         // Avoids IPC timeout when protectedSendToCC waits for Ctrl+G close.
         sendMessage(
-          this.projectRoot, this.state,
-          req.targetId as string, req.message as string
+          this.projectRoot, this.state, targetId, message
         ).then(result => {
           if (!result.ok) {
             logger.warn(`[booth-daemon] background send failed: ${result.error}`)
@@ -281,8 +305,9 @@ export class Daemon {
         return { ok: true, queued: true }
       }
       case 'set-mode': {
-        const deckId = req.deckId as string
-        const mode = req.mode as DeckMode
+        const deckId = typeof msg.deckId === 'string' && msg.deckId ? msg.deckId : null
+        if (!deckId) return { error: 'deckId string required' }
+        const mode = msg.mode as DeckMode
         if (!VALID_MODES.includes(mode)) {
           return { error: `invalid mode: ${mode}` }
         }
@@ -300,25 +325,33 @@ export class Daemon {
         return { ok: true }
       }
       case 'resume-deck': {
-        this.registerDeck(req.deck as DeckInfo)
-        this.state.removeArchiveEntry(req.sessionId as string)
+        const deck = msg.deck as DeckInfo | undefined
+        if (!deck || typeof deck !== 'object' || typeof deck.id !== 'string' || typeof deck.name !== 'string') {
+          return { error: 'valid deck object required (id, name)' }
+        }
+        const sessionId = typeof msg.sessionId === 'string' && msg.sessionId ? msg.sessionId : null
+        if (!sessionId) return { error: 'sessionId string required' }
+        this.registerDeck(deck)
+        this.state.removeArchiveEntry(sessionId)
         return { ok: true }
       }
       case 'session-changed': {
-        const { deckId: dId, role, transcriptPath } = req as any
+        const transcriptPath = typeof msg.transcriptPath === 'string' && msg.transcriptPath ? msg.transcriptPath : null
         if (!transcriptPath) return { error: 'transcriptPath required' }
+        const role = typeof msg.role === 'string' ? msg.role : null
+        const dId = typeof msg.deckId === 'string' ? msg.deckId : null
 
         // DJ session change
         if (role === 'dj') {
-          this.updateDjJsonl(transcriptPath as string)
+          this.updateDjJsonl(transcriptPath)
           return { ok: true, target: 'dj' }
         }
 
         // Deck session change
         if (dId) {
-          const deck = this.state.getDeck(dId as string)
+          const deck = this.state.getDeck(dId)
           if (deck) {
-            this.updateDeckJsonl(dId as string, transcriptPath as string)
+            this.updateDeckJsonl(dId, transcriptPath)
             return { ok: true, target: dId }
           }
           // deckId not registered yet (race with register-deck) — skip silently
@@ -328,13 +361,14 @@ export class Daemon {
         return { ok: true, skipped: 'not a booth session' }
       }
       case 'update-dj-jsonl': {
-        const jsonlPath = req.jsonlPath as string
+        const jsonlPath = typeof msg.jsonlPath === 'string' && msg.jsonlPath ? msg.jsonlPath : null
         if (!jsonlPath) return { error: 'jsonlPath required' }
         this.updateDjJsonl(jsonlPath)
         return { ok: true }
       }
       case 'reload':
-        // Respond before graceful reload
+        if (this.reloading) return { error: 'reload already in progress' }
+        this.reloading = true
         setTimeout(() => this.gracefulReload(), 100)
         return { ok: true }
       case 'shutdown':
@@ -342,7 +376,7 @@ export class Daemon {
         setTimeout(() => this.shutdown(), 100)
         return { ok: true }
       default:
-        return { error: `unknown command: ${req.cmd}` }
+        return { error: `unknown command: ${msg.cmd}` }
     }
   }
 

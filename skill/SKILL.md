@@ -56,6 +56,7 @@ Detailed protocols and specifications:
 | `references/child-protocol.md` | Deck behavior contract, lifecycle, report format |
 | `references/signals.md` | Signal architecture, injection mechanism, editor proxy |
 | `references/beat.md` | Periodic patrol trigger conditions and checklist |
+| `references/cli.md` | CLI command reference, workflows, and troubleshooting |
 
 ### Templates
 

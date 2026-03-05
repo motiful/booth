@@ -80,8 +80,7 @@ Signal Delivery (single channel):
   - Beat as periodic fallback (adaptive cooldown 5→10→20→…→60min)
 
 .booth/ Directory (gitignored):
-  state.json                          — runtime state (decks + DJ status, event-driven + debounce)
-  deck-archive.json                   — archived deck sessions
+  state.json                          — runtime state (decks + archives + DJ status, event-driven + debounce)
   daemon.sock                          — daemon IPC
   logs/daemon-YYYY-MM-DD.log           — Winston daily rotate (7d retention)
   logs/daemon-stderr.log               — uncaught errors fallback
@@ -428,6 +427,32 @@ SKILL.md split + init command. Decouples DJ protocol from skill entrypoint; adds
 
 - [x] 在 mix.md Plan Persistence 段落补充 Plan 条目格式规范
 - [x] source of truth (`skill/templates/mix.md`) 和 runtime copy (`.booth/mix.md`) 同步
+
+### Beat Holding Notification Fix (COMPLETE — 2026-03-05)
+
+- [x] `holdingNotified` Set — 内存标记已通知 DJ 的 holding deck，beat 不再重复通知
+- [x] beat 跳过逻辑 — 所有活跃 deck 均为已通知 holding 时，beat 不发送
+- [x] 重置机制 — deck 进入 working 或被清理时清除标记
+- [x] B3.5 审查 — holdingNotified 注释补充（dedup cache 定义 + 生命周期 + 边缘 case 分析）
+
+### Session ID Pre-Generation (COMPLETE — 2026-03-05)
+
+- [x] CC `--session-id <uuid>` 调研 — CLI 原生支持，JSONL 文件名 = session ID
+- [x] `generateSessionId()` + `jsonlPathForSession()` — 启动前即知 JSONL 精确路径
+- [x] DJ 和 deck 全部使用 `--session-id` 启动 — 零歧义，零扫描
+- [x] 删除 `findLatestJsonl()`、`discoverDjJsonl()`、`pollForJsonl()`、`pollForDjJsonl()`
+- [x] 删除 `assignedJsonlPaths` 排除集 — 不再需要多 JSONL 区分逻辑
+- [x] daemon `watchOrWait()` — 对已知精确路径做 `existsSync` 等待（1s×60 = 60s max）
+- [x] `update-dj-jsonl` IPC 不再要求文件已存在（daemon 自行等待）
+
+### Archive Unification (COMPLETE — 2026-03-05)
+
+- [x] `deck-archive.json` 合并到 `state.json` 的 `archives` 字段
+- [x] `BoothState` 新增 archive CRUD 方法（archiveDeck, removeArchiveEntry, listArchiveEntries 等）
+- [x] 删除 `src/daemon/archive.ts`、`DECK_ARCHIVE_FILE` 常量
+- [x] `resume.ts` 改为从 state.json 读取 archives
+- [x] `archiveDeck()` 保留 prompt 字段（bug fix）
+- [x] SKILL.md、mix.md、check.md 文档引用更新
 
 ### Phase 2.9 — Worktree Isolation (NEXT — 最高优先级)
 

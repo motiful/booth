@@ -1,6 +1,5 @@
-import { findProjectRoot, deriveSocket } from '../../constants.js'
+import { findProjectRoot } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
-import { tmuxSafe } from '../../tmux.js'
 
 export async function killCommand(args: string[]): Promise<void> {
   const name = args[0]
@@ -10,7 +9,6 @@ export async function killCommand(args: string[]): Promise<void> {
   }
 
   const projectRoot = findProjectRoot()
-  const socket = deriveSocket(projectRoot)
 
   if (!(await isDaemonRunning(projectRoot))) {
     console.error('[booth] daemon not running. Nothing to kill.')
@@ -19,11 +17,8 @@ export async function killCommand(args: string[]): Promise<void> {
 
   const deckId = `deck-${name}`
 
-  // Kill tmux window
-  tmuxSafe(socket, 'kill-window', '-t', `dj:${name}`)
-
-  // Remove from daemon state
-  await ipcRequest(projectRoot, { cmd: 'remove-deck', deckId })
+  // Daemon handles tmux kill + state cleanup in one atomic operation
+  await ipcRequest(projectRoot, { cmd: 'kill-deck', deckId, name })
 
   console.log(`[booth] deck "${name}" killed`)
 }
