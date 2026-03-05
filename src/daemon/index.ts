@@ -364,6 +364,8 @@ export class Daemon {
         const jsonlPath = typeof msg.jsonlPath === 'string' && msg.jsonlPath ? msg.jsonlPath : null
         if (!jsonlPath) return { error: 'jsonlPath required' }
         this.updateDjJsonl(jsonlPath)
+        // DJ just connected — trigger immediate beat so DJ gets recovery context
+        this.reactor.scheduleImmediateBeat()
         return { ok: true }
       }
       case 'reload':

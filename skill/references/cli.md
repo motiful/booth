@@ -16,6 +16,7 @@
 | `booth resume <name>` | Resume a specific archived deck |
 | `booth resume --list` | List archived decks available for resume |
 | `booth stop` | Stop booth entirely (daemon + all decks + tmux session) |
+| `booth restart` | Restart booth (stop + start + resume all archived decks) |
 | `booth reload` | Hot-restart daemon (preserves tmux sessions and deck state) |
 | `booth auto <name>` | Switch deck to auto mode |
 | `booth hold <name>` | Switch deck to hold mode |
@@ -126,16 +127,21 @@ booth live fix-typo    # disable auto-check entirely
 
 Mode switches take effect on the next state transition. If a check is already in-flight, it completes normally. Switching to auto/hold while idle immediately triggers the check flow.
 
-## reload vs stop
+## reload vs restart vs stop
 
-| | `booth reload` | `booth stop` |
-|--|----------------|--------------|
-| **What it does** | Hot-restart daemon only | Kill daemon + all decks + tmux session |
-| **Deck impact** | None — tmux panes survive, state recovered from `state.json` | All decks destroyed |
-| **When to use** | After updating booth code, fixing daemon bugs | Shutting down for the day, resetting everything |
-| **Reversibility** | Non-destructive | Destructive — decks and in-progress work are lost |
+| | `booth reload` | `booth restart` | `booth stop` |
+|--|----------------|-----------------|--------------|
+| **What it does** | Hot-restart daemon only | Stop everything, start fresh, resume archived decks | Kill daemon + all decks + tmux session |
+| **Deck impact** | None — tmux panes survive | Decks archived then resumed (new CC sessions with `--resume`) | All decks destroyed |
+| **When to use** | After updating booth code, fixing daemon bugs | Full reset while preserving deck history | Shutting down for the day, resetting everything |
+| **DJ context** | Preserved (same session) | New DJ session — gets immediate beat for recovery | Gone |
+| **Reversibility** | Non-destructive | Mostly non-destructive (decks resume from archives) | Destructive |
 
-**Rule of thumb:** Use `reload` when the daemon needs a restart. Use `stop` only when you want to tear everything down.
+**Rule of thumb:** Use `reload` when only the daemon needs a restart. Use `restart` for a clean slate with deck recovery. Use `stop` only when you want to tear everything down.
+
+### DJ wake-up on restart
+
+When DJ connects to the daemon (via `update-dj-jsonl` IPC), the daemon immediately fires a beat within 500ms — no waiting for the periodic timer. This ensures a new DJ session receives `[booth-beat]` right away and can execute the recovery checklist in `beat.md`.
 
 ## Troubleshooting
 

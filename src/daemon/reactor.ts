@@ -256,6 +256,15 @@ export class Reactor {
     this.scheduleBeat()
   }
 
+  /** Fire a beat ASAP (e.g., DJ just connected and needs recovery context). */
+  scheduleImmediateBeat(): void {
+    if (this.beatTimer) clearTimeout(this.beatTimer)
+    this.beatCooldown = BEAT_INITIAL_COOLDOWN
+    this.lastBeatAt = 0  // bypass cooldown
+    this.beatTimer = setTimeout(() => this.fireBeat(), 500)
+    logger.info('[booth-reactor] immediate beat scheduled (DJ connected)')
+  }
+
   // --- Plan mode auto-approve ---
 
   onPlanMode(deckId: string, action: 'enter' | 'exit'): void {

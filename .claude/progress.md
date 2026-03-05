@@ -454,6 +454,25 @@ SKILL.md split + init command. Decouples DJ protocol from skill entrypoint; adds
 - [x] `archiveDeck()` 保留 prompt 字段（bug fix）
 - [x] SKILL.md、mix.md、check.md 文档引用更新
 
+### JSONL Watcher Replay Fix (COMPLETE — 2026-03-05)
+
+- [x] 根因：`tail -f -n 0` 跳过已有内容，daemon reload 后错过已完成 deck 的 idle 信号
+- [x] 修复：`-n 0` → `-n 20`，watcher 启动时回放最近 20 行
+- [x] E2E 验证：B4 daemon-harden 三项全通过、B10 session-changed IPC 验证通过
+
+### IPC Harden + Kill Path + Reload Guard E2E (VERIFIED — 2026-03-05)
+
+- [x] 畸形 JSON / 缺失 cmd / 未知命令 → daemon 不 crash，返回结构化错误
+- [x] `booth kill` → daemon 原子路径（tmux kill-window + unwatch + archive + remove）
+- [x] 快速连续 reload → `this.reloading` flag 防护，最后一个 daemon 胜出
+
+### Restart Command + DJ Wake-Up (COMPLETE — 2026-03-05)
+
+- [x] `booth restart` — stop + start + resume all in one command
+- [x] DJ 苏醒机制 — `update-dj-jsonl` IPC 触发 immediate beat（500ms 内），新 DJ session 立即收到 recovery context
+- [x] CLI docs 更新 — restart 命令 + reload/restart/stop 三者对比表
+- [x] E2E 验证 — IPC 发送后 daemon 日志确认 "immediate beat scheduled (DJ connected)"
+
 ### Phase 2.9 — Worktree Isolation (NEXT — 最高优先级)
 
 - [ ] 每个 deck 工作在独立 git worktree 中

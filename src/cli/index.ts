@@ -13,6 +13,7 @@ import { peekCommand } from './commands/peek.js'
 import { sendCommand } from './commands/send.js'
 import { reportsCommand } from './commands/reports.js'
 import { resumeCommand } from './commands/resume.js'
+import { restartCommand } from './commands/restart.js'
 import { initCommand } from './commands/init.js'
 import { isInitialized } from '../skills.js'
 
@@ -32,6 +33,7 @@ Usage:
   booth resume <name>  Resume a specific archived deck
   booth resume --list  List all archived decks
   booth stop           Stop booth (daemon + all decks)
+  booth restart        Restart booth (stop + start + resume all)
   booth live <name>    Switch deck to live mode (no auto-check)
   booth auto <name>    Switch deck to auto mode (default)
   booth hold <name>    Switch deck to hold mode (check but don't kill)
@@ -101,6 +103,9 @@ export async function run(args: string[]): Promise<void> {
         break
       case 'stop':
         await stopCommand(rest)
+        break
+      case 'restart':
+        await restartCommand(rest)
         break
       case 'live':
         await liveCommand(rest)
