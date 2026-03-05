@@ -44,6 +44,7 @@ export async function spinCommand(args: string[]): Promise<void> {
     mode,
     dir: projectRoot,
     paneId,
+    prompt: prompt || undefined,
     noLoop: noLoop || undefined,
     createdAt: Date.now(),
     updatedAt: Date.now(),

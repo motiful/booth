@@ -40,6 +40,7 @@ export async function statusCommand(args: string[]): Promise<void> {
   console.log(`Deck: ${deck.name}`)
   console.log(`  Status:    ${deck.status}`)
   console.log(`  Mode:      ${modeLabel[deck.mode]}`)
+  if (deck.prompt) console.log(`  Goal:      ${deck.prompt}`)
   console.log(`  Age:       ${age}m`)
   console.log(`  Updated:   ${updated}s ago`)
   console.log(`  Pane:      ${deck.paneId}`)

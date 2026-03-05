@@ -10,6 +10,7 @@ export interface DeckInfo {
   dir: string
   paneId: string
   jsonlPath?: string
+  prompt?: string
   noLoop?: boolean
   checkSentAt?: number
   createdAt: number
@@ -30,6 +31,7 @@ export interface ArchivedDeck {
   dir: string
   jsonlPath: string
   sessionId: string
+  prompt?: string
   noLoop?: boolean
   createdAt: number
   killedAt: number

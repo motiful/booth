@@ -45,7 +45,8 @@ export async function lsCommand(_args: string[]): Promise<void> {
     const icon = modeIcon[d.mode] ?? 'A'
     const age = Math.round((Date.now() - d.createdAt) / 60_000)
     const suffix = deckSuffix(d, projectRoot)
+    const promptHint = d.prompt ? `  "${d.prompt.slice(0, 60)}${d.prompt.length > 60 ? '...' : ''}"` : ''
     const line = `  [${icon}] ${d.name.padEnd(20)} ${d.status.padEnd(16)} ${age}m ago`
-    console.log(suffix ? `${line}   ${suffix}` : line)
+    console.log(suffix ? `${line}   ${suffix}` : `${line}${promptHint}`)
   }
 }

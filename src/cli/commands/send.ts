@@ -20,7 +20,7 @@ export async function sendCommand(args: string[]): Promise<void> {
 
   const res = await ipcRequest(projectRoot, {
     cmd: 'send-message',
-    targetId: `deck-${name}`,
+    targetId: name === 'dj' ? 'dj' : `deck-${name}`,
     message: prompt,
   }) as { ok?: boolean; error?: string }
 
