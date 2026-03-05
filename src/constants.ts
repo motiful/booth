@@ -9,6 +9,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 export const SESSION = 'dj'
 export const BOOTH_DIR = '.booth'
 export const STATE_FILE = 'state.json'
+export const DB_FILE = 'booth.db'
 export const REPORTS_DIR = 'reports'
 export const ARCHIVES_DIR = 'archives'
 

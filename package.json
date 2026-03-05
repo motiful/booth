@@ -32,10 +32,12 @@
     "tmux"
   ],
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.3",
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "better-sqlite3": "^12.6.2",
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0"
   }
