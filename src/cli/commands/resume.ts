@@ -4,9 +4,10 @@ import { fileURLToPath } from 'node:url'
 import { findProjectRoot, deriveSocket, boothPath, STATE_FILE, SESSION } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { tmux, sleepMs } from '../../tmux.js'
+import { ensureDaemonAndSession } from './start.js'
 import type { DeckInfo, DeckMode, ArchivedDeck } from '../../types.js'
 
-function readArchivesFromState(projectRoot: string): ArchivedDeck[] {
+export function readArchivesFromState(projectRoot: string): ArchivedDeck[] {
   const p = boothPath(projectRoot, STATE_FILE)
   if (!existsSync(p)) return []
   try {
@@ -67,8 +68,8 @@ export async function resumeCommand(args: string[]): Promise<void> {
   }
 
   if (!(await isDaemonRunning(projectRoot))) {
-    console.error('[booth] daemon not running. Run "booth" first.')
-    process.exit(1)
+    console.log('[booth] daemon not running — starting automatically...')
+    await ensureDaemonAndSession(projectRoot)
   }
 
   const socket = deriveSocket(projectRoot)

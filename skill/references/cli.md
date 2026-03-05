@@ -4,7 +4,7 @@
 
 | Command | Description |
 |---------|-------------|
-| `booth` | Start booth (auto-init on first run), attach to tmux session |
+| `booth` | Start booth (interactive: resume / start fresh / show status) |
 | `booth init` | Register booth skill and check recommended skills (re-runnable) |
 | `booth spin <name>` | Create a new deck (parallel CC session) |
 | `booth ls` | List all active decks with status, mode, and age |
@@ -12,11 +12,12 @@
 | `booth peek <name>` | View a deck's terminal output (capture-pane) |
 | `booth send <name> --prompt "..."` | Send a prompt to a deck (idle/holding) |
 | `booth kill <name>` | Kill a deck and remove it from state |
-| `booth resume` | Resume all archived decks |
-| `booth resume <name>` | Resume a specific archived deck |
+| `booth resume` | Resume all archived decks (auto-starts daemon if needed) |
+| `booth resume <name>` | Resume a specific archived deck (auto-starts daemon if needed) |
 | `booth resume --list` | List archived decks available for resume |
 | `booth stop` | Stop booth entirely (daemon + all decks + tmux session) |
 | `booth restart` | Restart booth (stop + start + resume all archived decks) |
+| `booth restart --clean` | Restart booth clean (stop + start, no deck recovery) |
 | `booth reload` | Hot-restart daemon (preserves tmux sessions and deck state) |
 | `booth auto <name>` | Switch deck to auto mode |
 | `booth hold <name>` | Switch deck to hold mode |
@@ -69,8 +70,13 @@ Default: 50 lines. Useful for debugging — shows the raw terminal output.
 ### 1. Start booth
 
 ```bash
-booth              # starts daemon, launches DJ, attaches tmux
+booth              # interactive: shows status / prompts resume or fresh start
 ```
+
+Bare `booth` behavior depends on state:
+- **Daemon running** → shows `booth ls` then attaches tmux session
+- **Daemon not running, has archived decks** → prompts: resume previous decks or start fresh?
+- **Daemon not running, no archives** → starts fresh (daemon + DJ)
 
 ### 2. Spin decks
 
@@ -129,15 +135,15 @@ Mode switches take effect on the next state transition. If a check is already in
 
 ## reload vs restart vs stop
 
-| | `booth reload` | `booth restart` | `booth stop` |
-|--|----------------|-----------------|--------------|
-| **What it does** | Hot-restart daemon only | Stop everything, start fresh, resume archived decks | Kill daemon + all decks + tmux session |
-| **Deck impact** | None — tmux panes survive | Decks archived then resumed (new CC sessions with `--resume`) | All decks destroyed |
-| **When to use** | After updating booth code, fixing daemon bugs | Full reset while preserving deck history | Shutting down for the day, resetting everything |
-| **DJ context** | Preserved (same session) | New DJ session — gets immediate beat for recovery | Gone |
-| **Reversibility** | Non-destructive | Mostly non-destructive (decks resume from archives) | Destructive |
+| | `booth reload` | `booth restart` | `booth restart --clean` | `booth stop` |
+|--|----------------|-----------------|------------------------|--------------|
+| **What it does** | Hot-restart daemon only | Stop everything, start fresh, resume archived decks | Stop everything, start fresh, no deck recovery | Kill daemon + all decks + tmux session |
+| **Deck impact** | None — tmux panes survive | Decks archived then resumed (new CC sessions with `--resume`) | All deck archives preserved but not resumed | All decks destroyed |
+| **When to use** | After updating booth code, fixing daemon bugs | Full reset while preserving deck history | Full reset, discard previous work context | Shutting down for the day, resetting everything |
+| **DJ context** | Preserved (same session) | New DJ session — gets immediate beat for recovery | New DJ session — clean start | Gone |
+| **Reversibility** | Non-destructive | Mostly non-destructive (decks resume from archives) | Non-destructive (archives still exist for manual `booth resume`) | Destructive |
 
-**Rule of thumb:** Use `reload` when only the daemon needs a restart. Use `restart` for a clean slate with deck recovery. Use `stop` only when you want to tear everything down.
+**Rule of thumb:** Use `reload` when only the daemon needs a restart. Use `restart` for a clean slate with deck recovery. Use `restart --clean` when you want a fresh start without old decks. Use `stop` only when you want to tear everything down.
 
 ### DJ wake-up on restart
 
