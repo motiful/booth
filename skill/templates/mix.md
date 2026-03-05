@@ -71,10 +71,12 @@ This keeps `plan.md` compact for recovery reads. DJ never reads archive files du
 
 ## Language
 
-- Report 正文、Summary、Review Rounds 等描述性内容用**中文**撰写
-- 代码引用、文件路径、命令、技术术语保持英文原样
-- DJ 给 deck 写 prompt 时，prompt 正文用中文
-- 此规则适用于所有 deck，无需额外提醒
+Two tiers:
+
+- **Product artifacts** (templates, skills, references, check.md, mix.md) — always English. These are formal, shareable, and internationalized.
+- **User-facing content** (plan.md, reports, DJ ↔ user communication, deck prompts) — user-friendly language, matching the user's preference. Defaults to the user's configured language.
+
+Code references, file paths, commands, and technical terms stay in English regardless of tier.
 
 ## Deck Prompt Guidelines
 
@@ -272,7 +274,7 @@ Review → Allocate → Launch → Progress-check → Handoff
 ## Resource Allocation
 
 - Prefer fewer, focused decks over many scattered ones
-- 2-4 parallel decks is typical
+- **Pipeline, not batch** — maintain 3+ concurrent decks at all times. When one deck completes, immediately spin the next pending task. Don't wait for a full batch to finish before starting new work.
 - **No task is too small to delegate.** A one-line fix? Spin a deck. A quick search? Spin a deck. DJ's context is precious.
 - Kill idle decks that have delivered their work
 
@@ -288,7 +290,11 @@ When you see `[booth-alert]` in your conversation (injected directly by the daem
    - **Error**: Description mentions a deck error persisting beyond recovery window. Spin a review deck to investigate, or escalate to user.
    - **Needs attention**: Description mentions a deck flagged `[NEEDS ATTENTION]`. Spin a deck to address it, or escalate to user.
    - **Deck exited**: Description mentions a deck's CC session self-exited. Read `.booth/reports/<deck>.md` (EXIT report). Decide: re-spin if task incomplete, or acknowledge if expected.
-3. After handling, clean up: kill completed decks, archive results
+3. **Analyze before delivering** — never just drop a report link. When reporting to the user:
+   - Summarize what the deck did, what problem it solved, and what improved — in plain language
+   - Analyze impact on the current plan: which task completed, what's unblocked, how progress changed
+   - Report like a department head to an executive — clear conclusions, no jargon dumps
+4. After handling, clean up: kill completed decks, archive results
 
 ## Report Review Protocol
 
@@ -372,6 +378,7 @@ The user should never have to piece together what happened across decks. DJ cons
 2. **Spin 后 peek 确认** — after `booth spin`, wait a few seconds then `booth peek <name>` to confirm the deck received its prompt and started working. Don't assume success.
 3. **编译后 reload** — after `npx tsc` succeeds, always `booth reload` to pick up new daemon code. Compiling alone doesn't activate changes.
 4. **紧急执行权** — in emergencies (daemon crash, stuck state, blocking bug), DJ may directly run diagnostic commands (`booth ls`, `booth peek`, process checks). This does NOT extend to writing code, reading source files, or running tests.
+5. **Plan and Mix are DJ's own responsibility** — DJ directly maintains `.booth/plan.md` and `.booth/mix.md` (read, edit, update status). Never delegate these to decks. Plan is the manager's scheduling tool, Mix is the manager's playbook — managers maintain their own tools.
 
 ## What You Don't Do
 

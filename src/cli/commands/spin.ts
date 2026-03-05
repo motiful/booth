@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { findProjectRoot, deriveSocket } from '../../constants.js'
+import { findProjectRoot, deriveSocket, generateSessionId, jsonlPathForSession } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { tmux, sleepMs } from '../../tmux.js'
 import type { DeckInfo, DeckMode } from '../../types.js'
@@ -32,6 +32,10 @@ export async function spinCommand(args: string[]): Promise<void> {
 
   const deckId = `deck-${name}`
 
+  // Pre-generate session ID — JSONL path is deterministic
+  const sessionId = generateSessionId()
+  const jsonlPath = jsonlPathForSession(projectRoot, sessionId)
+
   // Create shell window — CC needs a shell env (direct exec exits immediately).
   // -P -F gets paneId atomically in one call.
   const paneId = tmux(socket, 'new-window', '-a', '-t', 'dj', '-n', name,
@@ -44,6 +48,7 @@ export async function spinCommand(args: string[]): Promise<void> {
     mode,
     dir: projectRoot,
     paneId,
+    jsonlPath,
     prompt: prompt || undefined,
     noLoop: noLoop || undefined,
     createdAt: Date.now(),
@@ -61,14 +66,16 @@ export async function spinCommand(args: string[]): Promise<void> {
   // Launch CC with prompt as CLI argument via temp file.
   // The shell command reads the file, deletes it, then launches CC.
   // This guarantees the file is read before cleanup — no timing dependency.
+  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${deckId}"`
+
   sleepMs(500)
   if (prompt) {
     const promptFile = join(tmpdir(), `booth-prompt-${name}-${Date.now()}.txt`)
     writeFileSync(promptFile, prompt)
     tmux(socket, 'send-keys', '-t', paneId,
-      `${editorSetup} && PROMPT=$(cat ${promptFile}) && rm -f ${promptFile} && claude --dangerously-skip-permissions "$PROMPT"; reset`, 'Enter')
+      `${envSetup} && PROMPT=$(cat ${promptFile}) && rm -f ${promptFile} && claude --dangerously-skip-permissions --session-id "${sessionId}" "$PROMPT"; reset`, 'Enter')
   } else {
-    tmux(socket, 'send-keys', '-t', paneId, `${editorSetup} && claude --dangerously-skip-permissions; reset`, 'Enter')
+    tmux(socket, 'send-keys', '-t', paneId, `${envSetup} && claude --dangerously-skip-permissions --session-id "${sessionId}"; reset`, 'Enter')
   }
 
   const modeLabel = mode === 'auto' ? '' : ` [${mode}]`

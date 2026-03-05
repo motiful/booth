@@ -1,11 +1,30 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { findProjectRoot, deriveSocket, SESSION } from '../../constants.js'
+import { findProjectRoot, deriveSocket, boothPath, STATE_FILE, SESSION } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { tmux, sleepMs } from '../../tmux.js'
-import { listArchiveEntries, findArchiveEntryBySessionId } from '../../daemon/archive.js'
 import type { DeckInfo, DeckMode, ArchivedDeck } from '../../types.js'
+
+function readArchivesFromState(projectRoot: string): ArchivedDeck[] {
+  const p = boothPath(projectRoot, STATE_FILE)
+  if (!existsSync(p)) return []
+  try {
+    const raw = JSON.parse(readFileSync(p, 'utf-8'))
+    return Array.isArray(raw.archives) ? raw.archives : []
+  } catch {
+    return []
+  }
+}
+
+function listArchiveEntries(projectRoot: string, name?: string): ArchivedDeck[] {
+  const archives = readArchivesFromState(projectRoot)
+  return name ? archives.filter(e => e.name === name) : archives
+}
+
+function findArchiveEntryBySessionId(projectRoot: string, sessionId: string): ArchivedDeck | undefined {
+  return readArchivesFromState(projectRoot).find(e => e.sessionId === sessionId)
+}
 
 export async function resumeCommand(args: string[]): Promise<void> {
   const projectRoot = findProjectRoot()
@@ -138,9 +157,11 @@ async function resumeOne(
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
   const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
 
+  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${deck.id}"`
+
   sleepMs(500)
   tmux(socket, 'send-keys', '-t', paneId,
-    `${editorSetup} && claude --dangerously-skip-permissions --resume "${entry.sessionId}"; reset`, 'Enter')
+    `${envSetup} && claude --dangerously-skip-permissions --resume "${entry.sessionId}"; reset`, 'Enter')
 
   const modeLabel = mode !== entry.mode ? ` [${mode}<-${entry.mode}]` : ` [${mode}]`
   console.log(`[booth] deck "${entry.name}" resumed${modeLabel} (pane: ${paneId})`)

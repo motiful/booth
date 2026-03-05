@@ -1,11 +1,11 @@
 import { fork } from 'node:child_process'
-import { existsSync, mkdirSync, openSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, openSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
-import { findProjectRoot, deriveSocket, initBoothDir, logsDir, ccProjectsDir, SESSION } from '../../constants.js'
+import { findProjectRoot, deriveSocket, initBoothDir, logsDir, generateSessionId, jsonlPathForSession, SESSION } from '../../constants.js'
 import { hasSession, newSession, tmux, tmuxSafe, tmuxAttach } from '../../tmux.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
-import { ensureSessionEndHook } from '../../hooks.js'
+import { ensureSessionStartHook, ensureSessionEndHook } from '../../hooks.js'
 
 export async function startCommand(_args: string[]): Promise<void> {
   const projectRoot = findProjectRoot()
@@ -42,7 +42,9 @@ export async function startCommand(_args: string[]): Promise<void> {
 
   // Resolve package root (skill/ lives here, not in dist/)
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
+  const sessionStartHookScript = join(packageRoot, 'skill', 'scripts', 'session-start-hook.sh')
   const sessionEndHookScript = join(packageRoot, 'skill', 'scripts', 'session-end-hook.sh')
+  ensureSessionStartHook(projectRoot, sessionStartHookScript)
   ensureSessionEndHook(projectRoot, sessionEndHookScript)
 
   // Start daemon if not running
@@ -67,19 +69,18 @@ export async function startCommand(_args: string[]): Promise<void> {
     console.log('[booth] daemon started')
   }
 
+  // Pre-generate DJ session ID — JSONL path is deterministic
+  const djSessionId = generateSessionId()
+  const djJsonlPath = jsonlPathForSession(projectRoot, djSessionId)
+
   // Create tmux session with shell, then launch DJ via send-keys.
   // CC needs a shell env — direct exec causes CC to exit immediately.
   const mixPath = join(projectRoot, '.booth', 'mix.md')
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
 
   // Set EDITOR to booth's proxy before launching CC.
-  // The proxy transparently passes through to the user's real editor on normal Ctrl+G.
-  // When booth needs to inject a message, it writes a state file and sends Ctrl+G —
-  // the proxy intercepts, saves user input, writes the message, and exits in <50ms.
-  // Save user's original EDITOR/VISUAL before overriding.
-  // If both are empty, BOOTH_REAL_EDITOR stays empty — the proxy auto-detects at runtime.
   const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
-  const djCmd = `${editorSetup} && claude --dangerously-skip-permissions --append-system-prompt "$(cat '${mixPath}')"; reset`
+  const djCmd = `${editorSetup} && export BOOTH_ROLE=dj && claude --dangerously-skip-permissions --session-id "${djSessionId}" --append-system-prompt "$(cat '${mixPath}')"; reset`
 
   newSession(socket, SESSION)
   tmux(socket, 'set', '-g', '@booth-root', projectRoot)
@@ -96,37 +97,9 @@ export async function startCommand(_args: string[]): Promise<void> {
     process.exit(1)
   }
 
-  // Discover DJ JSONL and notify daemon before attaching.
-  // Best-effort: if CC hasn't created its JSONL yet, daemon's pollForDjJsonl handles it.
-  const djJsonl = await discoverDjJsonl(projectRoot)
-  if (djJsonl) {
-    await ipcRequest(projectRoot, { cmd: 'update-dj-jsonl', jsonlPath: djJsonl }).catch(() => {})
-  }
+  // Notify daemon with pre-known JSONL path (file may not exist yet — daemon will wait)
+  await ipcRequest(projectRoot, { cmd: 'update-dj-jsonl', jsonlPath: djJsonlPath }).catch(() => {})
 
   console.log('[booth] DJ ready — attaching')
   tmuxAttach(socket, 'attach-session', '-t', SESSION)
-}
-
-async function discoverDjJsonl(projectRoot: string): Promise<string | undefined> {
-  const dir = ccProjectsDir(projectRoot)
-  if (!existsSync(dir)) return undefined
-
-  // Poll up to 5s (CC may still be starting)
-  for (let i = 0; i < 5; i++) {
-    const files = readdirSync(dir)
-      .filter(f => f.endsWith('.jsonl'))
-      .map(f => ({ path: join(dir, f), mtime: statSync(join(dir, f)).mtimeMs }))
-      .sort((a, b) => b.mtime - a.mtime)
-
-    // Pick the most recently modified JSONL (DJ's fresh session)
-    if (files.length > 0) {
-      const newest = files[0]
-      // Only accept if modified within last 30s (it's the fresh DJ session)
-      if (Date.now() - newest.mtime < 30_000) {
-        return newest.path
-      }
-    }
-    await new Promise(r => setTimeout(r, 1_000))
-  }
-  return undefined
 }

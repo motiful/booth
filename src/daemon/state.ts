@@ -1,8 +1,10 @@
 import { EventEmitter } from 'node:events'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { basename, dirname } from 'node:path'
 import { boothPath, STATE_FILE } from '../constants.js'
-import type { DeckInfo, DeckStatus, DeckStateChange } from '../types.js'
+import type { DeckInfo, DeckStatus, DeckStateChange, ArchivedDeck } from '../types.js'
+
+const MAX_ARCHIVE_ENTRIES = 50
 
 function safeWrite(path: string, data: string): void {
   try {
@@ -19,6 +21,7 @@ function safeWrite(path: string, data: string): void {
 
 export class BoothState extends EventEmitter {
   private decks = new Map<string, DeckInfo>()
+  private archives: ArchivedDeck[] = []
   private djStatus: 'idle' | 'working' = 'idle'
   private djJsonlPath?: string
   private projectRoot: string
@@ -121,9 +124,51 @@ export class BoothState extends EventEmitter {
     this.markDirty()
   }
 
+  // --- Archive methods ---
+
+  archiveDeck(deck: DeckInfo): void {
+    if (!deck.jsonlPath) return
+    const entry: ArchivedDeck = {
+      id: deck.id,
+      name: deck.name,
+      mode: deck.mode,
+      dir: deck.dir,
+      jsonlPath: deck.jsonlPath,
+      sessionId: basename(deck.jsonlPath, '.jsonl'),
+      noLoop: deck.noLoop,
+      createdAt: deck.createdAt,
+      killedAt: Date.now(),
+    }
+    this.archives.unshift(entry)
+    this.archives = this.archives.slice(0, MAX_ARCHIVE_ENTRIES)
+    this.markDirty()
+  }
+
+  removeArchiveEntry(sessionId: string): void {
+    this.archives = this.archives.filter(e => e.sessionId !== sessionId)
+    this.markDirty()
+  }
+
+  getArchives(): ArchivedDeck[] {
+    return this.archives
+  }
+
+  findArchiveEntry(name: string): ArchivedDeck | undefined {
+    return this.archives.find(e => e.name === name)
+  }
+
+  findArchiveEntryBySessionId(sessionId: string): ArchivedDeck | undefined {
+    return this.archives.find(e => e.sessionId === sessionId)
+  }
+
+  listArchiveEntries(name?: string): ArchivedDeck[] {
+    return name ? this.archives.filter(e => e.name === name) : this.archives
+  }
+
   private persist(): void {
     const data = {
       decks: Object.fromEntries(this.decks),
+      archives: this.archives,
       djStatus: this.djStatus,
       djJsonlPath: this.djJsonlPath,
       persistedAt: Date.now(),
@@ -141,6 +186,7 @@ export class BoothState extends EventEmitter {
           this.decks.set(id, info as DeckInfo)
         }
       }
+      if (Array.isArray(raw.archives)) this.archives = raw.archives
       if (raw.djStatus) this.djStatus = raw.djStatus
       if (raw.djJsonlPath) this.djJsonlPath = raw.djJsonlPath
     } catch {

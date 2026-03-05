@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { resolve, basename, join, dirname } from 'node:path'
-import { existsSync, mkdirSync, readdirSync, statSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 
@@ -10,7 +10,6 @@ export const SESSION = 'dj'
 export const BOOTH_DIR = '.booth'
 export const STATE_FILE = 'state.json'
 export const REPORTS_DIR = 'reports'
-export const DECK_ARCHIVE_FILE = 'deck-archive.json'
 
 export function findProjectRoot(from: string = process.cwd()): string {
   let dir = resolve(from)
@@ -125,13 +124,10 @@ export function ccProjectsDir(projectRoot: string): string {
   return join(homedir(), '.claude', 'projects', encoded)
 }
 
-export function findLatestJsonl(projectRoot: string, exclude?: Set<string>): string | undefined {
-  const dir = ccProjectsDir(projectRoot)
-  if (!existsSync(dir)) return undefined
-  const files = readdirSync(dir)
-    .filter(f => f.endsWith('.jsonl'))
-    .map(f => ({ path: join(dir, f), mtime: statSync(join(dir, f)).mtimeMs }))
-    .filter(f => !exclude || !exclude.has(f.path))
-    .sort((a, b) => b.mtime - a.mtime)
-  return files[0]?.path
+export function generateSessionId(): string {
+  return randomUUID()
+}
+
+export function jsonlPathForSession(projectRoot: string, sessionId: string): string {
+  return join(ccProjectsDir(projectRoot), `${sessionId}.jsonl`)
 }

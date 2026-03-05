@@ -1,7 +1,7 @@
 import { findProjectRoot, deriveSocket, SESSION } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { killSession, hasSession } from '../../tmux.js'
-import { removeSessionEndHook } from '../../hooks.js'
+import { removeSessionEndHook, removeSessionStartHook } from '../../hooks.js'
 
 export async function stopCommand(_args: string[]): Promise<void> {
   const projectRoot = findProjectRoot()
@@ -25,6 +25,7 @@ export async function stopCommand(_args: string[]): Promise<void> {
     console.log('[booth] tmux session killed')
   }
 
+  removeSessionStartHook(projectRoot)
   removeSessionEndHook(projectRoot)
   console.log('[booth] stopped')
 }

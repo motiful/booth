@@ -4,10 +4,9 @@ import { SignalCollector } from './signal.js'
 import type { SignalEvent, PlanModeEvent } from './signal.js'
 import { BoothState } from './state.js'
 import { Reactor } from './reactor.js'
-import { initBoothDir, ipcSocketPath, findLatestJsonl, deriveSocket, logsDir, boothPath, SESSION } from '../constants.js'
+import { initBoothDir, ipcSocketPath, deriveSocket, logsDir, boothPath, SESSION } from '../constants.js'
 import { killSession, hasSession, tmuxSafe } from '../tmux.js'
 import { sendMessage } from './send-message.js'
-import { archiveDeck, removeArchiveEntry } from './archive.js'
 import { initLogger, logger } from './logger.js'
 import type { DeckInfo, DeckMode } from '../types.js'
 
@@ -17,8 +16,8 @@ export interface DaemonOptions {
   projectRoot: string
 }
 
-const JSONL_POLL_INTERVAL = 3_000
-const JSONL_POLL_MAX_ATTEMPTS = 20
+const JSONL_WAIT_INTERVAL = 1_000
+const JSONL_WAIT_MAX_ATTEMPTS = 60
 
 export class Daemon {
   private projectRoot: string
@@ -27,8 +26,7 @@ export class Daemon {
   private reactor: Reactor
   private ipcServer?: Server
   private healthTimer?: ReturnType<typeof setInterval>
-  private jsonlPollers = new Map<string, ReturnType<typeof setInterval>>()
-  private assignedJsonlPaths = new Set<string>()
+  private jsonlWaiters = new Map<string, ReturnType<typeof setInterval>>()
 
   constructor(opts: DaemonOptions) {
     this.projectRoot = opts.projectRoot
@@ -66,24 +64,17 @@ export class Daemon {
     })
 
     // Validate and restore existing decks from state.json
-    // (must happen before DJ JSONL resolution so deck paths are excluded)
     this.pruneStaleDecks()
     for (const deck of this.state.getAllDecks()) {
       if (deck.jsonlPath && deck.status !== 'stopped') {
-        this.assignedJsonlPaths.add(deck.jsonlPath)
-        this.signal.watch(deck.id, deck.jsonlPath)
+        this.watchOrWait(deck.id, deck.jsonlPath)
       }
     }
 
-    // Restore DJ JSONL from persisted state, or poll as fallback.
-    // On normal operation, CLI notifies via update-dj-jsonl IPC.
+    // Restore DJ JSONL from persisted state, or wait for IPC notification.
     const persistedDjJsonl = this.state.getDjJsonlPath()
-    if (persistedDjJsonl && existsSync(persistedDjJsonl)) {
-      this.assignedJsonlPaths.add(persistedDjJsonl)
-      this.signal.watch('dj', persistedDjJsonl)
-      logger.info(`[booth-daemon] DJ → restored watching ${persistedDjJsonl}`)
-    } else {
-      this.pollForDjJsonl()
+    if (persistedDjJsonl) {
+      this.watchOrWait('dj', persistedDjJsonl)
     }
 
     await this.startIpc()
@@ -98,18 +89,14 @@ export class Daemon {
   registerDeck(info: DeckInfo): void {
     this.state.registerDeck(info)
     if (info.jsonlPath) {
-      this.assignedJsonlPaths.add(info.jsonlPath)
-      this.signal.watch(info.id, info.jsonlPath)
-    } else {
-      this.pollForJsonl(info.id, info.dir)
+      this.watchOrWait(info.id, info.jsonlPath)
     }
   }
 
   removeDeck(deckId: string): void {
     const deck = this.state.getDeck(deckId)
-    if (deck) archiveDeck(this.projectRoot, deck)
-    if (deck?.jsonlPath) this.assignedJsonlPaths.delete(deck.jsonlPath)
-    this.stopJsonlPoll(deckId)
+    if (deck) this.state.archiveDeck(deck)
+    this.stopWaiter(deckId)
     this.signal.unwatch(deckId)
     this.reactor.clearDeckTimers(deckId)
     this.state.removeDeck(deckId)
@@ -141,73 +128,67 @@ export class Daemon {
     }
   }
 
-  private pollForJsonl(deckId: string, deckDir: string): void {
-    const knownBefore = findLatestJsonl(deckDir, this.assignedJsonlPaths)
-    let attempts = 0
+  private watchOrWait(id: string, jsonlPath: string): void {
+    this.stopWaiter(id)
+    if (existsSync(jsonlPath)) {
+      this.signal.watch(id, jsonlPath)
+      logger.info(`[booth-daemon] ${id} → watching ${jsonlPath}`)
+      return
+    }
 
+    // File doesn't exist yet (CC still starting) — poll until it appears
+    let attempts = 0
     const timer = setInterval(() => {
       attempts++
-      const latest = findLatestJsonl(deckDir, this.assignedJsonlPaths)
-
-      if (latest && latest !== knownBefore) {
-        this.stopJsonlPoll(deckId)
-        this.assignedJsonlPaths.add(latest)
-        this.state.updateDeck(deckId, { jsonlPath: latest })
-        this.signal.watch(deckId, latest)
-        logger.info(`[booth-daemon] deck "${deckId}" → watching ${latest}`)
-      } else if (attempts >= JSONL_POLL_MAX_ATTEMPTS) {
-        this.stopJsonlPoll(deckId)
-        logger.warn(`[booth-daemon] deck "${deckId}" — gave up waiting for JSONL`)
+      if (existsSync(jsonlPath)) {
+        this.stopWaiter(id)
+        this.signal.watch(id, jsonlPath)
+        logger.info(`[booth-daemon] ${id} → watching ${jsonlPath} (waited ${attempts}s)`)
+      } else if (attempts >= JSONL_WAIT_MAX_ATTEMPTS) {
+        this.stopWaiter(id)
+        logger.warn(`[booth-daemon] ${id} — gave up waiting for JSONL: ${jsonlPath}`)
       }
-    }, JSONL_POLL_INTERVAL)
+    }, JSONL_WAIT_INTERVAL)
 
-    this.jsonlPollers.set(deckId, timer)
+    this.jsonlWaiters.set(id, timer)
   }
 
-  private stopJsonlPoll(deckId: string): void {
-    const timer = this.jsonlPollers.get(deckId)
+  private stopWaiter(id: string): void {
+    const timer = this.jsonlWaiters.get(id)
     if (timer) {
       clearInterval(timer)
-      this.jsonlPollers.delete(deckId)
+      this.jsonlWaiters.delete(id)
     }
+  }
+
+  private updateDeckJsonl(deckId: string, jsonlPath: string): void {
+    const deck = this.state.getDeck(deckId)
+    if (!deck) return
+
+    // Same path — no-op (e.g. initial SessionStart for a just-spun deck)
+    if (deck.jsonlPath === jsonlPath) return
+
+    // Unwatch old
+    if (deck.jsonlPath) {
+      this.signal.unwatch(deckId)
+    }
+    this.stopWaiter(deckId)
+
+    // Update and watch new
+    this.state.updateDeck(deckId, { jsonlPath })
+    this.watchOrWait(deckId, jsonlPath)
+
+    logger.info(`[booth-daemon] deck "${deck.name}" JSONL switched → ${jsonlPath}`)
   }
 
   private updateDjJsonl(jsonlPath: string): void {
     const oldPath = this.state.getDjJsonlPath()
     if (oldPath) {
       this.signal.unwatch('dj')
-      this.assignedJsonlPaths.delete(oldPath)
+      this.stopWaiter('dj')
     }
-    this.stopJsonlPoll('dj')
-    this.assignedJsonlPaths.add(jsonlPath)
     this.state.setDjJsonlPath(jsonlPath)
-    this.signal.watch('dj', jsonlPath)
-    logger.info(`[booth-daemon] DJ JSONL updated via IPC → ${jsonlPath}`)
-  }
-
-  private pollForDjJsonl(): void {
-    const knownBefore = findLatestJsonl(this.projectRoot, this.assignedJsonlPaths)
-    let attempts = 0
-
-    const timer = setInterval(() => {
-      attempts++
-      const latest = findLatestJsonl(this.projectRoot, this.assignedJsonlPaths)
-
-      if (latest && latest !== knownBefore) {
-        clearInterval(timer)
-        this.jsonlPollers.delete('dj')
-        this.assignedJsonlPaths.add(latest)
-        this.state.setDjJsonlPath(latest)
-        this.signal.watch('dj', latest)
-        logger.info(`[booth-daemon] DJ → watching ${latest} (poll fallback)`)
-      } else if (attempts >= JSONL_POLL_MAX_ATTEMPTS) {
-        clearInterval(timer)
-        this.jsonlPollers.delete('dj')
-        logger.warn(`[booth-daemon] DJ — gave up waiting for JSONL`)
-      }
-    }, JSONL_POLL_INTERVAL)
-
-    this.jsonlPollers.set('dj', timer)
+    this.watchOrWait('dj', jsonlPath)
   }
 
   private async startIpc(): Promise<void> {
@@ -277,8 +258,7 @@ export class Daemon {
 
         // Cleanup — mark stopped but don't remove/archive.
         // Deck stays visible in `booth ls` for DJ to inspect and decide.
-        if (deck.jsonlPath) this.assignedJsonlPaths.delete(deck.jsonlPath)
-        this.stopJsonlPoll(deckId as string)
+        this.stopWaiter(deckId as string)
         this.signal.unwatch(deckId as string)
         this.reactor.clearDeckTimers(deckId as string)
         this.state.updateDeckStatus(deckId as string, 'stopped')
@@ -321,13 +301,35 @@ export class Daemon {
       }
       case 'resume-deck': {
         this.registerDeck(req.deck as DeckInfo)
-        removeArchiveEntry(this.projectRoot, req.sessionId as string)
+        this.state.removeArchiveEntry(req.sessionId as string)
         return { ok: true }
+      }
+      case 'session-changed': {
+        const { deckId: dId, role, transcriptPath } = req as any
+        if (!transcriptPath) return { error: 'transcriptPath required' }
+
+        // DJ session change
+        if (role === 'dj') {
+          this.updateDjJsonl(transcriptPath as string)
+          return { ok: true, target: 'dj' }
+        }
+
+        // Deck session change
+        if (dId) {
+          const deck = this.state.getDeck(dId as string)
+          if (deck) {
+            this.updateDeckJsonl(dId as string, transcriptPath as string)
+            return { ok: true, target: dId }
+          }
+          // deckId not registered yet (race with register-deck) — skip silently
+          return { ok: true, skipped: 'deck not registered yet' }
+        }
+
+        return { ok: true, skipped: 'not a booth session' }
       }
       case 'update-dj-jsonl': {
         const jsonlPath = req.jsonlPath as string
         if (!jsonlPath) return { error: 'jsonlPath required' }
-        if (!existsSync(jsonlPath)) return { error: `jsonlPath not found: ${jsonlPath}` }
         this.updateDjJsonl(jsonlPath)
         return { ok: true }
       }
@@ -362,8 +364,8 @@ export class Daemon {
   private gracefulReload(): void {
     logger.info('[booth-daemon] graceful reload — preserving tmux sessions...')
 
-    // Stop all JSONL watchers and pollers
-    for (const [id] of this.jsonlPollers) this.stopJsonlPoll(id)
+    // Stop all JSONL waiters and watchers
+    for (const [id] of this.jsonlWaiters) this.stopWaiter(id)
     this.signal.unwatchAll()
 
     // Force persist state so new daemon can recover
@@ -390,7 +392,7 @@ export class Daemon {
 
     // Archive all active decks before killing
     for (const deck of this.state.getAllDecks()) {
-      archiveDeck(this.projectRoot, deck)
+      this.state.archiveDeck(deck)
     }
 
     // Kill all deck windows
@@ -404,7 +406,7 @@ export class Daemon {
       killSession(socket, SESSION)
     }
 
-    for (const [id] of this.jsonlPollers) this.stopJsonlPoll(id)
+    for (const [id] of this.jsonlWaiters) this.stopWaiter(id)
     this.signal.unwatchAll()
 
     // Clear all state so state.json is clean on next startup
