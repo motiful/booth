@@ -114,7 +114,7 @@ async function resumeOne(
     return
   }
 
-  const paneId = tmux(socket, 'new-window', '-t', SESSION, '-n', entry.name,
+  const paneId = tmux(socket, 'new-window', '-a', '-t', SESSION, '-n', entry.name,
     '-P', '-F', '#{pane_id}')
 
   const mode = modeOverride ?? entry.mode

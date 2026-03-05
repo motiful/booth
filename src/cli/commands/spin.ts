@@ -34,7 +34,7 @@ export async function spinCommand(args: string[]): Promise<void> {
 
   // Create shell window — CC needs a shell env (direct exec exits immediately).
   // -P -F gets paneId atomically in one call.
-  const paneId = tmux(socket, 'new-window', '-t', 'dj', '-n', name,
+  const paneId = tmux(socket, 'new-window', '-a', '-t', 'dj', '-n', name,
     '-P', '-F', '#{pane_id}')
 
   const deck: DeckInfo = {
