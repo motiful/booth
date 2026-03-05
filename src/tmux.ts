@@ -37,16 +37,6 @@ export function hasSession(socket: string, session: string): boolean {
   return tmuxSafe(socket, 'has-session', '-t', session).ok
 }
 
-export function listSessions(socket: string): string[] {
-  const { ok, output } = tmuxSafe(socket, 'list-sessions', '-F', '#{session_name}')
-  return ok ? output.split('\n').filter(Boolean) : []
-}
-
-export function listPanes(socket: string, session: string): string[] {
-  const { ok, output } = tmuxSafe(socket, 'list-panes', '-t', session, '-F', '#{pane_id}')
-  return ok ? output.split('\n').filter(Boolean) : []
-}
-
 export function newSession(socket: string, session: string, cmd?: string): void {
   const args = ['new-session', '-d', '-s', session]
   if (cmd) args.push(cmd)
@@ -55,10 +45,6 @@ export function newSession(socket: string, session: string, cmd?: string): void 
 
 export function killSession(socket: string, session: string): void {
   tmuxSafe(socket, 'kill-session', '-t', session)
-}
-
-export function sendKeys(socket: string, target: string, keys: string): void {
-  tmux(socket, 'send-keys', '-t', target, keys, 'Enter')
 }
 
 export function sleepMs(ms: number): void {
@@ -75,13 +61,6 @@ function delay(ms: number): Promise<void> {
 export function isInCopyMode(socket: string, target: string): boolean {
   const result = tmuxSafe(socket, 'display-message', '-t', target, '-p', '#{pane_in_mode}')
   return result.ok && result.output !== '0'
-}
-
-export function getCopyModeScrollPos(socket: string, target: string): number {
-  const result = tmuxSafe(socket, 'display-message', '-t', target, '-p', '#{scroll_position}')
-  if (!result.ok) return 0
-  const n = parseInt(result.output, 10)
-  return Number.isNaN(n) ? 0 : n
 }
 
 export function isVimMode(): boolean {
@@ -148,7 +127,20 @@ function cleanEditorState(target: string): void {
   } catch {}
 }
 
-export async function protectedSendToCC(socket: string, target: string, text: string): Promise<void> {
+// Per-pane promise queue — serializes protectedSendToCC calls to the same pane
+const paneQueues = new Map<string, Promise<void>>()
+
+export function protectedSendToCC(socket: string, target: string, text: string): Promise<void> {
+  const prev = paneQueues.get(target) ?? Promise.resolve()
+  const next = prev.then(() => protectedSendToCCImpl(socket, target, text))
+    // Ensure queue continues even if this call fails
+    .catch(err => { logger.error(`[booth-tmux] protectedSend error: ${err}`); throw err })
+  // Always resolve the queue entry (don't let a rejection block subsequent sends)
+  paneQueues.set(target, next.catch(() => {}))
+  return next
+}
+
+async function protectedSendToCCImpl(socket: string, target: string, text: string): Promise<void> {
   const preview = text.slice(0, 50) + (text.length > 50 ? '...' : '')
   logger.info(`[booth-tmux] protectedSend start target=${target} text="${preview}"`)
 
