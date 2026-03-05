@@ -151,11 +151,16 @@ Write the report to `.booth/reports/<your-deck-name>.md`.
 **IMPORTANT:** File references MUST use clickable relative markdown links.
 Since reports live in `.booth/reports/`, use `../../` prefix to reach the project root.
 
+### Session ID as Deck Identity
+
+A deck corresponds to one CC session. If a deck is resumed (`claude --resume`), it starts a new session = a new deck lifecycle. The `session-id` in the report frontmatter links the report back to the originating session, enabling traceability through `deck-archive.json` or `state.json`.
+
 ```markdown
 ---
 status: SUCCESS | FAIL | FAILED | ERROR
 rounds: 3
 deck: auth-refactor
+session-id: <CC session UUID, if known>
 timestamp: 2026-03-02T14:30:00Z
 follow-up:
   human-review:

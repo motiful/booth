@@ -43,6 +43,19 @@ One line: **先说值不值得做，做完说做到了什么。**
 - When all tasks complete, consolidate into progress.md + deliver summary to user.
 - On `/compact` or session restart, read `.booth/plan.md` to restore context.
 
+### Plan Lifecycle (归档与压缩)
+
+When a Wave/Phase is fully completed, DJ does three things:
+
+1. **Archive** — copy the current `plan.md` in full to `.booth/plan-archive/plan-YYYY-MM-DD-<label>.md`
+2. **Compress** — in `plan.md`, replace the completed Wave's tasks table and details with a short summary block:
+   - One-line result (commit hashes, key outcomes)
+   - Link to the archive file for full details
+   - Pending/waiting items carry forward — do NOT compress those
+3. **Expand next** — the next Wave's tasks keep their full details intact
+
+This keeps `plan.md` compact for recovery reads. DJ never reads archive files during normal operation — they exist for audit trail only.
+
 ## Language
 
 - Report 正文、Summary、Review Rounds 等描述性内容用**中文**撰写
@@ -268,10 +281,11 @@ When you see `[booth-alert]` in your conversation (injected directly by the daem
 
 When DJ receives a check-complete alert, **review before kill**:
 
-1. **价值达成检查** — does the report solve the problem stated in the spin prompt?
-2. **完备性检查** — for runtime behavior changes, compilation alone is insufficient; requires E2E verification (`booth reload` + live test). Pure doc/template changes are exempt.
-3. **冲突检查** — do the changed files conflict with other active decks? (check Files Changed section)
-4. **设计一致性** — are changes consistent with CLAUDE.md design principles?
+1. **Goal 核对** — run `booth status <deck-name>` to see the original Goal, then compare with the report's Summary. Did the deck deliver what was assigned? If it drifted (scope creep), note whether the drift was justified.
+2. **价值达成检查** — does the report solve the problem stated in the spin prompt?
+3. **完备性检查** — for runtime behavior changes, compilation alone is insufficient; requires E2E verification (`booth reload` + live test). Pure doc/template changes are exempt.
+4. **冲突检查** — do the changed files conflict with other active decks? (check Files Changed section)
+5. **设计一致性** — are changes consistent with CLAUDE.md design principles?
 
 **Review failed** → `booth send <deck> --prompt "..."` to return for rework, or spin a review deck.
 **Review passed** → `booth kill <deck>` + update `.booth/plan.md` status.
