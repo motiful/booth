@@ -245,11 +245,11 @@ The report **must** include a `## Conflict Risk` section.
 
 ## Idempotency
 
-If you receive `[booth-check]` after a context compaction:
-1. Re-read this document
-2. Check if `.booth/reports/<your-deck-name>.md` already exists
-3. If it exists with a terminal status (SUCCESS/FAIL/FAILED/ERROR), you're done — stay idle
-4. If it doesn't exist, start the review loop from the beginning
+If you receive `[booth-check]`:
+1. **Check your own context first** — did you already write a report in this session? If yes, you're done. The report file name may differ from what the signal specifies (e.g., you added a date suffix). Your own memory of having written it is authoritative.
+2. **Search, don't exact-match** — look for any report matching your deck name prefix in `.booth/reports/` (e.g., `ls .booth/reports/<deck-name>*`). A report named `<deck>-2026-03-05.md` counts.
+3. If a matching report exists with a terminal status (SUCCESS/FAIL/FAILED/ERROR/AUDIT), you're done — stay idle.
+4. If no matching report exists and you have no memory of writing one, re-read this document and start the review loop from the beginning.
 
 ## What You Don't Do
 
