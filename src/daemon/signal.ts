@@ -74,9 +74,13 @@ export function parseEventState(line: string): DeckStatus | null {
 
   const t = ev.type as string | undefined
 
+  // last-prompt = CC is showing the ❯ prompt, definitively idle
+  if (t === 'last-prompt') return 'idle'
+
   if (t === 'system') {
     const sub = (ev.subtype ?? '') as string
     if (sub === 'turn_duration') return 'idle'
+    if (sub === 'stop_hook_summary') return 'idle'
     if (sub === 'api_error') return 'error'
     return null
   }

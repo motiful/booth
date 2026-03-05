@@ -13,7 +13,7 @@ Every deck has a JSONL stream. The daemon tails it in real-time.
 | State | Signal | Source |
 |-------|--------|--------|
 | working | `type=user` or `assistant(tool_use/thinking)` or `progress` | JSONL |
-| idle | `subtype=turn_duration` | JSONL |
+| idle | `subtype=turn_duration` or `subtype=stop_hook_summary` or `type=last-prompt` | JSONL |
 | error | `subtype=api_error` | JSONL |
 | needs-attention | `[NEEDS ATTENTION]` in assistant text | JSONL |
 | stopped | Pane detected dead during health check, or CC session self-exited (SessionEnd hook) | Daemon (internal) |
@@ -22,7 +22,7 @@ Every deck has a JSONL stream. The daemon tails it in real-time.
 
 - One authoritative signal per state
 - No multi-signal cross-validation
-- No debounce needed (turn_duration is definitive)
+- No debounce needed (idle signals are definitive; state deduplicates repeated idle)
 - capture-pane is debug only, never for core detection
 
 ## Alert Scenarios
