@@ -59,7 +59,7 @@ CLI Layer:
 
 Daemon Layer:
   Signal    → JSONL tail per deck + DJ JSONL tracking
-  State     → in-memory Map + 30s persist + safeWrite
+  State     → SQLite (better-sqlite3) + in-memory cache
   Reactor   → idle → check flow + beat timer + notifyDj + auto-open report + plan-mode auto-approve
   IPC       → ping, ls, status, register/remove/kill-deck, send-message, shutdown, deck-exited, resume-deck
   Health    → 30s pane liveness check
@@ -506,6 +506,36 @@ SKILL.md split + init command. Decouples DJ protocol from skill entrypoint; adds
 | `src/daemon/index.ts` | update-dj-jsonl IPC 保存 djSessionId |
 | `src/cli/commands/start.ts` | launchDJ 接受 resumeSessionId，--resume vs --session-id |
 | `src/cli/commands/resume.ts` | readDjSessionIdFromState + launchDJ + attachSession |
+
+### State Layer Audit Findings (2026-03-06)
+
+> 完整报告：`.booth/reports/state-audit-2026-03-05-1622.md`、`.booth/reports/dj-lifecycle-2026-03-05-1622.md`
+
+**关键发现**：deck status 实际上已持久化（DeckInfo 整体序列化）。问题不是"状态不持久化"，而是：
+
+1. **djStatus 不触发 markDirty** — 30s 内 daemon crash 会丢失 DJ 状态（state.ts:113-117）
+2. **restore 后 status 可能过时** — deck 显示 working 但实际 idle，dedup 阻止 watcher 纠正（state.ts:77）
+3. **archives 不区分 killed/stopped** — resume 盲目恢复所有 archive，导致僵尸窗口堆积
+4. **DJ 退出无人知晓** — session-end-hook 显式跳过 DJ（session-end-hook.ts:109-110），daemon 不知道 DJ 死了
+5. **DJ 无 health check** — startHealthCheck() 只遍历 decks，不检查 DJ pane
+6. **djStatus 只有 idle/working** — 无法表达 stopped/exited/error
+7. **session-changed 不更新 djSessionId** — context 满后新 session ID 未存，resume 用旧 ID
+8. **shutdown 不重置 djStatus** — restore 时读到旧 working 状态
+9. **reactor 内存状态不恢复** — error recovery timer、plan mode approve 重启后丢失
+
+**SQLite 迁移评估**（`.booth/reports/sqlite-assess-2026-03-05-1624.md`）：
+- better-sqlite3 推荐：同步 API、ACID、crash-safe、有 prebuild
+- 核心只改 1 个文件（state.ts），公共 API 不变
+- 附带消除 archive sharding + debounce + safeWrite
+
+**待执行 TODO**：
+- [x] State → SQLite 迁移（state.ts 内部实现替换，公共 API 不变）— c239ae0
+- [ ] archives 加 exit_reason 字段（killed/stopped/exited/crashed），resume 只恢复 stopped
+- [ ] DJ 作为 sessions 表一等公民（status/sessionId/paneId 统一管理）
+- [ ] DJ 退出检测（修复 session-end-hook 跳过 + health check 覆盖 DJ）
+- [ ] restore 后 status 刷新机制（避免 stale status + dedup）
+- [ ] Report 元数据管理（SQLite 索引 + read/unread/reviewed 状态 + 面板化）
+- [x] 战时模式（.booth/warroom 文件存在时追加到 DJ system prompt）— 89f1151
 
 ### Phase 2.9 — Worktree Isolation (NEXT — 最高优先级)
 

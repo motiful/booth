@@ -277,15 +277,21 @@ export class Daemon {
         const deck = this.state.getDeck(deckId)
         if (!deck) return { ok: true }
 
-        // Cleanup — mark stopped but don't remove/archive.
-        // Deck stays visible in `booth ls` for DJ to inspect and decide.
+        // Kill tmux pane — CC exited so shell is idle, no reason to keep the window
+        const socket = deriveSocket(this.projectRoot)
+        if (deck.paneId) {
+          tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
+        }
+
+        // Cleanup — archive and remove from active decks
         this.stopWaiter(deckId)
         this.signal.unwatch(deckId)
         this.reactor.clearDeckTimers(deckId)
-        this.state.updateDeckStatus(deckId, 'stopped')
+        this.state.archiveDeck(deck)
+        this.state.removeDeck(deckId)
 
         this.reactor.notifyDj(`Deck "${deckName}" session exited (${reason}). Report: ${rPath}`)
-        logger.info(`[booth-daemon] deck "${deckName}" session-end: ${reason}`)
+        logger.info(`[booth-daemon] deck "${deckName}" session-end: ${reason}, pane killed`)
         return { ok: true }
       }
       case 'send-message': {

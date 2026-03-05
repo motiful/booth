@@ -129,12 +129,20 @@ After the review loop completes (or immediately after self-assessment in no-loop
 
 Run tests **before** committing. Testing is mandatory, not optional.
 
-- **Minimum bar**: `npx tsc --noEmit` (type-check) — always run this, no exceptions
-- **If the project has tests**: run them (`npm test`, `npx vitest`, etc.)
-- **If the project has a lint/format check**: run it
-- **CLI-verifiable behavior**: if your changes affect CLI commands, run the command and verify output
-- **Cannot auto-test**: list specific manual verification steps for the user (e.g., "open browser, click X, verify Y")
-- **Never write "无法测试" and stop** — there is always _something_ you can verify
+**Compilation is NOT verification.** `npx tsc --noEmit` passing means your code has no type errors. It does NOT mean it works. You must prove your changes actually work at runtime.
+
+**Required test ladder** (each level builds on the previous):
+
+1. **Type-check**: `npx tsc --noEmit` — always, no exceptions
+2. **E2E / runtime verification** (the real test): if you changed anything that affects runtime behavior (daemon, CLI commands, hooks, tmux interaction, state management), you MUST:
+   - Run `booth reload` (or `npm run build && booth reload` if needed)
+   - Actually execute the affected command/flow and observe the result
+   - Example: changed IPC handler → send the IPC command and check daemon logs
+   - Example: changed `booth kill` → actually kill a deck and verify cleanup
+   - Example: changed state persistence → spin/kill/resume and check state.json
+4. **Cannot auto-test**: list concrete manual steps — but this is the LAST resort, not the default
+
+**The bar**: if you can test it, you must test it. "Compilation passed" as your only Test-Auto evidence for a runtime change is a FAIL. Deck reports that show only `npx tsc --noEmit: ✅ pass` for daemon/CLI changes will be rejected.
 
 Record test results; you'll need them for the report.
 
