@@ -54,8 +54,17 @@ Detailed protocols and specifications:
 
 | Reference | Content |
 |-----------|---------|
-| `references/mix.md` | DJ complete management handbook (identity, rules, CLI, alerts, prompts, decomposition) |
 | `references/child-protocol.md` | Deck behavior contract, lifecycle, report format |
 | `references/signals.md` | Signal architecture, injection mechanism, editor proxy |
-| `references/check.md` | Deck self-verification framework |
 | `references/beat.md` | Periodic patrol trigger conditions and checklist |
+
+### Templates
+
+Cloned to `.booth/` on init. Users customize their local copies — runtime reads `.booth/`, not the package templates.
+
+| Template | Destination | Content |
+|----------|-------------|---------|
+| `templates/mix.md` | `.booth/mix.md` | DJ management handbook |
+| `templates/check.md` | `.booth/check.md` | Deck self-verification framework |
+| `templates/beat/work.md` | `.booth/beat.md` | Beat patrol checklist |
+| `templates/plan.md` | `.booth/plan.md` | Plan persistence template |

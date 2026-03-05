@@ -53,8 +53,8 @@ function skillDir(): string {
 }
 
 const BEHAVIOR_TEMPLATES: Array<{ src: string; dest: string }> = [
-  { src: 'references/check.md', dest: 'check.md' },
-  { src: 'references/mix.md', dest: 'mix.md' },
+  { src: 'templates/check.md', dest: 'check.md' },
+  { src: 'templates/mix.md', dest: 'mix.md' },
   { src: 'templates/beat/work.md', dest: 'beat.md' },
   { src: 'templates/plan.md', dest: 'plan.md' },
 ]

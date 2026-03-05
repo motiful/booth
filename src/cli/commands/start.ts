@@ -69,7 +69,7 @@ export async function startCommand(_args: string[]): Promise<void> {
 
   // Create tmux session with shell, then launch DJ via send-keys.
   // CC needs a shell env — direct exec causes CC to exit immediately.
-  const mixPath = join(packageRoot, 'skill', 'references', 'mix.md')
+  const mixPath = join(projectRoot, '.booth', 'mix.md')
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
 
   // Set EDITOR to booth's proxy before launching CC.
