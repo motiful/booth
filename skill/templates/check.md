@@ -48,7 +48,7 @@ When a deck is spun with `--no-loop`, the sub-agent review loop is skipped entir
 
 1. Assesses its own work (did it meet acceptance criteria?)
 2. Completes **Pre-Report Steps** (test, commit, progress update)
-3. Writes the report directly to `.booth/reports/<deck>.md`
+3. Writes the report directly to `.booth/reports/<deck>-YYYY-MM-DD-HHMM.md` (UTC)
 4. Uses `rounds: 0` in the YAML frontmatter
 
 No-loop is appropriate for simple, low-risk tasks (typo fixes, analysis, config changes) where full sub-agent review adds overhead without proportional value. The decision to use `--no-loop` depends on task complexity, not task type.
@@ -146,7 +146,7 @@ Update the project's progress tracking file.
 
 ## Report Format
 
-Write the report to `.booth/reports/<your-deck-name>.md`.
+Write the report to `.booth/reports/<your-deck-name>-YYYY-MM-DD-HHMM.md` (UTC timestamp, e.g. `signal-fix-2026-03-05-0732.md`). The exact path is provided in the `[booth-check]` signal.
 
 **IMPORTANT:** File references MUST use clickable relative markdown links.
 Since reports live in `.booth/reports/`, use `../../` prefix to reach the project root.

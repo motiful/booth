@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { findProjectRoot, boothPath, reportPath, reportsDir, STATE_FILE } from './constants.js'
+import { findProjectRoot, boothPath, timestampedReportPath, reportsDir, STATE_FILE } from './constants.js'
+import { findLatestReport } from './daemon/report.js'
 import { ipcRequest } from './ipc.js'
 
 interface SessionEndInput {
@@ -126,9 +127,11 @@ async function main(): Promise<void> {
 
   // Write exit report if not already present
   const rDir = reportsDir(projectRoot)
-  const rPath = reportPath(projectRoot, deckName)
+  const existingReport = findLatestReport(projectRoot, deckName)
 
-  if (!existsSync(rPath)) {
+  let finalReportPath = existingReport
+  if (!existingReport) {
+    finalReportPath = timestampedReportPath(projectRoot, deckName)
     const { userText, assistantText } = parseJsonlTail(transcriptPath)
     const timestamp = new Date().toISOString()
 
@@ -158,7 +161,7 @@ async function main(): Promise<void> {
       if (!existsSync(rDir)) {
         mkdirSync(rDir, { recursive: true })
       }
-      writeFileSync(rPath, report)
+      writeFileSync(finalReportPath, report)
     } catch {
       // Report write failure — still notify daemon
     }
@@ -171,7 +174,7 @@ async function main(): Promise<void> {
       deckId,
       deckName,
       reason,
-      reportPath: rPath,
+      reportPath: finalReportPath,
     })
   } catch {
     // Daemon unreachable — fallback to health check

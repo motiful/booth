@@ -1,8 +1,8 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { findProjectRoot, reportsDir, reportPath } from '../../constants.js'
-import { readReportStatus } from '../../daemon/report.js'
+import { findProjectRoot, reportsDir } from '../../constants.js'
+import { readReportStatus, findLatestReport } from '../../daemon/report.js'
 import { readConfig } from '../../config.js'
 
 const FRONTMATTER_RE = /^---\s*\n([\s\S]*?)\n---/
@@ -99,8 +99,8 @@ export async function reportsCommand(args: string[]): Promise<void> {
       process.exit(1)
     }
     validateName(name)
-    const rPath = reportPath(projectRoot, name)
-    if (!existsSync(rPath)) {
+    const rPath = findLatestReport(projectRoot, name)
+    if (!rPath) {
       console.error(`[booth] report "${name}" not found`)
       process.exit(1)
     }
@@ -114,8 +114,8 @@ export async function reportsCommand(args: string[]): Promise<void> {
   if (args[0] && args[0] !== 'open') {
     const name = args[0]
     validateName(name)
-    const rPath = reportPath(projectRoot, name)
-    if (!existsSync(rPath)) {
+    const rPath = findLatestReport(projectRoot, name)
+    if (!rPath) {
       console.error(`[booth] report "${name}" not found`)
       process.exit(1)
     }

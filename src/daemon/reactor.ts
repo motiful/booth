@@ -3,8 +3,8 @@ import { existsSync, statSync, renameSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { BoothState } from './state.js'
 import { sendMessage } from './send-message.js'
-import { readReportStatus, isTerminalStatus } from './report.js'
-import { reportPath, boothPath, deriveSocket } from '../constants.js'
+import { readReportStatus, isTerminalStatus, findLatestReport } from './report.js'
+import { timestampedReportPath, boothPath, deriveSocket } from '../constants.js'
 import { tmuxSafe } from '../tmux.js'
 import { readConfig } from '../config.js'
 import { logger } from './logger.js'
@@ -82,15 +82,15 @@ export class Reactor {
   }
 
   private runCheck(deck: DeckInfo): void {
-    const rPath = reportPath(this.projectRoot, deck.name)
+    let rPath = findLatestReport(this.projectRoot, deck.name)
 
     // Stale report detection: if report exists but is older than the deck, archive it
-    if (existsSync(rPath) && this.isStaleReport(rPath, deck)) {
+    if (rPath && this.isStaleReport(rPath, deck)) {
       this.archiveStaleReport(rPath, deck.name)
-      // Fall through to the "no report" path below
+      rPath = undefined
     }
 
-    if (!existsSync(rPath)) {
+    if (!rPath) {
       // Check already sent — waiting for deck to write report (poll will retry)
       if (deck.checkSentAt) {
         logger.debug(`[booth-reactor] deck "${deck.name}" check already sent, waiting for report`)
@@ -98,10 +98,11 @@ export class Reactor {
       }
 
       // No report yet → trigger deck self-check via .booth/check.md
+      const newReportPath = timestampedReportPath(this.projectRoot, deck.name)
       const checkPath = boothPath(this.projectRoot, 'check.md')
       let msg = existsSync(checkPath)
-        ? `[booth-check] Read ${checkPath} and follow the self-verification procedure. Your report path: ${rPath}`
-        : `[booth-check] Self-verify your work. Write report to: ${rPath} with YAML frontmatter \`status: SUCCESS\` or \`status: FAIL\`.`
+        ? `[booth-check] Read ${checkPath} and follow the self-verification procedure. Your report path: ${newReportPath}`
+        : `[booth-check] Self-verify your work. Write report to: ${newReportPath} with YAML frontmatter \`status: SUCCESS\` or \`status: FAIL\`.`
 
       // noLoop: tell deck to skip sub-agent review loop
       if (deck.noLoop) {

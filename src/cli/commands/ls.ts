@@ -1,6 +1,6 @@
-import { findProjectRoot, reportPath } from '../../constants.js'
+import { findProjectRoot } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
-import { readReportStatus, isTerminalStatus } from '../../daemon/report.js'
+import { readReportStatus, isTerminalStatus, findLatestReport } from '../../daemon/report.js'
 import type { DeckInfo, DeckMode } from '../../types.js'
 
 const modeIcon: Record<DeckMode, string> = {
@@ -15,7 +15,8 @@ function deckSuffix(d: DeckInfo, projectRoot: string): string {
 
   // For hold mode, show holding status if check is complete
   if (d.mode === 'hold' && d.status === 'idle') {
-    const rPath = reportPath(projectRoot, d.name)
+    const rPath = findLatestReport(projectRoot, d.name)
+    if (!rPath) return ''
     const status = readReportStatus(rPath)
     if (status && isTerminalStatus(status)) {
       return `holding (${status})`

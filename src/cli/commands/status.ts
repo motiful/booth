@@ -1,6 +1,6 @@
-import { findProjectRoot, reportPath } from '../../constants.js'
+import { findProjectRoot } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
-import { readReportStatus } from '../../daemon/report.js'
+import { readReportStatus, findLatestReport } from '../../daemon/report.js'
 import type { DeckInfo, DeckMode } from '../../types.js'
 
 const modeLabel: Record<DeckMode, string> = {
@@ -51,9 +51,11 @@ export async function statusCommand(args: string[]): Promise<void> {
   }
 
   // Show report status if exists
-  const rPath = reportPath(projectRoot, deck.name)
-  const reportStatus = readReportStatus(rPath)
-  if (reportStatus) {
-    console.log(`  Report:    ${reportStatus} (${rPath})`)
+  const rPath = findLatestReport(projectRoot, deck.name)
+  if (rPath) {
+    const reportStatus = readReportStatus(rPath)
+    if (reportStatus) {
+      console.log(`  Report:    ${reportStatus} (${rPath})`)
+    }
   }
 }
