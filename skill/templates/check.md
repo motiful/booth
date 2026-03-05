@@ -51,7 +51,22 @@ When a deck is spun with `--no-loop`, the sub-agent review loop is skipped entir
 3. Writes the report directly to `.booth/reports/<deck>-YYYY-MM-DD-HHMM.md` (UTC)
 4. Uses `rounds: 0` in the YAML frontmatter
 
-No-loop is appropriate for simple, low-risk tasks (typo fixes, analysis, config changes) where full sub-agent review adds overhead without proportional value. The decision to use `--no-loop` depends on task complexity, not task type.
+### When to use --no-loop vs default loop
+
+The deciding question: **别人会踩到你的输出吗？会 → loop。不会 → 可以 no-loop。**
+
+**Loop (default)** — output becomes an artifact others depend on:
+- Templates, design specs, configurations that get inherited
+- Code that changes runtime behavior
+- Research documents used as implementation input
+- Any file that downstream work will build upon
+
+**No-loop** — output is a one-off consumable:
+- Status queries, simple file operations
+- Exploratory first drafts (explicitly planned for further iteration)
+- One-off investigations where findings are verbal, not persisted
+
+Task **impact** (not type) determines loop/no-loop. A one-line code change may need loop (if it's on a critical path). A long document may skip loop (if it's just a draft). Don't assume "docs = no-loop, code = loop" — the criterion is **downstream impact**: will someone build on, inherit, or be broken by your output?
 
 ## Exit Conditions
 
