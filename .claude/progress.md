@@ -473,6 +473,40 @@ SKILL.md split + init command. Decouples DJ protocol from skill entrypoint; adds
 - [x] CLI docs 更新 — restart 命令 + reload/restart/stop 三者对比表
 - [x] E2E 验证 — IPC 发送后 daemon 日志确认 "immediate beat scheduled (DJ connected)"
 
+### Startup UX Overhaul (COMPLETE — 2026-03-05)
+
+- [x] `ensureDaemonAndSession()` + `launchDJ()` + `attachSession()` — startCommand 拆分为可组合函数
+- [x] `booth resume` 自动启动 daemon（不再报 "daemon not running"）
+- [x] `booth restart --clean` — stop + start 无 deck 恢复
+- [x] 裸 `booth` 交互引导 — daemon 运行→ls+attach / 有 archives→prompt / 无 archives→fresh start
+- [x] 修复 tmuxAttach 阻塞 bug — restart/bare-booth 中 resume 在 attach 前执行
+- [x] cli.md 文档更新 — 命令表、对比表、裸 booth 行为说明
+
+### Archive Sharding (COMPLETE — 2026-03-05)
+
+- [x] `spillColdArchives()` — state.json archives ≤ 50 条，溢出按月写入 `.booth/archives/archive-YYYY-MM.json`
+- [x] `removeColdArchiveEntry()` — resume 时清理冷文件中的已恢复条目
+- [x] `resume --list` 显示热+冷（冷标 `[cold]`），name/id 搜索两个来源
+- [x] bare `booth resume` 仅恢复热数据（防止批量恢复数百条冷 archive）
+- [x] 冷文件 merge 按 sessionId 去重（crash safety）
+- [x] `ARCHIVES_DIR` 常量 + `readColdArchives()` + `readAllArchives()`
+
+### DJ Session Persistence + Resume (COMPLETE — 2026-03-05)
+
+- [x] `state.json` 新增 `djSessionId` 字段（persist/restore）
+- [x] `update-dj-jsonl` IPC 同时保存 djSessionId
+- [x] `launchDJ()` 支持 `--resume` 模式（传入 resumeSessionId）
+- [x] resume 失败自动 fallback 到新 session
+- [x] `booth resume`（无参）恢复 deck + DJ resume + attach
+
+#### Modified Files
+| File | Changes |
+|------|---------|
+| `src/daemon/state.ts` | djSessionId 字段 + getter/setter + persist/restore |
+| `src/daemon/index.ts` | update-dj-jsonl IPC 保存 djSessionId |
+| `src/cli/commands/start.ts` | launchDJ 接受 resumeSessionId，--resume vs --session-id |
+| `src/cli/commands/resume.ts` | readDjSessionIdFromState + launchDJ + attachSession |
+
 ### Phase 2.9 — Worktree Isolation (NEXT — 最高优先级)
 
 - [ ] 每个 deck 工作在独立 git worktree 中

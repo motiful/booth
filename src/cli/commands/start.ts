@@ -57,31 +57,43 @@ export async function ensureDaemonAndSession(projectRoot: string): Promise<void>
 
 /**
  * Launch DJ in the tmux session's first window. Does NOT attach.
+ * If resumeSessionId is provided, uses --resume instead of --session-id.
  * Returns after DJ pane is verified alive.
  */
-export async function launchDJ(projectRoot: string): Promise<void> {
+export async function launchDJ(projectRoot: string, resumeSessionId?: string): Promise<void> {
   const socket = deriveSocket(projectRoot)
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
-  const djSessionId = generateSessionId()
+
+  const djSessionId = resumeSessionId ?? generateSessionId()
   const djJsonlPath = jsonlPathForSession(projectRoot, djSessionId)
 
   const mixPath = join(projectRoot, '.booth', 'mix.md')
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
 
   const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
-  const djCmd = `${editorSetup} && export BOOTH_ROLE=dj && claude --dangerously-skip-permissions --session-id "${djSessionId}" --append-system-prompt "$(cat '${mixPath}')"; reset`
+
+  const claudeFlag = resumeSessionId
+    ? `--resume "${djSessionId}"`
+    : `--session-id "${djSessionId}" --append-system-prompt "$(cat '${mixPath}')"`
+
+  const djCmd = `${editorSetup} && export BOOTH_ROLE=dj && claude --dangerously-skip-permissions ${claudeFlag}; reset`
 
   tmux(socket, 'send-keys', '-t', `${SESSION}:0`, djCmd, 'Enter')
-  console.log('[booth] DJ launching...')
+  console.log(resumeSessionId ? '[booth] DJ resuming...' : '[booth] DJ launching...')
 
   await new Promise(r => setTimeout(r, 3_000))
   const check = tmuxSafe(socket, 'display-message', '-t', `${SESSION}:0`, '-p', '#{pane_pid}')
   if (!check.ok || !check.output.trim()) {
+    // If resume failed, fallback to new session
+    if (resumeSessionId) {
+      console.warn('[booth] DJ resume failed — starting fresh session')
+      return launchDJ(projectRoot)
+    }
     console.error('[booth] DJ pane failed to start. Check tmux session manually.')
     process.exit(1)
   }
 
-  await ipcRequest(projectRoot, { cmd: 'update-dj-jsonl', jsonlPath: djJsonlPath }).catch(() => {})
+  await ipcRequest(projectRoot, { cmd: 'update-dj-jsonl', jsonlPath: djJsonlPath, djSessionId }).catch(() => {})
   console.log('[booth] DJ ready')
 }
 

@@ -260,10 +260,9 @@ export class Daemon {
         if (!deckId) return { error: 'deckId string required' }
         const socket = deriveSocket(this.projectRoot)
         const deck = this.state.getDeck(deckId)
-        // Use deck name from state, or fallback name from request
-        const name = deck?.name ?? (typeof msg.name === 'string' ? msg.name : null)
-        if (name) {
-          tmuxSafe(socket, 'kill-window', '-t', `${SESSION}:${name}`)
+        // Kill tmux pane by paneId (stable), not window name (tmux auto-renames)
+        if (deck?.paneId) {
+          tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
         }
         this.removeDeck(deckId)
         return { ok: true }
@@ -364,6 +363,9 @@ export class Daemon {
         const jsonlPath = typeof msg.jsonlPath === 'string' && msg.jsonlPath ? msg.jsonlPath : null
         if (!jsonlPath) return { error: 'jsonlPath required' }
         this.updateDjJsonl(jsonlPath)
+        if (typeof msg.djSessionId === 'string' && msg.djSessionId) {
+          this.state.setDjSessionId(msg.djSessionId)
+        }
         // DJ just connected — trigger immediate beat so DJ gets recovery context
         this.reactor.scheduleImmediateBeat()
         return { ok: true }
@@ -433,7 +435,7 @@ export class Daemon {
 
     // Kill all deck windows
     for (const deck of this.state.getAllDecks()) {
-      tmuxSafe(socket, 'kill-window', '-t', `${SESSION}:${deck.name}`)
+      if (deck.paneId) tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
       this.signal.unwatch(deck.id)
     }
 

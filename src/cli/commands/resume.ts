@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { findProjectRoot, deriveSocket, boothPath, STATE_FILE, ARCHIVES_DIR, SESSION } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { tmux, sleepMs } from '../../tmux.js'
-import { ensureDaemonAndSession } from './start.js'
+import { ensureDaemonAndSession, launchDJ, attachSession } from './start.js'
 import type { DeckInfo, DeckMode, ArchivedDeck } from '../../types.js'
 
 interface ArchiveEntry extends ArchivedDeck {
@@ -19,6 +19,17 @@ export function readArchivesFromState(projectRoot: string): ArchivedDeck[] {
     return Array.isArray(raw.archives) ? raw.archives : []
   } catch {
     return []
+  }
+}
+
+function readDjSessionIdFromState(projectRoot: string): string | undefined {
+  const p = boothPath(projectRoot, STATE_FILE)
+  if (!existsSync(p)) return undefined
+  try {
+    const raw = JSON.parse(readFileSync(p, 'utf-8'))
+    return typeof raw.djSessionId === 'string' ? raw.djSessionId : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -128,19 +139,25 @@ export async function resumeCommand(args: string[]): Promise<void> {
     return
   }
 
-  // No args: resume all hot archived decks (not cold)
+  // No args: resume all hot archived decks + DJ, then attach
   const entries = readArchivesFromState(projectRoot)
   if (entries.length === 0) {
     console.log('[booth] no archived decks to resume')
-    return
-  }
-  for (const entry of entries) {
-    if (!existsSync(entry.jsonlPath)) {
-      console.warn(`[booth] skipping "${entry.name}" — JSONL missing: ${entry.jsonlPath}`)
-      continue
+  } else {
+    for (const entry of entries) {
+      if (!existsSync(entry.jsonlPath)) {
+        console.warn(`[booth] skipping "${entry.name}" — JSONL missing: ${entry.jsonlPath}`)
+        continue
+      }
+      await resumeOne(projectRoot, socket, entry)
     }
-    await resumeOne(projectRoot, socket, entry)
   }
+
+  // Resume DJ with previous session if available
+  const djSessionId = readDjSessionIdFromState(projectRoot)
+  await launchDJ(projectRoot, djSessionId)
+  console.log('[booth] attaching...')
+  attachSession(projectRoot)
 }
 
 async function resumeOne(

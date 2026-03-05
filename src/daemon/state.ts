@@ -24,6 +24,7 @@ export class BoothState extends EventEmitter {
   private archives: ArchivedDeck[] = []
   private djStatus: 'idle' | 'working' = 'idle'
   private djJsonlPath?: string
+  private djSessionId?: string
   private projectRoot: string
   private persistTimer?: ReturnType<typeof setInterval>
   private debounceTimer?: ReturnType<typeof setTimeout>
@@ -124,6 +125,15 @@ export class BoothState extends EventEmitter {
     this.markDirty()
   }
 
+  getDjSessionId(): string | undefined {
+    return this.djSessionId
+  }
+
+  setDjSessionId(id: string | undefined): void {
+    this.djSessionId = id
+    this.markDirty()
+  }
+
   // --- Archive methods ---
 
   archiveDeck(deck: DeckInfo): void {
@@ -178,6 +188,7 @@ export class BoothState extends EventEmitter {
       archives: this.archives,
       djStatus: this.djStatus,
       djJsonlPath: this.djJsonlPath,
+      djSessionId: this.djSessionId,
       persistedAt: Date.now(),
     }
     safeWrite(boothPath(this.projectRoot, STATE_FILE), JSON.stringify(data, null, 2))
@@ -196,6 +207,7 @@ export class BoothState extends EventEmitter {
       if (Array.isArray(raw.archives)) this.archives = raw.archives
       if (raw.djStatus) this.djStatus = raw.djStatus
       if (raw.djJsonlPath) this.djJsonlPath = raw.djJsonlPath
+      if (raw.djSessionId) this.djSessionId = raw.djSessionId
       this.spillColdArchives()
     } catch {
       // corrupted state file, start fresh
