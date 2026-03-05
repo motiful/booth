@@ -69,17 +69,17 @@ export async function startCommand(_args: string[]): Promise<void> {
 
   // Create tmux session with shell, then launch DJ via send-keys.
   // CC needs a shell env — direct exec causes CC to exit immediately.
-  const skillMdPath = join(packageRoot, 'skill', 'SKILL.md')
+  const djProtocolPath = join(packageRoot, 'skill', 'references', 'dj-protocol.md')
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
 
   // Set EDITOR to booth's proxy before launching CC.
   // The proxy transparently passes through to the user's real editor on normal Ctrl+G.
-  // When booth needs to inject alerts, it writes a state file and sends Ctrl+G —
-  // the proxy intercepts, saves user input, writes alert, and exits in <50ms.
+  // When booth needs to inject a message, it writes a state file and sends Ctrl+G —
+  // the proxy intercepts, saves user input, writes the message, and exits in <50ms.
   // Save user's original EDITOR/VISUAL before overriding.
   // If both are empty, BOOTH_REAL_EDITOR stays empty — the proxy auto-detects at runtime.
   const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
-  const djCmd = `${editorSetup} && claude --dangerously-skip-permissions --append-system-prompt "$(cat '${skillMdPath}')"`
+  const djCmd = `${editorSetup} && claude --dangerously-skip-permissions --append-system-prompt "$(cat '${djProtocolPath}')"`
 
   newSession(socket, SESSION)
   tmux(socket, 'set', '-g', '@booth-root', projectRoot)

@@ -190,24 +190,24 @@ export async function protectedSendToCC(socket: string, target: string, text: st
 
   // 3-7: Inject + restore, wrapped in try/finally to guarantee cleanup
   const savedInputPath = join(tmpdir(), `booth-saved-${Date.now()}.md`)
-  const alertPath = join(tmpdir(), `booth-alert-${Date.now()}.md`)
+  const injectPath = join(tmpdir(), `booth-inject-${Date.now()}.md`)
   let restored = false
 
   try {
-    writeFileSync(alertPath, text)
+    writeFileSync(injectPath, text)
 
     // 3. Write inject state for editor-proxy.sh
     const sd = stateDir(target)
     mkdirSync(sd, { recursive: true })
     writeFileSync(join(sd, 'action'), 'inject')
     writeFileSync(join(sd, 'save-path'), savedInputPath)
-    writeFileSync(join(sd, 'inject-file'), alertPath)
+    writeFileSync(join(sd, 'inject-file'), injectPath)
 
-    // 4. Ctrl+G → proxy saves user input + writes alert
+    // 4. Ctrl+G → proxy saves user input + writes injected message
     tmux(socket, 'send-keys', '-t', target, 'C-g')
     await delay(300)
 
-    // 5. Submit the alert
+    // 5. Submit the injected message
     tmux(socket, 'send-keys', '-t', target, 'Enter')
 
     // 6. Wait for CC to process and show new prompt
@@ -233,7 +233,7 @@ export async function protectedSendToCC(socket: string, target: string, text: st
   } finally {
     // ALWAYS clean up — prevents stale state poisoning future Ctrl+G
     cleanEditorState(target)
-    try { unlinkSync(alertPath) } catch {}
+    try { unlinkSync(injectPath) } catch {}
     if (!restored) {
       try { unlinkSync(savedInputPath) } catch {}
     }

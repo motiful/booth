@@ -13,12 +13,15 @@ import { peekCommand } from './commands/peek.js'
 import { sendCommand } from './commands/send.js'
 import { reportsCommand } from './commands/reports.js'
 import { resumeCommand } from './commands/resume.js'
+import { initCommand } from './commands/init.js'
+import { isInitialized } from '../skills.js'
 
 const HELP = `
 booth — AI project manager for Claude Code
 
 Usage:
-  booth                Start booth (or reattach if already running)
+  booth                Start booth (auto-init on first run)
+  booth init           First-time setup (register skills, can re-run for recovery)
   booth spin <name>    Create a new deck (parallel CC instance)
   booth ls             List all deck states
   booth status <name>  Show details for a specific deck
@@ -61,8 +64,19 @@ export async function run(args: string[]): Promise<void> {
   try {
     switch (cmd) {
       case undefined:
+        // Bare `booth` — interactive entry point
+        // Auto-init on first run; skip silently if already done
+        if (!isInitialized()) {
+          await initCommand([])
+          console.log()
+        }
+        await startCommand(rest)
+        break
       case 'start':
         await startCommand(rest)
+        break
+      case 'init':
+        await initCommand(rest)
         break
       case 'spin':
         await spinCommand(rest)

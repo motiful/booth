@@ -10,7 +10,7 @@ An AI project manager for Claude Code. You keep thinking, keep branching — Boo
 ## Tech Stack
 
 - TypeScript (strict, ES2022, NodeNext), Node.js ≥ 18, ESM
-- Zero external runtime dependencies
+- Runtime dependencies: winston (daemon logging)
 - Architecture: CLI → Unix socket → Daemon (Signal + State + Reactor) → tmux
 - All business logic in Node.js. CC hooks are 2-line bash wrappers.
 
@@ -25,10 +25,12 @@ An AI project manager for Claude Code. You keep thinking, keep branching — Boo
 
 ```
 booth/
-├── bin/                    # CLI entry (published)
+├── bin/                    # CLI entry + editor proxy (published)
 ├── src/                    # TypeScript source
 ├── dist/                   # Compiled output (published)
-├── skill/                  # DJ skill files (published)
+├── skill/                  # Booth skill (published) — entrypoint + references
+│   ├── SKILL.md            # General entrypoint (loaded by CC skill system)
+│   └── references/         # dj-protocol, signals, check, mix, beat, child-protocol
 ├── .claude/                # CC local config (gitignored)
 ├── package.json            # "files": ["dist/", "bin/", "skill/"]
 ├── CLAUDE.md               # This file
