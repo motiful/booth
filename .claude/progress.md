@@ -80,7 +80,7 @@ Signal Delivery (single channel):
   - Beat as periodic fallback (adaptive cooldown 5→10→20→…→60min)
 
 .booth/ Directory (gitignored):
-  state.json, decks.json              — runtime state
+  state.json                          — runtime state (decks + DJ status, event-driven + debounce)
   deck-archive.json                   — archived deck sessions
   daemon.sock                          — daemon IPC
   logs/daemon-YYYY-MM-DD.log           — Winston daily rotate (7d retention)
@@ -389,6 +389,22 @@ SKILL.md split + init command. Decouples DJ protocol from skill entrypoint; adds
 - [x] 运行时：`checkDjJsonlFreshness()` 每 30s 检测 JSONL 轮转（如 context compaction）
 - [x] 防竞争：`checkDjJsonlFreshness` 与 `pollForDjJsonl` 互斥守卫
 - [x] 异步合规：`seedDjStatus` 使用 async `execFile` 而非同步版本
+
+### tmux Window Index Fix (COMPLETE — 2026-03-05)
+
+- [x] `tmux new-window -t dj` 解析为 window target 导致 index 冲突 — 加 `-a` 标志修复（spin.ts + resume.ts）
+
+### No-Loop Wording Update (COMPLETE — 2026-03-05)
+
+- [x] check.md no-loop 核心判断措辞更新：「别人会踩到你的输出吗」→「你的产出有下游消费者吗」（skill/templates/check.md + .booth/check.md）
+
+### State/Decks Merge (COMPLETE — 2026-03-05)
+
+- [x] 删除 `decks.json` 冗余文件 — `persistDecksJson()` 方法及全部调用移除
+- [x] 删除 `DECKS_FILE` 常量
+- [x] `state.json` 事件驱动 + 1s debounce 写入（`markDirty()`）+ 30s 定时兜底
+- [x] `updateDeckStatus()` 现在触发 `markDirty()` — 修复原有 bug（状态变更不持久化）
+- [x] DJ 消费路径更新（SKILL.md、mix.md 模板 + runtime copy）
 
 ### Phase 2.9 — Worktree Isolation (NEXT — 最高优先级)
 

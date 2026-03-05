@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { boothPath, STATE_FILE, DECKS_FILE } from '../constants.js'
+import { boothPath, STATE_FILE } from '../constants.js'
 import type { DeckInfo, DeckStatus, DeckStateChange } from '../types.js'
 
 function safeWrite(path: string, data: string): void {
@@ -23,6 +23,7 @@ export class BoothState extends EventEmitter {
   private djJsonlPath?: string
   private projectRoot: string
   private persistTimer?: ReturnType<typeof setInterval>
+  private debounceTimer?: ReturnType<typeof setTimeout>
 
   constructor(projectRoot: string) {
     super()
@@ -36,20 +37,21 @@ export class BoothState extends EventEmitter {
 
   stop(): void {
     if (this.persistTimer) clearInterval(this.persistTimer)
+    if (this.debounceTimer) clearTimeout(this.debounceTimer)
     this.persist()
   }
 
   registerDeck(info: DeckInfo): void {
     this.decks.set(info.id, info)
     this.emit('deck:registered', info)
-    this.persistDecksJson()
+    this.markDirty()
   }
 
   updateDeck(id: string, patch: Partial<DeckInfo>): void {
     const deck = this.decks.get(id)
     if (!deck) return
     Object.assign(deck, patch)
-    this.persistDecksJson()
+    this.markDirty()
   }
 
   removeDeck(deckId: string): void {
@@ -57,13 +59,13 @@ export class BoothState extends EventEmitter {
     if (deck) {
       this.decks.delete(deckId)
       this.emit('deck:removed', deck)
-      this.persistDecksJson()
+      this.markDirty()
     }
   }
 
   clearAllDecks(): void {
     this.decks.clear()
-    this.persistDecksJson()
+    this.markDirty()
   }
 
   updateDeckStatus(deckId: string, status: DeckStatus): void {
@@ -76,6 +78,7 @@ export class BoothState extends EventEmitter {
 
     const change: DeckStateChange = { deckId, prev, next: status, timestamp: deck.updatedAt }
     this.emit('deck:state-changed', change)
+    this.markDirty()
 
     if (status === 'working') this.emit('deck:working', deck)
     if (status === 'idle') this.emit('deck:idle', deck)
@@ -144,20 +147,9 @@ export class BoothState extends EventEmitter {
     }
   }
 
-  private persistDecksJson(): void {
-    const decks = this.getAllDecks().map(d => ({
-      id: d.id,
-      name: d.name,
-      status: d.status,
-      mode: d.mode,
-      dir: d.dir,
-      paneId: d.paneId,
-      noLoop: d.noLoop,
-      checkSentAt: d.checkSentAt,
-      createdAt: d.createdAt,
-      updatedAt: d.updatedAt,
-    }))
-    safeWrite(boothPath(this.projectRoot, DECKS_FILE), JSON.stringify(decks, null, 2))
+  private markDirty(): void {
+    if (this.debounceTimer) clearTimeout(this.debounceTimer)
+    this.debounceTimer = setTimeout(() => this.persist(), 1_000)
   }
 
 }

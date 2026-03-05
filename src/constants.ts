@@ -9,7 +9,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 export const SESSION = 'dj'
 export const BOOTH_DIR = '.booth'
 export const STATE_FILE = 'state.json'
-export const DECKS_FILE = 'decks.json'
 export const REPORTS_DIR = 'reports'
 export const DECK_ARCHIVE_FILE = 'deck-archive.json'
 

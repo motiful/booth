@@ -42,7 +42,7 @@ Decks write reports to `.booth/reports/<deck>.md`:
 |------|---------|
 | `.booth/` | Booth runtime directory (project-local) |
 | `.booth/reports/` | Deck check reports |
-| `.booth/decks.json` | Active deck registry |
+| `.booth/state.json` | Daemon state (decks, DJ status) |
 | `.booth/deck-archive.json` | Archived decks for resume |
 | `.booth/mix.md` | DJ management guidelines (customizable) |
 | `.booth/check.md` | Deck self-verification template (customizable) |

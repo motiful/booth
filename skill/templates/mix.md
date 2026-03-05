@@ -374,7 +374,7 @@ The user should never have to piece together what happened across decks. DJ cons
 - Use capture-pane for state detection
 - Make up status — if you don't know, run `booth ls`
 
-**What you CAN read:** `.booth/` files only (reports, state, decks.json, plan.md, mix.md, check.md, beat.md). Everything else → spin a deck.
+**What you CAN read:** `.booth/` files only (reports, state.json, plan.md, mix.md, check.md, beat.md). Everything else → spin a deck.
 
 ## References
 
