@@ -23,8 +23,12 @@ function readStdin(): string {
   }
 }
 
-function extractTextContent(message: { content?: Array<{ type: string; text?: string }> }): string {
-  if (!message?.content || !Array.isArray(message.content)) return ''
+function extractTextContent(message: { content?: string | Array<{ type: string; text?: string }> }): string {
+  if (!message?.content) return ''
+  // User messages: content is a plain string
+  if (typeof message.content === 'string') return message.content
+  // Assistant messages: content is an array of blocks
+  if (!Array.isArray(message.content)) return ''
   return message.content
     .filter(block => block.type === 'text' && block.text)
     .map(block => block.text!)
@@ -48,9 +52,9 @@ function parseJsonlTail(jsonlPath: string): { userText: string; assistantText: s
     for (const line of lines) {
       try {
         const ev = JSON.parse(line)
-        if (ev.type === 'message' && ev.message?.role === 'user') {
+        if (ev.type === 'user' && ev.message) {
           lastUser = extractTextContent(ev.message)
-        } else if (ev.type === 'message' && ev.message?.role === 'assistant') {
+        } else if (ev.type === 'assistant' && ev.message) {
           lastAssistant = extractTextContent(ev.message)
         }
       } catch {

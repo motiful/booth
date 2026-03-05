@@ -35,6 +35,10 @@ export function ensureSessionEndHook(projectRoot: string, sessionEndHookScript: 
   }
 
   if (!settings.hooks) settings.hooks = {}
+
+  // Clean up legacy Stop hook (removed in Phase 2.8)
+  if (settings.hooks.Stop) delete settings.hooks.Stop
+
   if (!settings.hooks.SessionEnd) settings.hooks.SessionEnd = []
 
   const alreadyRegistered = settings.hooks.SessionEnd.some(entry =>
