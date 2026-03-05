@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
-import { basename, dirname } from 'node:path'
-import { boothPath, STATE_FILE } from '../constants.js'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
+import { boothPath, STATE_FILE, ARCHIVES_DIR } from '../constants.js'
 import type { DeckInfo, DeckStatus, DeckStateChange, ArchivedDeck } from '../types.js'
 
 const MAX_ARCHIVE_ENTRIES = 50
@@ -141,13 +141,19 @@ export class BoothState extends EventEmitter {
       killedAt: Date.now(),
     }
     this.archives.unshift(entry)
-    this.archives = this.archives.slice(0, MAX_ARCHIVE_ENTRIES)
+    this.spillColdArchives()
     this.markDirty()
   }
 
   removeArchiveEntry(sessionId: string): void {
+    const before = this.archives.length
     this.archives = this.archives.filter(e => e.sessionId !== sessionId)
-    this.markDirty()
+    if (this.archives.length < before) {
+      this.markDirty()
+      return
+    }
+    // Not found in hot archives — try cold files
+    this.removeColdArchiveEntry(sessionId)
   }
 
   getArchives(): ArchivedDeck[] {
@@ -190,8 +196,60 @@ export class BoothState extends EventEmitter {
       if (Array.isArray(raw.archives)) this.archives = raw.archives
       if (raw.djStatus) this.djStatus = raw.djStatus
       if (raw.djJsonlPath) this.djJsonlPath = raw.djJsonlPath
+      this.spillColdArchives()
     } catch {
       // corrupted state file, start fresh
+    }
+  }
+
+  private removeColdArchiveEntry(sessionId: string): void {
+    const archivesDir = boothPath(this.projectRoot, ARCHIVES_DIR)
+    if (!existsSync(archivesDir)) return
+    for (const f of readdirSync(archivesDir)) {
+      if (!f.startsWith('archive-') || !f.endsWith('.json')) continue
+      const filePath = join(archivesDir, f)
+      try {
+        const entries: ArchivedDeck[] = JSON.parse(readFileSync(filePath, 'utf-8'))
+        const filtered = entries.filter(e => e.sessionId !== sessionId)
+        if (filtered.length < entries.length) {
+          if (filtered.length === 0) {
+            unlinkSync(filePath)
+          } else {
+            safeWrite(filePath, JSON.stringify(filtered, null, 2))
+          }
+          return
+        }
+      } catch { /* skip corrupted */ }
+    }
+  }
+
+  private spillColdArchives(): void {
+    if (this.archives.length <= MAX_ARCHIVE_ENTRIES) return
+
+    // archives are newest-first; spill the tail (oldest entries) to cold files
+    const cold = this.archives.splice(MAX_ARCHIVE_ENTRIES)
+    const archivesDir = boothPath(this.projectRoot, ARCHIVES_DIR)
+    mkdirSync(archivesDir, { recursive: true })
+
+    // Group by YYYY-MM based on killedAt timestamp
+    const byMonth = new Map<string, ArchivedDeck[]>()
+    for (const entry of cold) {
+      const d = new Date(entry.killedAt)
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      let bucket = byMonth.get(key)
+      if (!bucket) { bucket = []; byMonth.set(key, bucket) }
+      bucket.push(entry)
+    }
+
+    for (const [month, entries] of byMonth) {
+      const filePath = join(archivesDir, `archive-${month}.json`)
+      let existing: ArchivedDeck[] = []
+      if (existsSync(filePath)) {
+        try { existing = JSON.parse(readFileSync(filePath, 'utf-8')) } catch { /* corrupted, overwrite */ }
+      }
+      const existingIds = new Set(existing.map(e => e.sessionId))
+      const merged = [...existing, ...entries.filter(e => !existingIds.has(e.sessionId))]
+      safeWrite(filePath, JSON.stringify(merged, null, 2))
     }
   }
 

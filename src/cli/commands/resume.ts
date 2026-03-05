@@ -1,11 +1,15 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { findProjectRoot, deriveSocket, boothPath, STATE_FILE, SESSION } from '../../constants.js'
+import { findProjectRoot, deriveSocket, boothPath, STATE_FILE, ARCHIVES_DIR, SESSION } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { tmux, sleepMs } from '../../tmux.js'
 import { ensureDaemonAndSession } from './start.js'
 import type { DeckInfo, DeckMode, ArchivedDeck } from '../../types.js'
+
+interface ArchiveEntry extends ArchivedDeck {
+  _cold?: boolean
+}
 
 export function readArchivesFromState(projectRoot: string): ArchivedDeck[] {
   const p = boothPath(projectRoot, STATE_FILE)
@@ -18,13 +22,35 @@ export function readArchivesFromState(projectRoot: string): ArchivedDeck[] {
   }
 }
 
-function listArchiveEntries(projectRoot: string, name?: string): ArchivedDeck[] {
-  const archives = readArchivesFromState(projectRoot)
+function readColdArchives(projectRoot: string): ArchiveEntry[] {
+  const dir = boothPath(projectRoot, ARCHIVES_DIR)
+  if (!existsSync(dir)) return []
+  const files = readdirSync(dir).filter(f => f.startsWith('archive-') && f.endsWith('.json')).sort().reverse()
+  const result: ArchiveEntry[] = []
+  for (const f of files) {
+    try {
+      const entries: ArchivedDeck[] = JSON.parse(readFileSync(join(dir, f), 'utf-8'))
+      for (const e of entries) result.push({ ...e, _cold: true })
+    } catch { /* skip corrupted */ }
+  }
+  // Sort cold entries newest-first by killedAt
+  result.sort((a, b) => b.killedAt - a.killedAt)
+  return result
+}
+
+function readAllArchives(projectRoot: string): ArchiveEntry[] {
+  const hot: ArchiveEntry[] = readArchivesFromState(projectRoot)
+  const cold = readColdArchives(projectRoot)
+  return [...hot, ...cold]
+}
+
+function listArchiveEntries(projectRoot: string, name?: string): ArchiveEntry[] {
+  const archives = readAllArchives(projectRoot)
   return name ? archives.filter(e => e.name === name) : archives
 }
 
-function findArchiveEntryBySessionId(projectRoot: string, sessionId: string): ArchivedDeck | undefined {
-  return readArchivesFromState(projectRoot).find(e => e.sessionId === sessionId)
+function findArchiveEntryBySessionId(projectRoot: string, sessionId: string): ArchiveEntry | undefined {
+  return readAllArchives(projectRoot).find(e => e.sessionId === sessionId)
 }
 
 export async function resumeCommand(args: string[]): Promise<void> {
@@ -62,7 +88,8 @@ export async function resumeCommand(args: string[]): Promise<void> {
       const mode = e.mode[0].toUpperCase()
       const sid = e.sessionId.slice(0, 8) + '...'
       const missing = !existsSync(e.jsonlPath) ? '  (JSONL missing!)' : ''
-      console.log(`  [${i + 1}] ${e.name.padEnd(12)} killed ${ago.padEnd(8)} [${mode}] session: ${sid}${missing}`)
+      const coldTag = (e as ArchiveEntry)._cold ? ' [cold]' : ''
+      console.log(`  [${i + 1}] ${e.name.padEnd(12)} killed ${ago.padEnd(8)} [${mode}] session: ${sid}${coldTag}${missing}`)
     }
     return
   }
@@ -101,8 +128,8 @@ export async function resumeCommand(args: string[]): Promise<void> {
     return
   }
 
-  // No args: resume all archived decks
-  const entries = listArchiveEntries(projectRoot)
+  // No args: resume all hot archived decks (not cold)
+  const entries = readArchivesFromState(projectRoot)
   if (entries.length === 0) {
     console.log('[booth] no archived decks to resume')
     return
