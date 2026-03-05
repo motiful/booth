@@ -53,7 +53,7 @@ When a deck is spun with `--no-loop`, the sub-agent review loop is skipped entir
 
 ### When to use --no-loop vs default loop
 
-The deciding question: **别人会踩到你的输出吗？会 → loop。不会 → 可以 no-loop。**
+The deciding question: **你的产出有下游消费者吗？有 → loop（默认）。没有 → 可以 no-loop。**
 
 **Loop (default)** — output becomes an artifact others depend on:
 - Templates, design specs, configurations that get inherited
