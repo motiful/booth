@@ -26,7 +26,7 @@ export class SignalCollector extends EventEmitter {
   watch(deckId: string, jsonlPath: string): void {
     if (this.watchers.has(deckId)) return
 
-    const child = spawn('tail', ['-f', '-n', '0', jsonlPath], {
+    const child = spawn('tail', ['-f', '-n', '20', jsonlPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
 
