@@ -95,6 +95,10 @@ export class BoothState extends EventEmitter {
     return [...this.decks.values()].some(d => d.status === 'working')
   }
 
+  hasActiveDecks(): boolean {
+    return [...this.decks.values()].some(d => d.status !== 'stopped')
+  }
+
   getDjStatus(): 'idle' | 'working' {
     return this.djStatus
   }

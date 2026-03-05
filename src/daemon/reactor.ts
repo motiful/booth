@@ -1,5 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync, renameSync, mkdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { BoothState } from './state.js'
 import { sendMessage } from './send-message.js'
 import { readReportStatus, isTerminalStatus } from './report.js'
@@ -55,16 +56,23 @@ export class Reactor {
         logger.info(`[booth-reactor] restored check poll for "${deck.name}"`)
       }
     }
+
+    // Initial beat scheduling — covers the case where daemon starts with existing active decks
+    this.scheduleBeat()
   }
 
   private onDeckIdle(deck: DeckInfo): void {
+    logger.debug(`[booth-reactor] deck "${deck.name}" idle (mode=${deck.mode}, checkSentAt=${deck.checkSentAt ?? 'none'})`)
     // Cancel plan mode timer — deck completed its turn, approval was auto-granted
     if (this.planModeTimers.has(deck.id)) {
       this.clearPlanModeTimer(deck.id)
       logger.debug(`[booth-reactor] deck "${deck.name}" plan mode auto-resolved (idle)`)
     }
     // Live mode: skip check unless one is already in-flight
-    if (deck.mode === 'live' && !deck.checkSentAt) return
+    if (deck.mode === 'live' && !deck.checkSentAt) {
+      logger.debug(`[booth-reactor] deck "${deck.name}" live mode — skipping check`)
+      return
+    }
     // All other cases (auto, hold, or live with in-flight check): proceed
     this.triggerCheck(deck)
   }
@@ -76,9 +84,18 @@ export class Reactor {
   private runCheck(deck: DeckInfo): void {
     const rPath = reportPath(this.projectRoot, deck.name)
 
+    // Stale report detection: if report exists but is older than the deck, archive it
+    if (existsSync(rPath) && this.isStaleReport(rPath, deck)) {
+      this.archiveStaleReport(rPath, deck.name)
+      // Fall through to the "no report" path below
+    }
+
     if (!existsSync(rPath)) {
       // Check already sent — waiting for deck to write report (poll will retry)
-      if (deck.checkSentAt) return
+      if (deck.checkSentAt) {
+        logger.debug(`[booth-reactor] deck "${deck.name}" check already sent, waiting for report`)
+        return
+      }
 
       // No report yet → trigger deck self-check via .booth/check.md
       const checkPath = boothPath(this.projectRoot, 'check.md')
@@ -116,7 +133,10 @@ export class Reactor {
 
     if (isTerminalStatus(status)) {
       // Guard: if checkSentAt already cleared, another runCheck already handled this report
-      if (!deck.checkSentAt) return
+      if (!deck.checkSentAt) {
+        logger.debug(`[booth-reactor] deck "${deck.name}" terminal report already handled (checkSentAt cleared)`)
+        return
+      }
 
       // Clear checkSentAt and poll timer now that check is complete
       this.state.updateDeck(deck.id, { checkSentAt: undefined })
@@ -140,32 +160,64 @@ export class Reactor {
     }
   }
 
+  private isStaleReport(rPath: string, deck: DeckInfo): boolean {
+    try {
+      const mtime = statSync(rPath).mtimeMs
+      return mtime < deck.createdAt
+    } catch {
+      return false
+    }
+  }
+
+  private archiveStaleReport(rPath: string, deckName: string): void {
+    try {
+      const dir = dirname(rPath)
+      const archiveDir = join(dir, 'archive')
+      if (!existsSync(archiveDir)) mkdirSync(archiveDir, { recursive: true })
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+      const archivePath = join(archiveDir, `${deckName}-${timestamp}.md`)
+      renameSync(rPath, archivePath)
+      logger.info(`[booth-reactor] archived stale report for "${deckName}" → ${archivePath}`)
+    } catch (err) {
+      logger.warn(`[booth-reactor] failed to archive stale report for "${deckName}": ${err}`)
+    }
+  }
+
   // --- Beat system ---
 
   scheduleBeat(): void {
     if (this.beatTimer) clearTimeout(this.beatTimer)
 
-    if (this.state.getDjStatus() !== 'idle') return
-    if (!this.state.hasWorkingDecks()) return
+    if (this.state.getDjStatus() !== 'idle') {
+      logger.debug('[booth-reactor] beat skipped: DJ not idle')
+      return
+    }
+    if (!this.state.hasActiveDecks()) {
+      logger.debug('[booth-reactor] beat skipped: no active decks')
+      return
+    }
 
     const elapsed = Date.now() - this.lastBeatAt
     const remaining = Math.max(0, this.beatCooldown - elapsed)
 
     this.beatTimer = setTimeout(() => this.fireBeat(), remaining)
+    logger.debug(`[booth-reactor] beat scheduled in ${Math.round(remaining / 1000)}s`)
   }
 
   private fireBeat(): void {
     if (this.state.getDjStatus() !== 'idle') return
-    if (!this.state.hasWorkingDecks()) return
+    if (!this.state.hasActiveDecks()) return
 
     const decks = this.state.getAllDecks()
     const working = decks.filter(d => d.status === 'working').map(d => d.name)
+    const checking = decks.filter(d => d.status === 'checking').map(d => d.name)
     const idle = decks.filter(d => d.status === 'idle').map(d => d.name)
 
     const beatPath = boothPath(this.projectRoot, 'beat.md')
     const summary = [
       `[booth-beat] Status update:`,
       working.length ? `  Working: ${working.join(', ')}` : '',
+      checking.length ? `  Checking: ${checking.join(', ')}` : '',
       idle.length ? `  Idle: ${idle.join(', ')}` : '',
       existsSync(beatPath) ? `  Read ${beatPath} for your checklist.` : `  Check .booth/reports/ for completed deck reports.`,
     ].filter(Boolean).join('\n')
