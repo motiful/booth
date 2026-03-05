@@ -72,9 +72,11 @@ export async function launchDJ(projectRoot: string, resumeSessionId?: string): P
 
   const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
 
+  const warroomPath = join(projectRoot, '.booth', 'warroom')
+
   const claudeFlag = resumeSessionId
     ? `--resume "${djSessionId}"`
-    : `--session-id "${djSessionId}" --append-system-prompt "$(cat '${mixPath}')"`
+    : `--session-id "${djSessionId}" --append-system-prompt "$(cat '${mixPath}')$( [ -f '${warroomPath}' ] && printf '\\n\\n' && cat '${warroomPath}' || true )"`
 
   const djCmd = `${editorSetup} && export BOOTH_ROLE=dj && claude --dangerously-skip-permissions ${claudeFlag}; reset`
 
