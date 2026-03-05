@@ -406,6 +406,29 @@ SKILL.md split + init command. Decouples DJ protocol from skill entrypoint; adds
 - [x] `updateDeckStatus()` 现在触发 `markDirty()` — 修复原有 bug（状态变更不持久化）
 - [x] DJ 消费路径更新（SKILL.md、mix.md 模板 + runtime copy）
 
+### DJ JSONL IPC Fix (COMPLETE — 2026-03-05)
+
+- [x] `update-dj-jsonl` IPC 命令 — CLI 主动通知 daemon DJ JSONL 路径
+- [x] `booth start` 发现 DJ JSONL 并通过 IPC 通知 daemon（替代 filesystem scan）
+- [x] 移除 `resolveDjJsonl()`、`checkDjJsonlFreshness()`、`seedDjStatus()`、`getDeckJsonlPaths()`
+- [x] `setDjJsonlPath` 添加 `markDirty()` 确保持久化
+- [x] `shutdown()` 清除 `djJsonlPath` 防止 stale path 恢复
+- [x] `existsSync` guard 防止 watch 不存在的文件
+- [x] `pollForDjJsonl()` 保留为首次启动 fallback
+
+### Session Change Monitoring Research (COMPLETE — 2026-03-05)
+
+- [x] CC Hook 系统调研 — SessionStart hook 确认存在，提供 session_id + transcript_path
+- [x] /resume 行为分析 — 旧 JSONL 静默（无 EOF），新 JSONL 继续追加
+- [x] 设计方案 — SessionStart hook + BOOTH_DECK_ID 环境变量 + IPC session-changed
+- [x] 调研文档：`../booth-backstage/research/session-monitor-design.md`
+- [ ] **待验证**：/resume 是否触发 SessionStart（需实测）
+
+### Plan Convention in mix.md (COMPLETE — 2026-03-05)
+
+- [x] 在 mix.md Plan Persistence 段落补充 Plan 条目格式规范
+- [x] source of truth (`skill/templates/mix.md`) 和 runtime copy (`.booth/mix.md`) 同步
+
 ### Phase 2.9 — Worktree Isolation (NEXT — 最高优先级)
 
 - [ ] 每个 deck 工作在独立 git worktree 中

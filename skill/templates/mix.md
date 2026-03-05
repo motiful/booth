@@ -56,6 +56,19 @@ When a Wave/Phase is fully completed, DJ does three things:
 
 This keeps `plan.md` compact for recovery reads. DJ never reads archive files during normal operation — they exist for audit trail only.
 
+### Plan 条目格式
+
+每个 pending/in-progress 任务必须包含：
+- **问题**：为什么要做这个（一句话说清痛点）
+- **方案方向**：打算怎么做（关键思路，不是实现细节）
+- **Acceptance criteria**：怎么算完成（可验证的标准）
+- **依赖**：跟哪些任务相关（如果有）
+- **状态**：pending / in-progress / done
+
+已完成的任务压缩为一行：结果概述 + commit hash + 关键验证结果。
+
+目的：任何人（包括 compact 后的 DJ 自己）读 plan.md 都能立即理解每个任务的上下文和目标，不需要额外信息。
+
 ## Language
 
 - Report 正文、Summary、Review Rounds 等描述性内容用**中文**撰写
