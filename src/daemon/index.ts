@@ -1,7 +1,6 @@
 import { createServer, Server } from 'node:net'
-import { execFile } from 'node:child_process'
 import { existsSync, unlinkSync } from 'node:fs'
-import { SignalCollector, parseEventState } from './signal.js'
+import { SignalCollector } from './signal.js'
 import type { SignalEvent, PlanModeEvent } from './signal.js'
 import { BoothState } from './state.js'
 import { Reactor } from './reactor.js'
@@ -76,8 +75,16 @@ export class Daemon {
       }
     }
 
-    // Resolve DJ JSONL — prefer latest unassigned JSONL over stale persisted path
-    this.resolveDjJsonl()
+    // Restore DJ JSONL from persisted state, or poll as fallback.
+    // On normal operation, CLI notifies via update-dj-jsonl IPC.
+    const persistedDjJsonl = this.state.getDjJsonlPath()
+    if (persistedDjJsonl && existsSync(persistedDjJsonl)) {
+      this.assignedJsonlPaths.add(persistedDjJsonl)
+      this.signal.watch('dj', persistedDjJsonl)
+      logger.info(`[booth-daemon] DJ → restored watching ${persistedDjJsonl}`)
+    } else {
+      this.pollForDjJsonl()
+    }
 
     await this.startIpc()
     this.startHealthCheck()
@@ -165,70 +172,17 @@ export class Daemon {
     }
   }
 
-  private resolveDjJsonl(): void {
-    const persisted = this.state.getDjJsonlPath()
-    const deckPaths = this.getDeckJsonlPaths()
-    const latest = findLatestJsonl(this.projectRoot, deckPaths)
-
-    if (latest) {
-      this.assignedJsonlPaths.add(latest)
-      this.state.setDjJsonlPath(latest)
-      this.signal.watch('dj', latest)
-      if (latest !== persisted) {
-        logger.info(`[booth-daemon] DJ → watching ${latest} (stale persisted: ${persisted ?? 'none'})`)
-      } else {
-        logger.info(`[booth-daemon] DJ → restored watching ${latest}`)
-      }
-      // Seed initial DJ status from tail of JSONL
-      this.seedDjStatus(latest)
-    } else {
-      this.pollForDjJsonl()
-    }
-  }
-
-  private getDeckJsonlPaths(): Set<string> {
-    const paths = new Set<string>()
-    for (const deck of this.state.getAllDecks()) {
-      if (deck.jsonlPath) paths.add(deck.jsonlPath)
-    }
-    return paths
-  }
-
-  private seedDjStatus(jsonlPath: string): void {
-    execFile('tail', ['-n', '20', jsonlPath], { encoding: 'utf-8', timeout: 5_000 }, (err, stdout) => {
-      if (err || !stdout) return
-      const lines = stdout.trim().split('\n').reverse()
-      for (const line of lines) {
-        const status = parseEventState(line)
-        if (status) {
-          const djStatus = status === 'idle' ? 'idle' : 'working'
-          this.state.setDjStatus(djStatus)
-          logger.info(`[booth-daemon] DJ initial status seeded: ${djStatus}`)
-          return
-        }
-      }
-    })
-  }
-
-  private checkDjJsonlFreshness(): void {
-    const current = this.state.getDjJsonlPath()
-    if (!current) return
-    // Don't race with active pollForDjJsonl
-    if (this.jsonlPollers.has('dj')) return
-
-    const deckPaths = this.getDeckJsonlPaths()
-    const latest = findLatestJsonl(this.projectRoot, deckPaths)
-
-    if (latest && latest !== current) {
-      // DJ session rotated to a new JSONL
+  private updateDjJsonl(jsonlPath: string): void {
+    const oldPath = this.state.getDjJsonlPath()
+    if (oldPath) {
       this.signal.unwatch('dj')
-      this.assignedJsonlPaths.delete(current)
-      this.assignedJsonlPaths.add(latest)
-      this.state.setDjJsonlPath(latest)
-      this.signal.watch('dj', latest)
-      this.seedDjStatus(latest)
-      logger.info(`[booth-daemon] DJ JSONL rotated → ${latest}`)
+      this.assignedJsonlPaths.delete(oldPath)
     }
+    this.stopJsonlPoll('dj')
+    this.assignedJsonlPaths.add(jsonlPath)
+    this.state.setDjJsonlPath(jsonlPath)
+    this.signal.watch('dj', jsonlPath)
+    logger.info(`[booth-daemon] DJ JSONL updated via IPC → ${jsonlPath}`)
   }
 
   private pollForDjJsonl(): void {
@@ -245,8 +199,7 @@ export class Daemon {
         this.assignedJsonlPaths.add(latest)
         this.state.setDjJsonlPath(latest)
         this.signal.watch('dj', latest)
-        this.seedDjStatus(latest)
-        logger.info(`[booth-daemon] DJ → watching ${latest}`)
+        logger.info(`[booth-daemon] DJ → watching ${latest} (poll fallback)`)
       } else if (attempts >= JSONL_POLL_MAX_ATTEMPTS) {
         clearInterval(timer)
         this.jsonlPollers.delete('dj')
@@ -371,6 +324,13 @@ export class Daemon {
         removeArchiveEntry(this.projectRoot, req.sessionId as string)
         return { ok: true }
       }
+      case 'update-dj-jsonl': {
+        const jsonlPath = req.jsonlPath as string
+        if (!jsonlPath) return { error: 'jsonlPath required' }
+        if (!existsSync(jsonlPath)) return { error: `jsonlPath not found: ${jsonlPath}` }
+        this.updateDjJsonl(jsonlPath)
+        return { ok: true }
+      }
       case 'reload':
         // Respond before graceful reload
         setTimeout(() => this.gracefulReload(), 100)
@@ -396,8 +356,6 @@ export class Daemon {
           this.state.updateDeckStatus(deck.id, 'error')
         }
       }
-      // Detect DJ JSONL rotation (e.g., after context compaction)
-      this.checkDjJsonlFreshness()
     }, 30_000)
   }
 
@@ -449,8 +407,9 @@ export class Daemon {
     for (const [id] of this.jsonlPollers) this.stopJsonlPoll(id)
     this.signal.unwatchAll()
 
-    // Clear all deck entries so state.json is clean on next startup
+    // Clear all state so state.json is clean on next startup
     this.state.clearAllDecks()
+    this.state.setDjJsonlPath(undefined)
     this.state.stop()
 
     if (this.healthTimer) clearInterval(this.healthTimer)

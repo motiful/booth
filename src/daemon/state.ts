@@ -116,8 +116,9 @@ export class BoothState extends EventEmitter {
     return this.djJsonlPath
   }
 
-  setDjJsonlPath(path: string): void {
+  setDjJsonlPath(path: string | undefined): void {
     this.djJsonlPath = path
+    this.markDirty()
   }
 
   private persist(): void {

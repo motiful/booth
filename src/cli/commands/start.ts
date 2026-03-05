@@ -1,10 +1,10 @@
 import { fork } from 'node:child_process'
-import { existsSync, mkdirSync, openSync } from 'node:fs'
+import { existsSync, mkdirSync, openSync, readdirSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
-import { findProjectRoot, deriveSocket, initBoothDir, logsDir, SESSION } from '../../constants.js'
+import { findProjectRoot, deriveSocket, initBoothDir, logsDir, ccProjectsDir, SESSION } from '../../constants.js'
 import { hasSession, newSession, tmux, tmuxSafe, tmuxAttach } from '../../tmux.js'
-import { isDaemonRunning } from '../../ipc.js'
+import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { ensureSessionEndHook } from '../../hooks.js'
 
 export async function startCommand(_args: string[]): Promise<void> {
@@ -96,6 +96,37 @@ export async function startCommand(_args: string[]): Promise<void> {
     process.exit(1)
   }
 
+  // Discover DJ JSONL and notify daemon before attaching.
+  // Best-effort: if CC hasn't created its JSONL yet, daemon's pollForDjJsonl handles it.
+  const djJsonl = await discoverDjJsonl(projectRoot)
+  if (djJsonl) {
+    await ipcRequest(projectRoot, { cmd: 'update-dj-jsonl', jsonlPath: djJsonl }).catch(() => {})
+  }
+
   console.log('[booth] DJ ready — attaching')
   tmuxAttach(socket, 'attach-session', '-t', SESSION)
+}
+
+async function discoverDjJsonl(projectRoot: string): Promise<string | undefined> {
+  const dir = ccProjectsDir(projectRoot)
+  if (!existsSync(dir)) return undefined
+
+  // Poll up to 5s (CC may still be starting)
+  for (let i = 0; i < 5; i++) {
+    const files = readdirSync(dir)
+      .filter(f => f.endsWith('.jsonl'))
+      .map(f => ({ path: join(dir, f), mtime: statSync(join(dir, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime)
+
+    // Pick the most recently modified JSONL (DJ's fresh session)
+    if (files.length > 0) {
+      const newest = files[0]
+      // Only accept if modified within last 30s (it's the fresh DJ session)
+      if (Date.now() - newest.mtime < 30_000) {
+        return newest.path
+      }
+    }
+    await new Promise(r => setTimeout(r, 1_000))
+  }
+  return undefined
 }
