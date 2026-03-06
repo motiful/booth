@@ -24,6 +24,8 @@ export interface DeckStateChange {
   timestamp: number
 }
 
+export type ExitReason = 'killed' | 'stopped' | 'exited' | 'crashed'
+
 export interface ArchivedDeck {
   id: string
   name: string
@@ -33,6 +35,7 @@ export interface ArchivedDeck {
   sessionId: string
   prompt?: string
   noLoop?: boolean
+  exitReason?: ExitReason
   createdAt: number
   killedAt: number
 }

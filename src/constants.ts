@@ -11,7 +11,6 @@ export const BOOTH_DIR = '.booth'
 export const STATE_FILE = 'state.json'
 export const DB_FILE = 'booth.db'
 export const REPORTS_DIR = 'reports'
-export const ARCHIVES_DIR = 'archives'
 
 export function findProjectRoot(from: string = process.cwd()): string {
   let dir = resolve(from)

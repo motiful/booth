@@ -1,67 +1,105 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { findProjectRoot, deriveSocket, boothPath, STATE_FILE, ARCHIVES_DIR, SESSION } from '../../constants.js'
+import Database from 'better-sqlite3'
+import { findProjectRoot, deriveSocket, boothPath, DB_FILE, SESSION } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { tmux, sleepMs } from '../../tmux.js'
 import { ensureDaemonAndSession, launchDJ, attachSession } from './start.js'
-import type { DeckInfo, DeckMode, ArchivedDeck } from '../../types.js'
+import type { DeckInfo, DeckMode, ArchivedDeck, ExitReason } from '../../types.js'
 
-interface ArchiveEntry extends ArchivedDeck {
-  _cold?: boolean
+interface ArchiveRow {
+  id: string
+  name: string
+  mode: string
+  dir: string
+  jsonl_path: string | null
+  session_id: string
+  prompt: string | null
+  no_loop: number
+  exit_reason: string | null
+  created_at: number
+  killed_at: number
+}
+
+function rowToArchivedDeck(row: ArchiveRow): ArchivedDeck {
+  return {
+    id: row.id,
+    name: row.name,
+    mode: row.mode as DeckMode,
+    dir: row.dir,
+    jsonlPath: row.jsonl_path ?? '',
+    sessionId: row.session_id,
+    prompt: row.prompt ?? undefined,
+    noLoop: row.no_loop === 1 ? true : undefined,
+    exitReason: (row.exit_reason as ExitReason) ?? undefined,
+    createdAt: row.created_at,
+    killedAt: row.killed_at,
+  }
+}
+
+function openDb(projectRoot: string): Database.Database | null {
+  const dbPath = boothPath(projectRoot, DB_FILE)
+  if (!existsSync(dbPath)) return null
+  return new Database(dbPath, { readonly: true })
 }
 
 export function readArchivesFromState(projectRoot: string): ArchivedDeck[] {
-  const p = boothPath(projectRoot, STATE_FILE)
-  if (!existsSync(p)) return []
+  const db = openDb(projectRoot)
+  if (!db) return []
   try {
-    const raw = JSON.parse(readFileSync(p, 'utf-8'))
-    return Array.isArray(raw.archives) ? raw.archives : []
-  } catch {
-    return []
+    const rows = db.prepare(`SELECT * FROM archives ORDER BY killed_at DESC`).all() as ArchiveRow[]
+    return rows.map(rowToArchivedDeck)
+  } finally {
+    db.close()
   }
 }
 
 function readDjSessionIdFromState(projectRoot: string): string | undefined {
-  const p = boothPath(projectRoot, STATE_FILE)
-  if (!existsSync(p)) return undefined
+  const db = openDb(projectRoot)
+  if (!db) return undefined
   try {
-    const raw = JSON.parse(readFileSync(p, 'utf-8'))
-    return typeof raw.djSessionId === 'string' ? raw.djSessionId : undefined
-  } catch {
-    return undefined
+    const row = db.prepare(`SELECT value FROM meta WHERE key = 'djSessionId'`).get() as { value: string } | undefined
+    return row?.value ?? undefined
+  } finally {
+    db.close()
   }
 }
 
-function readColdArchives(projectRoot: string): ArchiveEntry[] {
-  const dir = boothPath(projectRoot, ARCHIVES_DIR)
-  if (!existsSync(dir)) return []
-  const files = readdirSync(dir).filter(f => f.startsWith('archive-') && f.endsWith('.json')).sort().reverse()
-  const result: ArchiveEntry[] = []
-  for (const f of files) {
-    try {
-      const entries: ArchivedDeck[] = JSON.parse(readFileSync(join(dir, f), 'utf-8'))
-      for (const e of entries) result.push({ ...e, _cold: true })
-    } catch { /* skip corrupted */ }
+function listArchiveEntries(projectRoot: string, name?: string): ArchivedDeck[] {
+  const db = openDb(projectRoot)
+  if (!db) return []
+  try {
+    const rows = name
+      ? db.prepare(`SELECT * FROM archives WHERE name = ? ORDER BY killed_at DESC`).all(name) as ArchiveRow[]
+      : db.prepare(`SELECT * FROM archives ORDER BY killed_at DESC`).all() as ArchiveRow[]
+    return rows.map(rowToArchivedDeck)
+  } finally {
+    db.close()
   }
-  // Sort cold entries newest-first by killedAt
-  result.sort((a, b) => b.killedAt - a.killedAt)
-  return result
 }
 
-function readAllArchives(projectRoot: string): ArchiveEntry[] {
-  const hot: ArchiveEntry[] = readArchivesFromState(projectRoot)
-  const cold = readColdArchives(projectRoot)
-  return [...hot, ...cold]
+function findArchiveEntryBySessionId(projectRoot: string, sessionId: string): ArchivedDeck | undefined {
+  const db = openDb(projectRoot)
+  if (!db) return undefined
+  try {
+    const row = db.prepare(`SELECT * FROM archives WHERE session_id = ? LIMIT 1`).get(sessionId) as ArchiveRow | undefined
+    return row ? rowToArchivedDeck(row) : undefined
+  } finally {
+    db.close()
+  }
 }
 
-function listArchiveEntries(projectRoot: string, name?: string): ArchiveEntry[] {
-  const archives = readAllArchives(projectRoot)
-  return name ? archives.filter(e => e.name === name) : archives
-}
-
-function findArchiveEntryBySessionId(projectRoot: string, sessionId: string): ArchiveEntry | undefined {
-  return readAllArchives(projectRoot).find(e => e.sessionId === sessionId)
+/** Read only resumable archives (exit_reason = 'stopped') */
+function readResumableArchives(projectRoot: string): ArchivedDeck[] {
+  const db = openDb(projectRoot)
+  if (!db) return []
+  try {
+    const rows = db.prepare(`SELECT * FROM archives WHERE exit_reason = 'stopped' ORDER BY killed_at DESC`).all() as ArchiveRow[]
+    return rows.map(rowToArchivedDeck)
+  } finally {
+    db.close()
+  }
 }
 
 export async function resumeCommand(args: string[]): Promise<void> {
@@ -99,8 +137,8 @@ export async function resumeCommand(args: string[]): Promise<void> {
       const mode = e.mode[0].toUpperCase()
       const sid = e.sessionId.slice(0, 8) + '...'
       const missing = !existsSync(e.jsonlPath) ? '  (JSONL missing!)' : ''
-      const coldTag = (e as ArchiveEntry)._cold ? ' [cold]' : ''
-      console.log(`  [${i + 1}] ${e.name.padEnd(12)} killed ${ago.padEnd(8)} [${mode}] session: ${sid}${coldTag}${missing}`)
+      const reason = e.exitReason ? ` (${e.exitReason})` : ''
+      console.log(`  [${i + 1}] ${e.name.padEnd(12)} killed ${ago.padEnd(8)} [${mode}] session: ${sid}${reason}${missing}`)
     }
     return
   }
@@ -139,10 +177,10 @@ export async function resumeCommand(args: string[]): Promise<void> {
     return
   }
 
-  // No args: resume all hot archived decks + DJ, then attach
-  const entries = readArchivesFromState(projectRoot)
+  // No args: resume all stopped archives + DJ, then attach
+  const entries = readResumableArchives(projectRoot)
   if (entries.length === 0) {
-    console.log('[booth] no archived decks to resume')
+    console.log('[booth] no resumable decks (only stopped decks can be resumed)')
   } else {
     for (const entry of entries) {
       if (!existsSync(entry.jsonlPath)) {

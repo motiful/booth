@@ -3,7 +3,7 @@ import { existsSync, readFileSync, renameSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import Database from 'better-sqlite3'
 import { boothPath, STATE_FILE, DB_FILE } from '../constants.js'
-import type { DeckInfo, DeckStatus, DeckStateChange, DeckMode, ArchivedDeck } from '../types.js'
+import type { DeckInfo, DeckStatus, DeckStateChange, DeckMode, ArchivedDeck, ExitReason } from '../types.js'
 
 export class BoothState extends EventEmitter {
   private db!: Database.Database
@@ -165,17 +165,17 @@ export class BoothState extends EventEmitter {
 
   // --- Archive methods ---
 
-  archiveDeck(deck: DeckInfo): void {
+  archiveDeck(deck: DeckInfo, exitReason: ExitReason): void {
     if (!deck.jsonlPath) return
     const now = Date.now()
     const sessionId = deck.jsonlPath.replace(/.*\//, '').replace('.jsonl', '')
     this.db.prepare(`
-      INSERT OR REPLACE INTO archives (id, name, mode, dir, jsonl_path, session_id, prompt, no_loop, created_at, killed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO archives (id, name, mode, dir, jsonl_path, session_id, prompt, no_loop, exit_reason, created_at, killed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       deck.id, deck.name, deck.mode, deck.dir, deck.jsonlPath,
       sessionId, deck.prompt ?? null, deck.noLoop ? 1 : 0,
-      deck.createdAt, now
+      exitReason ?? null, deck.createdAt, now
     )
   }
 
@@ -209,6 +209,12 @@ export class BoothState extends EventEmitter {
   // --- Schema & Migration ---
 
   private initSchema(): void {
+    // Migrate existing archives table: add exit_reason if missing
+    const archiveInfo = this.db.prepare(`PRAGMA table_info(archives)`).all() as { name: string }[]
+    if (archiveInfo.length > 0 && !archiveInfo.some(c => c.name === 'exit_reason')) {
+      this.db.exec(`ALTER TABLE archives ADD COLUMN exit_reason TEXT`)
+    }
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id          TEXT PRIMARY KEY,
@@ -242,6 +248,7 @@ export class BoothState extends EventEmitter {
         session_id  TEXT PRIMARY KEY,
         prompt      TEXT,
         no_loop     INTEGER DEFAULT 0,
+        exit_reason TEXT,
         created_at  INTEGER NOT NULL,
         killed_at   INTEGER NOT NULL
       );
@@ -297,12 +304,12 @@ export class BoothState extends EventEmitter {
         if (Array.isArray(raw.archives)) {
           for (const a of raw.archives as ArchivedDeck[]) {
             this.db.prepare(`
-              INSERT OR IGNORE INTO archives (id, name, mode, dir, jsonl_path, session_id, prompt, no_loop, created_at, killed_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              INSERT OR IGNORE INTO archives (id, name, mode, dir, jsonl_path, session_id, prompt, no_loop, exit_reason, created_at, killed_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
               a.id, a.name, a.mode, a.dir, a.jsonlPath,
               a.sessionId, a.prompt ?? null, a.noLoop ? 1 : 0,
-              a.createdAt, a.killedAt
+              'stopped', a.createdAt, a.killedAt
             )
           }
         }
@@ -371,6 +378,7 @@ interface ArchiveRow {
   session_id: string
   prompt: string | null
   no_loop: number
+  exit_reason: string | null
   created_at: number
   killed_at: number
 }
@@ -402,6 +410,7 @@ function rowToArchivedDeck(row: ArchiveRow): ArchivedDeck {
     sessionId: row.session_id,
     prompt: row.prompt ?? undefined,
     noLoop: row.no_loop === 1 ? true : undefined,
+    exitReason: (row.exit_reason as ExitReason) ?? undefined,
     createdAt: row.created_at,
     killedAt: row.killed_at,
   }

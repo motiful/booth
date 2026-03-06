@@ -96,7 +96,7 @@ export class Daemon {
 
   removeDeck(deckId: string): void {
     const deck = this.state.getDeck(deckId)
-    if (deck) this.state.archiveDeck(deck)
+    if (deck) this.state.archiveDeck(deck, 'killed')
     this.stopWaiter(deckId)
     this.signal.unwatch(deckId)
     this.reactor.clearDeckTimers(deckId)
@@ -287,7 +287,7 @@ export class Daemon {
         this.stopWaiter(deckId)
         this.signal.unwatch(deckId)
         this.reactor.clearDeckTimers(deckId)
-        this.state.archiveDeck(deck)
+        this.state.archiveDeck(deck, 'exited')
         this.state.removeDeck(deckId)
 
         this.reactor.notifyDj(`Deck "${deckName}" session exited (${reason}). Report: ${rPath}`)
@@ -436,7 +436,7 @@ export class Daemon {
 
     // Archive all active decks before killing
     for (const deck of this.state.getAllDecks()) {
-      this.state.archiveDeck(deck)
+      this.state.archiveDeck(deck, 'stopped')
     }
 
     // Kill all deck windows
