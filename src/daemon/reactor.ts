@@ -48,7 +48,7 @@ export class Reactor {
 
   // Check loop state — daemon-driven multi-round check
   private checkRounds = new Map<string, number>()
-  private checkHeadSnapshot = new Map<string, string>()
+  private checkSnapshot = new Map<string, string>()
 
   constructor(projectRoot: string, state: BoothState) {
     this.projectRoot = projectRoot
@@ -126,8 +126,8 @@ export class Reactor {
         msg += ' Skip the sub-agent review loop. Write your report directly.'
       }
 
-      // Capture git HEAD for diff detection on next idle
-      this.checkHeadSnapshot.set(deck.id, this.captureGitHead(deck.dir))
+      // Capture git snapshot for diff detection on next idle
+      this.checkSnapshot.set(deck.id, this.captureSnapshot(deck.dir))
 
       // Set checking status optimistically — ensures idle→checking
       // transition fires, so subsequent idle signal won't be deduped
@@ -160,8 +160,8 @@ export class Reactor {
       }
 
       const round = this.checkRounds.get(deck.id) ?? 1
-      const savedHead = this.checkHeadSnapshot.get(deck.id)
-      const hasChanges = savedHead ? this.hasGitChanges(deck.dir, savedHead) : false
+      const savedSnapshot = this.checkSnapshot.get(deck.id)
+      const hasChanges = savedSnapshot ? this.hasGitChanges(deck.dir, savedSnapshot) : false
 
       // Check loop: if there are changes and we haven't hit max rounds, re-trigger
       if (round < MAX_CHECK_ROUNDS && hasChanges) {
@@ -181,7 +181,7 @@ export class Reactor {
       this.state.updateDeck(deck.id, { checkSentAt: undefined })
       this.clearCheckPollTimer(deck.id)
       this.checkRounds.delete(deck.id)
-      this.checkHeadSnapshot.delete(deck.id)
+      this.checkSnapshot.delete(deck.id)
 
       if (round >= MAX_CHECK_ROUNDS && hasChanges) {
         logger.warn(`[booth-reactor] deck "${deck.name}" hit MAX_CHECK_ROUNDS (${MAX_CHECK_ROUNDS}) with remaining changes`)
@@ -231,25 +231,37 @@ export class Reactor {
 
   // --- Git diff detection for check loop ---
 
-  private captureGitHead(dir: string): string {
+  /** Capture full git state: HEAD + unstaged + staged (excluding .booth/) */
+  private captureSnapshot(dir: string): string {
     try {
-      return execFileSync('git', ['rev-parse', 'HEAD'], {
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], {
         cwd: dir, encoding: 'utf8', timeout: 5_000,
       }).trim()
+      const unstaged = execFileSync('git', ['diff', '--name-only', '--', '.', ':!.booth/'], {
+        cwd: dir, encoding: 'utf8', timeout: 5_000,
+      }).trim()
+      const staged = execFileSync('git', ['diff', '--staged', '--name-only', '--', '.', ':!.booth/'], {
+        cwd: dir, encoding: 'utf8', timeout: 5_000,
+      }).trim()
+      return [head, unstaged, staged].join('\n')
     } catch {
       return ''
     }
   }
 
-  private hasGitChanges(dir: string, savedHead: string): boolean {
+  /** Compare current git state against saved snapshot — true only if something changed */
+  private hasGitChanges(dir: string, savedSnapshot: string): boolean {
+    if (!savedSnapshot) return false
     try {
-      const currentHead = this.captureGitHead(dir)
-      if (currentHead && currentHead !== savedHead) return true
-      // Check uncommitted changes excluding .booth/
-      const diff = execFileSync('git', ['diff', '--name-only', '--', '.', ':!.booth/'], {
-        cwd: dir, encoding: 'utf8', timeout: 5_000,
-      }).trim()
-      return diff.length > 0
+      const current = this.captureSnapshot(dir)
+      if (!current) return false
+      const changed = current !== savedSnapshot
+      logger.debug(`[booth-reactor] diff detection: changed=${changed}`)
+      if (changed) {
+        logger.debug(`[booth-reactor] diff saved:\n${savedSnapshot}`)
+        logger.debug(`[booth-reactor] diff current:\n${current}`)
+      }
+      return changed
     } catch {
       return false
     }
@@ -400,7 +412,7 @@ export class Reactor {
     this.errorContext.delete(deckId)
     this.holdingNotified.delete(deckId)
     this.checkRounds.delete(deckId)
-    this.checkHeadSnapshot.delete(deckId)
+    this.checkSnapshot.delete(deckId)
     this.clearPlanModeTimer(deckId)
     this.clearCheckPollTimer(deckId)
   }
