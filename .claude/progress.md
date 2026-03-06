@@ -530,9 +530,9 @@ SKILL.md split + init command. Decouples DJ protocol from skill entrypoint; adds
 
 **待执行 TODO**：
 - [x] State → SQLite 迁移（state.ts 内部实现替换，公共 API 不变）— c239ae0
-- [ ] archives 加 exit_reason 字段（killed/stopped/exited/crashed），resume 只恢复 stopped
-- [ ] DJ 作为 sessions 表一等公民（status/sessionId/paneId 统一管理）
-- [ ] DJ 退出检测（修复 session-end-hook 跳过 + health check 覆盖 DJ）
+- [x] archives 加 exit_reason 字段 + resume.ts 读 SQLite（9010c57）
+- [x] DJ 一等公民化：sessions 表 role='dj' + registerDj/getDj/updateDj/removeDj + 完整状态集
+- [x] DJ 退出检测：session-end-hook 覆盖 DJ（dj-exited IPC）+ health check 覆盖 DJ pane
 - [ ] restore 后 status 刷新机制（避免 stale status + dedup）
 - [ ] Report 元数据管理（SQLite 索引 + read/unread/reviewed 状态 + 面板化）
 - [x] 战时模式（.booth/warroom 文件存在时追加到 DJ system prompt）— 89f1151

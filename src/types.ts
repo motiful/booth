@@ -17,6 +17,15 @@ export interface DeckInfo {
   updatedAt: number
 }
 
+export interface DjInfo {
+  status: DeckStatus
+  paneId: string
+  jsonlPath?: string
+  sessionId?: string
+  createdAt: number
+  updatedAt: number
+}
+
 export interface DeckStateChange {
   deckId: string
   prev: DeckStatus

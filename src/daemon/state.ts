@@ -3,7 +3,7 @@ import { existsSync, readFileSync, renameSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import Database from 'better-sqlite3'
 import { boothPath, STATE_FILE, DB_FILE } from '../constants.js'
-import type { DeckInfo, DeckStatus, DeckStateChange, DeckMode, ArchivedDeck, ExitReason } from '../types.js'
+import type { DeckInfo, DjInfo, DeckStatus, DeckStateChange, DeckMode, ArchivedDeck, ExitReason } from '../types.js'
 
 export class BoothState extends EventEmitter {
   private db!: Database.Database
@@ -11,7 +11,7 @@ export class BoothState extends EventEmitter {
 
   // In-memory cache for hot-path reads
   private decks = new Map<string, DeckInfo>()
-  private djStatus: 'idle' | 'working' = 'idle'
+  private djCache: DjInfo | undefined
 
   constructor(projectRoot: string) {
     super()
@@ -124,43 +124,51 @@ export class BoothState extends EventEmitter {
     return [...this.decks.values()].some(d => d.status !== 'stopped')
   }
 
-  // --- DJ methods ---
+  // --- DJ methods (DJ is a row in sessions with id='dj', role='dj') ---
 
-  getDjStatus(): 'idle' | 'working' {
-    return this.djStatus
+  registerDj(paneId: string, sessionId?: string, jsonlPath?: string): void {
+    const now = Date.now()
+    this.db.prepare(`
+      INSERT OR REPLACE INTO sessions (id, name, role, status, pane_id, session_id, jsonl_path, created_at, updated_at)
+      VALUES ('dj', 'DJ', 'dj', 'idle', ?, ?, ?, ?, ?)
+    `).run(paneId, sessionId ?? null, jsonlPath ?? null, now, now)
+    this.djCache = { status: 'idle', paneId, sessionId, jsonlPath, createdAt: now, updatedAt: now }
+    this.emit('dj:registered')
   }
 
-  setDjStatus(status: 'idle' | 'working'): void {
-    if (this.djStatus === status) return
-    this.djStatus = status
-    this.db.prepare(`INSERT OR REPLACE INTO meta (key, value) VALUES ('djStatus', ?)`).run(status)
+  getDj(): DjInfo | undefined {
+    return this.djCache ? { ...this.djCache } : undefined
+  }
+
+  updateDj(patch: Partial<DjInfo>): void {
+    if (!this.djCache) return
+    const updated = { ...this.djCache, ...patch, updatedAt: Date.now() }
+    this.db.prepare(`
+      UPDATE sessions SET
+        status = ?, pane_id = ?, session_id = ?, jsonl_path = ?, updated_at = ?
+      WHERE id = 'dj'
+    `).run(updated.status, updated.paneId, updated.sessionId ?? null, updated.jsonlPath ?? null, updated.updatedAt)
+    Object.assign(this.djCache, patch)
+    this.djCache.updatedAt = updated.updatedAt
+  }
+
+  removeDj(): void {
+    this.db.prepare(`DELETE FROM sessions WHERE id = 'dj'`).run()
+    this.djCache = undefined
+  }
+
+  // Thin wrappers for backward compatibility (used by reactor.ts, signal handler)
+  getDjStatus(): DeckStatus {
+    return this.djCache?.status ?? 'stopped'
+  }
+
+  setDjStatus(status: DeckStatus): void {
+    if (!this.djCache || this.djCache.status === status) return
+    const now = Date.now()
+    this.db.prepare(`UPDATE sessions SET status = ?, updated_at = ? WHERE id = 'dj'`).run(status, now)
+    this.djCache.status = status
+    this.djCache.updatedAt = now
     this.emit('dj:status-changed', status)
-  }
-
-  getDjJsonlPath(): string | undefined {
-    const row = this.db.prepare(`SELECT value FROM meta WHERE key = 'djJsonlPath'`).get() as { value: string } | undefined
-    return row?.value ?? undefined
-  }
-
-  setDjJsonlPath(path: string | undefined): void {
-    if (path === undefined) {
-      this.db.prepare(`DELETE FROM meta WHERE key = 'djJsonlPath'`).run()
-    } else {
-      this.db.prepare(`INSERT OR REPLACE INTO meta (key, value) VALUES ('djJsonlPath', ?)`).run(path)
-    }
-  }
-
-  getDjSessionId(): string | undefined {
-    const row = this.db.prepare(`SELECT value FROM meta WHERE key = 'djSessionId'`).get() as { value: string } | undefined
-    return row?.value ?? undefined
-  }
-
-  setDjSessionId(id: string | undefined): void {
-    if (id === undefined) {
-      this.db.prepare(`DELETE FROM meta WHERE key = 'djSessionId'`).run()
-    } else {
-      this.db.prepare(`INSERT OR REPLACE INTO meta (key, value) VALUES ('djSessionId', ?)`).run(id)
-    }
   }
 
   // --- Archive methods ---
@@ -314,15 +322,13 @@ export class BoothState extends EventEmitter {
           }
         }
 
-        // Migrate DJ metadata
-        if (raw.djStatus) {
-          this.db.prepare(`INSERT OR IGNORE INTO meta (key, value) VALUES ('djStatus', ?)`).run(raw.djStatus)
-        }
-        if (raw.djJsonlPath) {
-          this.db.prepare(`INSERT OR IGNORE INTO meta (key, value) VALUES ('djJsonlPath', ?)`).run(raw.djJsonlPath)
-        }
-        if (raw.djSessionId) {
-          this.db.prepare(`INSERT OR IGNORE INTO meta (key, value) VALUES ('djSessionId', ?)`).run(raw.djSessionId)
+        // Migrate DJ metadata into sessions table
+        if (raw.djStatus || raw.djJsonlPath || raw.djSessionId) {
+          const now = Date.now()
+          this.db.prepare(`
+            INSERT OR IGNORE INTO sessions (id, name, role, status, session_id, jsonl_path, pane_id, created_at, updated_at)
+            VALUES ('dj', 'DJ', 'dj', ?, ?, ?, '', ?, ?)
+          `).run(raw.djStatus ?? 'idle', raw.djSessionId ?? null, raw.djJsonlPath ?? null, now, now)
         }
       })
       migrate()
@@ -339,10 +345,42 @@ export class BoothState extends EventEmitter {
       this.decks.set(row.id, rowToDeckInfo(row))
     }
 
-    // Load DJ status
-    const djRow = this.db.prepare(`SELECT value FROM meta WHERE key = 'djStatus'`).get() as { value: string } | undefined
-    if (djRow?.value === 'idle' || djRow?.value === 'working') {
-      this.djStatus = djRow.value
+    // Load DJ from sessions table
+    const djRow = this.db.prepare(`SELECT * FROM sessions WHERE id = 'dj' AND role = 'dj'`).get() as SessionRow | undefined
+    if (djRow) {
+      this.djCache = {
+        status: djRow.status as DeckStatus,
+        paneId: djRow.pane_id ?? '',
+        jsonlPath: djRow.jsonl_path ?? undefined,
+        sessionId: djRow.session_id ?? undefined,
+        createdAt: djRow.created_at,
+        updatedAt: djRow.updated_at,
+      }
+    }
+
+    // Migrate DJ from meta KV to sessions table (one-time)
+    if (!djRow) {
+      const metaDjStatus = this.db.prepare(`SELECT value FROM meta WHERE key = 'djStatus'`).get() as { value: string } | undefined
+      const metaDjJsonl = this.db.prepare(`SELECT value FROM meta WHERE key = 'djJsonlPath'`).get() as { value: string } | undefined
+      const metaDjSession = this.db.prepare(`SELECT value FROM meta WHERE key = 'djSessionId'`).get() as { value: string } | undefined
+      if (metaDjStatus || metaDjJsonl || metaDjSession) {
+        const now = Date.now()
+        const status = metaDjStatus?.value ?? 'idle'
+        this.db.prepare(`
+          INSERT OR IGNORE INTO sessions (id, name, role, status, session_id, jsonl_path, pane_id, created_at, updated_at)
+          VALUES ('dj', 'DJ', 'dj', ?, ?, ?, '', ?, ?)
+        `).run(status, metaDjSession?.value ?? null, metaDjJsonl?.value ?? null, now, now)
+        this.djCache = {
+          status: status as DeckStatus,
+          paneId: '',
+          jsonlPath: metaDjJsonl?.value,
+          sessionId: metaDjSession?.value,
+          createdAt: now,
+          updatedAt: now,
+        }
+        // Clean up meta KV
+        this.db.prepare(`DELETE FROM meta WHERE key IN ('djStatus', 'djJsonlPath', 'djSessionId')`).run()
+      }
     }
   }
 }

@@ -59,8 +59,12 @@ function readDjSessionIdFromState(projectRoot: string): string | undefined {
   const db = openDb(projectRoot)
   if (!db) return undefined
   try {
-    const row = db.prepare(`SELECT value FROM meta WHERE key = 'djSessionId'`).get() as { value: string } | undefined
-    return row?.value ?? undefined
+    // Read from sessions table (DJ is a first-class citizen)
+    const row = db.prepare(`SELECT session_id FROM sessions WHERE id = 'dj' AND role = 'dj'`).get() as { session_id: string | null } | undefined
+    if (row?.session_id) return row.session_id
+    // Fallback: check legacy meta KV for migration
+    const metaRow = db.prepare(`SELECT value FROM meta WHERE key = 'djSessionId'`).get() as { value: string } | undefined
+    return metaRow?.value ?? undefined
   } finally {
     db.close()
   }

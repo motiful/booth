@@ -51,8 +51,7 @@ export class Daemon {
 
     this.signal.on('signal', (ev: SignalEvent) => {
       if (ev.deckId === 'dj') {
-        const djStatus = ev.status === 'idle' ? 'idle' : 'working'
-        this.state.setDjStatus(djStatus)
+        this.state.setDjStatus(ev.status)
       } else {
         this.state.updateDeckStatus(ev.deckId, ev.status)
       }
@@ -73,9 +72,9 @@ export class Daemon {
     }
 
     // Restore DJ JSONL from persisted state, or wait for IPC notification.
-    const persistedDjJsonl = this.state.getDjJsonlPath()
-    if (persistedDjJsonl) {
-      this.watchOrWait('dj', persistedDjJsonl)
+    const dj = this.state.getDj()
+    if (dj?.jsonlPath) {
+      this.watchOrWait('dj', dj.jsonlPath)
     }
 
     await this.startIpc()
@@ -183,12 +182,14 @@ export class Daemon {
   }
 
   private updateDjJsonl(jsonlPath: string): void {
-    const oldPath = this.state.getDjJsonlPath()
-    if (oldPath) {
+    const dj = this.state.getDj()
+    if (dj?.jsonlPath) {
       this.signal.unwatch('dj')
       this.stopWaiter('dj')
     }
-    this.state.setDjJsonlPath(jsonlPath)
+    if (dj) {
+      this.state.updateDj({ jsonlPath })
+    }
     this.watchOrWait('dj', jsonlPath)
   }
 
@@ -237,7 +238,7 @@ export class Daemon {
       case 'status':
         return {
           ok: true,
-          dj: this.state.getDjStatus(),
+          dj: this.state.getDj() ?? { status: 'stopped' },
           decks: this.state.getAllDecks(),
           workingDecks: this.state.hasWorkingDecks(),
         }
@@ -292,6 +293,18 @@ export class Daemon {
 
         this.reactor.notifyDj(`Deck "${deckName}" session exited (${reason}). Report: ${rPath}`)
         logger.info(`[booth-daemon] deck "${deckName}" session-end: ${reason}, pane killed`)
+        return { ok: true }
+      }
+      case 'dj-exited': {
+        const reason = typeof msg.reason === 'string' ? msg.reason : 'unknown'
+        const dj = this.state.getDj()
+        if (!dj) return { ok: true }
+
+        this.stopWaiter('dj')
+        this.signal.unwatch('dj')
+        this.state.setDjStatus('stopped')
+
+        logger.info(`[booth-daemon] DJ session-end: ${reason}`)
         return { ok: true }
       }
       case 'send-message': {
@@ -368,10 +381,22 @@ export class Daemon {
       case 'update-dj-jsonl': {
         const jsonlPath = typeof msg.jsonlPath === 'string' && msg.jsonlPath ? msg.jsonlPath : null
         if (!jsonlPath) return { error: 'jsonlPath required' }
-        this.updateDjJsonl(jsonlPath)
-        if (typeof msg.djSessionId === 'string' && msg.djSessionId) {
-          this.state.setDjSessionId(msg.djSessionId)
+        const djSessionId = typeof msg.djSessionId === 'string' ? msg.djSessionId : undefined
+
+        // Resolve DJ pane ID from tmux
+        const socket = deriveSocket(this.projectRoot)
+        const paneResult = tmuxSafe(socket, 'display-message', '-t', `${SESSION}:0`, '-p', '#{pane_id}')
+        const paneId = paneResult.ok ? paneResult.output.trim() : `${SESSION}:0`
+
+        // Register or update DJ in sessions table
+        const existingDj = this.state.getDj()
+        if (!existingDj) {
+          this.state.registerDj(paneId, djSessionId, jsonlPath)
+        } else {
+          this.state.updateDj({ paneId, sessionId: djSessionId, jsonlPath })
         }
+
+        this.updateDjJsonl(jsonlPath)
         // DJ just connected — trigger immediate beat so DJ gets recovery context
         this.reactor.scheduleImmediateBeat()
         return { ok: true }
@@ -393,6 +418,8 @@ export class Daemon {
   private startHealthCheck(): void {
     this.healthTimer = setInterval(() => {
       const socket = deriveSocket(this.projectRoot)
+
+      // Check deck panes
       for (const deck of this.state.getAllDecks()) {
         if (deck.status === 'stopped') continue
         const check = tmuxSafe(socket, 'display-message', '-t', deck.paneId, '-p', '#{pane_pid}')
@@ -400,6 +427,18 @@ export class Daemon {
           logger.warn(`[booth-daemon] deck "${deck.name}" pane gone — marking error`)
           this.signal.unwatch(deck.id)
           this.state.updateDeckStatus(deck.id, 'error')
+        }
+      }
+
+      // Check DJ pane
+      const dj = this.state.getDj()
+      if (dj && dj.status !== 'stopped') {
+        const target = dj.paneId || `${SESSION}:0`
+        const check = tmuxSafe(socket, 'display-message', '-t', target, '-p', '#{pane_pid}')
+        if (!check.ok || !check.output.trim()) {
+          logger.warn('[booth-daemon] DJ pane gone — marking stopped')
+          this.signal.unwatch('dj')
+          this.state.setDjStatus('stopped')
         }
       }
     }, 30_000)
@@ -453,9 +492,9 @@ export class Daemon {
     for (const [id] of this.jsonlWaiters) this.stopWaiter(id)
     this.signal.unwatchAll()
 
-    // Clear all state so state.json is clean on next startup
+    // Clear all state so DB is clean on next startup
     this.state.clearAllDecks()
-    this.state.setDjJsonlPath(undefined)
+    this.state.removeDj()
     this.state.stop()
 
     if (this.healthTimer) clearInterval(this.healthTimer)

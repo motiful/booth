@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { findProjectRoot, boothPath, timestampedReportPath, reportsDir, STATE_FILE } from './constants.js'
+import Database from 'better-sqlite3'
+import { findProjectRoot, boothPath, timestampedReportPath, reportsDir, DB_FILE } from './constants.js'
 import { findLatestReport } from './daemon/report.js'
 import { ipcRequest } from './ipc.js'
 
@@ -11,9 +12,10 @@ interface SessionEndInput {
   reason?: string
 }
 
-interface StateJson {
-  decks?: Record<string, { id: string; name: string; jsonlPath?: string }>
-  djJsonlPath?: string
+interface SessionMatch {
+  id: string
+  name: string
+  role: string
 }
 
 function readStdin(): string {
@@ -72,6 +74,23 @@ function parseJsonlTail(jsonlPath: string): { userText: string; assistantText: s
   return { userText, assistantText }
 }
 
+function findSessionByJsonlPath(projectRoot: string, jsonlPath: string): SessionMatch | undefined {
+  const dbPath = boothPath(projectRoot, DB_FILE)
+  if (!existsSync(dbPath)) return undefined
+
+  try {
+    const db = new Database(dbPath, { readonly: true })
+    try {
+      const row = db.prepare(`SELECT id, name, role FROM sessions WHERE jsonl_path = ? LIMIT 1`).get(jsonlPath) as SessionMatch | undefined
+      return row ?? undefined
+    } finally {
+      db.close()
+    }
+  } catch {
+    return undefined
+  }
+}
+
 async function main(): Promise<void> {
   const raw = readStdin()
   if (!raw.trim()) return
@@ -96,37 +115,24 @@ async function main(): Promise<void> {
     return
   }
 
-  const statePath = boothPath(projectRoot, STATE_FILE)
-  if (!existsSync(statePath)) return
+  // Find matching session (deck or DJ) by jsonlPath from SQLite
+  const match = findSessionByJsonlPath(projectRoot, transcriptPath)
+  if (!match) return
 
-  let state: StateJson
-  try {
-    state = JSON.parse(readFileSync(statePath, 'utf-8'))
-  } catch {
+  // DJ exit — notify daemon (no report needed)
+  if (match.role === 'dj') {
+    try {
+      await ipcRequest(projectRoot, { cmd: 'dj-exited', reason })
+    } catch {
+      // Daemon unreachable
+    }
     return
   }
 
-  // DJ exit — skip silently
-  if (state.djJsonlPath && transcriptPath === state.djJsonlPath) return
+  // Deck exit — write report and notify daemon
+  const deckId = match.id
+  const deckName = match.name
 
-  // Find matching deck by jsonlPath
-  if (!state.decks) return
-
-  let deckId: string | undefined
-  let deckName: string | undefined
-
-  for (const [id, deck] of Object.entries(state.decks)) {
-    if (deck.jsonlPath === transcriptPath) {
-      deckId = id
-      deckName = deck.name
-      break
-    }
-  }
-
-  if (!deckId || !deckName) return
-
-  // Write exit report if not already present
-  const rDir = reportsDir(projectRoot)
   const existingReport = findLatestReport(projectRoot, deckName)
 
   let finalReportPath = existingReport
@@ -158,6 +164,7 @@ async function main(): Promise<void> {
     ].join('\n')
 
     try {
+      const rDir = reportsDir(projectRoot)
       if (!existsSync(rDir)) {
         mkdirSync(rDir, { recursive: true })
       }
