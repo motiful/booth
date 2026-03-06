@@ -231,19 +231,27 @@ export class Reactor {
 
   // --- Git diff detection for check loop ---
 
-  /** Capture full git state: HEAD + unstaged + staged (excluding .booth/) */
+  /** Capture full git state: HEAD + tracked changes (excluding .booth/, .claude/) */
   private captureSnapshot(dir: string): string {
     try {
       const head = execFileSync('git', ['rev-parse', 'HEAD'], {
         cwd: dir, encoding: 'utf8', timeout: 5_000,
       }).trim()
-      const unstaged = execFileSync('git', ['diff', '--name-only', '--', '.', ':!.booth/'], {
+      // Use git status --porcelain which refreshes index first (deterministic output).
+      // git diff is sensitive to index stat cache — deck operations during check
+      // (git status, git add, etc.) can refresh the cache, causing identical working
+      // trees to produce different diff output between two captures.
+      const raw = execFileSync('git', ['status', '--porcelain', '-uno'], {
         cwd: dir, encoding: 'utf8', timeout: 5_000,
-      }).trim()
-      const staged = execFileSync('git', ['diff', '--staged', '--name-only', '--', '.', ':!.booth/'], {
-        cwd: dir, encoding: 'utf8', timeout: 5_000,
-      }).trim()
-      return [head, unstaged, staged].join('\n')
+      })
+      const changes = raw
+        .split('\n')
+        .filter(line => {
+          const path = line.slice(3)
+          return path && !path.startsWith('.booth/') && !path.startsWith('.claude/')
+        })
+        .join('\n')
+      return `${head}\n${changes}`
     } catch {
       return ''
     }
