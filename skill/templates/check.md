@@ -22,9 +22,13 @@ There are two paths depending on whether the deck was spun with `--no-loop`:
 1. **Spawn a sub-agent** to review your changes
 2. **Read the sub-agent's findings**
 3. **Fix any issues found**
-4. **Repeat** until exit condition is met
-5. **Complete pre-report steps** (test, commit, progress update)
-6. **Write the report**
+4. **Complete pre-report steps** (test, commit, progress update)
+5. **Write the report**
+
+> **Daemon-driven iteration**: After you write the report and go idle, the daemon checks
+> if you made git changes during this round. If yes (and max rounds not reached), it
+> sends another `[booth-check]` automatically. You do NOT need to loop internally —
+> just do one thorough round per check signal.
 
 ### Sub-Agent Invocation
 
@@ -68,13 +72,20 @@ The deciding question: **你的产出有下游消费者吗？有 → loop（默�
 
 Task **impact** (not type) determines loop/no-loop. A one-line code change may need loop (if it's on a critical path). A long document may skip loop (if it's just a draft). Don't assume "docs = no-loop, code = loop" — the criterion is **downstream impact**: will someone build on, inherit, or be broken by your output?
 
+## Round Info
+
+The `[booth-check]` signal includes `round=N/M` (e.g., `round=1/5`). This tells you:
+- **N** = current round number
+- **M** = maximum rounds the daemon will allow
+
+Round 1 is the initial check. Rounds 2+ mean the daemon detected git changes after your previous round and is asking you to re-verify.
+
 ## Exit Conditions
 
 | Condition | Status | Action |
 |-----------|--------|--------|
-| Sub-agent finds **no issues** in a round | `SUCCESS` | Write report, done |
-| **5 rounds** reached (hard limit) | `FAIL` | Write report with remaining issues |
-| Same findings **2 rounds in a row** | `FAIL` | Write report — stuck, needs escalation |
+| Sub-agent finds **no issues** | `SUCCESS` | Write report, done |
+| Issues found and **fixed** | `SUCCESS` | Write report — daemon will re-verify if git changed |
 | Remaining issues **beyond your scope** (design questions, unclear requirements, needs user decision) | `FAIL` | Write report — fixed items + remaining for DJ |
 
 ## Completion Dimensions
@@ -274,10 +285,11 @@ The report **must** include a `## Conflict Risk` section.
 ## Idempotency
 
 If you receive `[booth-check]`:
-1. **Check your own context first** — did you already write a report in this session? If yes, you're done. The report file name may differ from what the signal specifies (e.g., you added a date suffix). Your own memory of having written it is authoritative.
-2. **Search, don't exact-match** — look for any report matching your deck name prefix in `.booth/reports/` (e.g., `ls .booth/reports/<deck-name>*`). A report named `<deck>-2026-03-05.md` counts.
-3. If a matching report exists with a terminal status (SUCCESS/FAIL/FAILED/ERROR/AUDIT), you're done — stay idle.
-4. If no matching report exists and you have no memory of writing one, re-read this document and start the review loop from the beginning.
+1. **Check round number first** — if `round=N/M` where N > 1, this is a daemon-driven re-check. Your previous report was archived by the daemon. Proceed with a fresh review — do NOT skip because you "already wrote a report."
+2. **For round 1 (or no round info)**: check your own context — did you already write a report in this session? If yes, you're done.
+3. **Search, don't exact-match** — look for any report matching your deck name prefix in `.booth/reports/` (e.g., `ls .booth/reports/<deck-name>*`). A report named `<deck>-2026-03-05.md` counts. (Archived reports in `.booth/reports/archive/` don't count.)
+4. If a matching report exists with a terminal status (SUCCESS/FAIL/FAILED/ERROR/AUDIT), you're done — stay idle.
+5. If no matching report exists and you have no memory of writing one, re-read this document and start the review loop from the beginning.
 
 ## What You Don't Do
 

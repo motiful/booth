@@ -16,6 +16,7 @@ const BEAT_INITIAL_COOLDOWN = 5 * 60_000
 const BEAT_MAX_COOLDOWN = 60 * 60_000
 const ERROR_RECOVERY_WINDOW = 30_000
 const PLAN_APPROVE_DELAY = 3_000
+const MAX_CHECK_ROUNDS = 5
 
 export class Reactor {
   private state: BoothState
@@ -44,6 +45,10 @@ export class Reactor {
 
   // Check poll timers — safety net for missed idle signals
   private checkPollTimers = new Map<string, ReturnType<typeof setInterval>>()
+
+  // Check loop state — daemon-driven multi-round check
+  private checkRounds = new Map<string, number>()
+  private checkHeadSnapshot = new Map<string, string>()
 
   constructor(projectRoot: string, state: BoothState) {
     this.projectRoot = projectRoot
@@ -109,14 +114,20 @@ export class Reactor {
       // No report yet → trigger deck self-check via .booth/check.md
       const newReportPath = timestampedReportPath(this.projectRoot, deck.name)
       const checkPath = boothPath(this.projectRoot, 'check.md')
+      const round = this.checkRounds.get(deck.id) ?? 1
+      this.checkRounds.set(deck.id, round)
+
       let msg = existsSync(checkPath)
-        ? `[booth-check] Read ${checkPath} and follow the self-verification procedure. Your report path: ${newReportPath}`
-        : `[booth-check] Self-verify your work. Write report to: ${newReportPath} with YAML frontmatter \`status: SUCCESS\` or \`status: FAIL\`.`
+        ? `[booth-check] round=${round}/${MAX_CHECK_ROUNDS} Read ${checkPath} and follow the self-verification procedure. Your report path: ${newReportPath}`
+        : `[booth-check] round=${round}/${MAX_CHECK_ROUNDS} Self-verify your work. Write report to: ${newReportPath} with YAML frontmatter \`status: SUCCESS\` or \`status: FAIL\`.`
 
       // noLoop: tell deck to skip sub-agent review loop
       if (deck.noLoop) {
         msg += ' Skip the sub-agent review loop. Write your report directly.'
       }
+
+      // Capture git HEAD for diff detection on next idle
+      this.checkHeadSnapshot.set(deck.id, this.captureGitHead(deck.dir))
 
       // Set checking status optimistically — ensures idle→checking
       // transition fires, so subsequent idle signal won't be deduped
@@ -148,23 +159,47 @@ export class Reactor {
         return
       }
 
-      // Clear checkSentAt and poll timer now that check is complete
+      const round = this.checkRounds.get(deck.id) ?? 1
+      const savedHead = this.checkHeadSnapshot.get(deck.id)
+      const hasChanges = savedHead ? this.hasGitChanges(deck.dir, savedHead) : false
+
+      // Check loop: if there are changes and we haven't hit max rounds, re-trigger
+      if (round < MAX_CHECK_ROUNDS && hasChanges) {
+        const nextRound = round + 1
+        this.checkRounds.set(deck.id, nextRound)
+        this.state.updateDeck(deck.id, { checkSentAt: undefined })
+        this.clearCheckPollTimer(deck.id)
+        this.archiveStaleReport(rPath!, deck.name)
+        logger.info(`[booth-reactor] deck "${deck.name}" check round ${round}/${MAX_CHECK_ROUNDS} complete with changes — triggering round ${nextRound}`)
+        // Re-fetch deck from state — the original `deck` param has stale checkSentAt
+        const refreshed = this.state.getDeck(deck.id)
+        if (refreshed) this.triggerCheck(refreshed)
+        return
+      }
+
+      // Final round — clear all check loop state
       this.state.updateDeck(deck.id, { checkSentAt: undefined })
       this.clearCheckPollTimer(deck.id)
+      this.checkRounds.delete(deck.id)
+      this.checkHeadSnapshot.delete(deck.id)
+
+      if (round >= MAX_CHECK_ROUNDS && hasChanges) {
+        logger.warn(`[booth-reactor] deck "${deck.name}" hit MAX_CHECK_ROUNDS (${MAX_CHECK_ROUNDS}) with remaining changes`)
+      }
 
       if (deck.mode === 'hold') {
-        const msg = `Deck "${deck.name}" check complete: ${status}. Deck is holding. Report: ${rPath}`
+        const msg = `Deck "${deck.name}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Deck is holding. Report: ${rPath}`
         this.notifyDj(msg)
         this.holdingNotified.add(deck.id)
         this.openReport(rPath)
         this.systemNotify(`Booth: ${deck.name} → ${status} (holding)`)
-        logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status} (holding)`)
+        logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status} (holding, round ${round})`)
       } else {
-        const msg = `Deck "${deck.name}" check complete: ${status}. Report: ${rPath}`
+        const msg = `Deck "${deck.name}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Report: ${rPath}`
         this.notifyDj(msg)
         this.openReport(rPath)
         this.systemNotify(`Booth: ${deck.name} → ${status}`)
-        logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status}`)
+        logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status} (round ${round})`)
       }
     } else {
       logger.debug(`[booth-reactor] deck "${deck.name}" report status "${status}" is non-terminal — waiting`)
@@ -191,6 +226,32 @@ export class Reactor {
       logger.info(`[booth-reactor] archived stale report for "${deckName}" → ${archivePath}`)
     } catch (err) {
       logger.warn(`[booth-reactor] failed to archive stale report for "${deckName}": ${err}`)
+    }
+  }
+
+  // --- Git diff detection for check loop ---
+
+  private captureGitHead(dir: string): string {
+    try {
+      return execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: dir, encoding: 'utf8', timeout: 5_000,
+      }).trim()
+    } catch {
+      return ''
+    }
+  }
+
+  private hasGitChanges(dir: string, savedHead: string): boolean {
+    try {
+      const currentHead = this.captureGitHead(dir)
+      if (currentHead && currentHead !== savedHead) return true
+      // Check uncommitted changes excluding .booth/
+      const diff = execFileSync('git', ['diff', '--name-only', '--', '.', ':!.booth/'], {
+        cwd: dir, encoding: 'utf8', timeout: 5_000,
+      }).trim()
+      return diff.length > 0
+    } catch {
+      return false
     }
   }
 
@@ -338,6 +399,8 @@ export class Reactor {
     }
     this.errorContext.delete(deckId)
     this.holdingNotified.delete(deckId)
+    this.checkRounds.delete(deckId)
+    this.checkHeadSnapshot.delete(deckId)
     this.clearPlanModeTimer(deckId)
     this.clearCheckPollTimer(deckId)
   }
