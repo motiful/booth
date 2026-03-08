@@ -32,6 +32,13 @@ export async function spinCommand(args: string[]): Promise<void> {
 
   const deckId = `deck-${name}`
 
+  // Reject if an active deck with the same name already exists
+  const status = await ipcRequest(projectRoot, { cmd: 'status' }) as { decks?: DeckInfo[] }
+  if (status.decks?.some(d => d.name === name)) {
+    console.error(`[booth] error: deck "${name}" is already active. Kill it first or use a different name.`)
+    process.exit(1)
+  }
+
   // Pre-generate session ID — JSONL path is deterministic
   const sessionId = generateSessionId()
   const jsonlPath = jsonlPathForSession(projectRoot, sessionId)
