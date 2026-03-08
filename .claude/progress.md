@@ -536,6 +536,23 @@ SKILL.md split + init command. Decouples DJ protocol from skill entrypoint; adds
 - [ ] restore 后 status 刷新机制（避免 stale status + dedup）
 - [ ] Report 元数据管理（SQLite 索引 + read/unread/reviewed 状态 + 面板化）
 - [x] 战时模式（.booth/warroom 文件存在时追加到 DJ system prompt）— 89f1151
+- [x] spin 同名 deck 拒绝：spin.ts 查询 status IPC 检查同名活跃 deck — e621251
+
+### Restart Double LaunchDJ Fix (COMPLETE — 2026-03-08)
+
+- [x] 提取 `resumeAllDecks()` 从 `resumeCommand` — 只恢复 deck，不启动 DJ/attach
+- [x] `restart.ts` Phase 3 改用 `resumeAllDecks` 替代 `resumeCommand([])`，消除第二次 `launchDJ` 调用
+
+### D-merge: Sessions/Archives Single Table (COMPLETE — 2026-03-08)
+
+- [x] 合并 sessions + archives 为单表，lifecycle 列区分 active/archived
+- [x] autoincrement rowid 替代 text id 作 PK
+- [x] archiveDeck/archiveDj 原子 UPDATE（替代 INSERT archives + DELETE sessions）
+- [x] DJ shutdown archive 保留 sessionId（不再 removeDj 丢数据）
+- [x] partial unique index（同名 deck 仅一个 active，archived 不限）
+- [x] 旧 schema 自动迁移（检测 id TEXT PK → 迁移 → DROP archives）
+- [x] resume.ts/session-end-hook.ts 适配新 schema
+- [x] sub-agent review: 修复 archive 查询缺 `role='deck'` 过滤（DJ 行混入 resume 列表）
 
 ### Phase 2.9 — Worktree Isolation (NEXT — 最高优先级)
 
