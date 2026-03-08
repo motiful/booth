@@ -182,24 +182,32 @@ export async function resumeCommand(args: string[]): Promise<void> {
   }
 
   // No args: resume all stopped archives + DJ, then attach
-  const entries = readResumableArchives(projectRoot)
-  if (entries.length === 0) {
-    console.log('[booth] no resumable decks (only stopped decks can be resumed)')
-  } else {
-    for (const entry of entries) {
-      if (!existsSync(entry.jsonlPath)) {
-        console.warn(`[booth] skipping "${entry.name}" — JSONL missing: ${entry.jsonlPath}`)
-        continue
-      }
-      await resumeOne(projectRoot, socket, entry)
-    }
-  }
+  await resumeAllDecks(projectRoot, socket)
 
   // Resume DJ with previous session if available
   const djSessionId = readDjSessionIdFromState(projectRoot)
   await launchDJ(projectRoot, djSessionId)
   console.log('[booth] attaching...')
   attachSession(projectRoot)
+}
+
+/**
+ * Resume all stopped archived decks (no DJ, no attach).
+ * Used by restart to recover decks without re-launching DJ.
+ */
+export async function resumeAllDecks(projectRoot: string, socket: string): Promise<void> {
+  const entries = readResumableArchives(projectRoot)
+  if (entries.length === 0) {
+    console.log('[booth] no resumable decks (only stopped decks can be resumed)')
+    return
+  }
+  for (const entry of entries) {
+    if (!existsSync(entry.jsonlPath)) {
+      console.warn(`[booth] skipping "${entry.name}" — JSONL missing: ${entry.jsonlPath}`)
+      continue
+    }
+    await resumeOne(projectRoot, socket, entry)
+  }
 }
 
 async function resumeOne(

@@ -3,7 +3,7 @@ import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { killSession, hasSession } from '../../tmux.js'
 import { removeSessionEndHook, removeSessionStartHook } from '../../hooks.js'
 import { ensureDaemonAndSession, launchDJ, attachSession } from './start.js'
-import { resumeCommand } from './resume.js'
+import { resumeAllDecks } from './resume.js'
 
 export async function restartCommand(args: string[]): Promise<void> {
   const projectRoot = findProjectRoot()
@@ -36,10 +36,10 @@ export async function restartCommand(args: string[]): Promise<void> {
   await ensureDaemonAndSession(projectRoot)
   await launchDJ(projectRoot)
 
-  // Phase 3: Resume archived decks (before attaching — attach blocks)
+  // Phase 3: Resume archived decks only (DJ already launched in Phase 2)
   if (!clean) {
     console.log('[booth] resuming archived decks...')
-    await resumeCommand([])
+    await resumeAllDecks(projectRoot, socket)
   } else {
     console.log('[booth] clean start (no deck recovery)')
   }
