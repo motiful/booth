@@ -13,7 +13,6 @@ interface SessionEndInput {
 }
 
 interface SessionMatch {
-  id: string
   name: string
   role: string
 }
@@ -81,7 +80,7 @@ function findSessionByJsonlPath(projectRoot: string, jsonlPath: string): Session
   try {
     const db = new Database(dbPath, { readonly: true })
     try {
-      const row = db.prepare(`SELECT id, name, role FROM sessions WHERE jsonl_path = ? LIMIT 1`).get(jsonlPath) as SessionMatch | undefined
+      const row = db.prepare(`SELECT name, role FROM sessions WHERE jsonl_path = ? AND lifecycle = 'active' LIMIT 1`).get(jsonlPath) as SessionMatch | undefined
       return row ?? undefined
     } finally {
       db.close()
@@ -130,7 +129,7 @@ async function main(): Promise<void> {
   }
 
   // Deck exit — write report and notify daemon
-  const deckId = match.id
+  const deckId = `deck-${match.name}`
   const deckName = match.name
 
   const existingReport = findLatestReport(projectRoot, deckName)

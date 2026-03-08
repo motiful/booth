@@ -94,12 +94,10 @@ export class Daemon {
   }
 
   removeDeck(deckId: string): void {
-    const deck = this.state.getDeck(deckId)
-    if (deck) this.state.archiveDeck(deck, 'killed')
+    this.state.archiveDeck(deckId, 'killed')
     this.stopWaiter(deckId)
     this.signal.unwatch(deckId)
     this.reactor.clearDeckTimers(deckId)
-    this.state.removeDeck(deckId)
   }
 
   getState(): BoothState {
@@ -284,12 +282,11 @@ export class Daemon {
           tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
         }
 
-        // Cleanup — archive and remove from active decks
+        // Cleanup — archive (single atomic step)
         this.stopWaiter(deckId)
         this.signal.unwatch(deckId)
         this.reactor.clearDeckTimers(deckId)
-        this.state.archiveDeck(deck, 'exited')
-        this.state.removeDeck(deckId)
+        this.state.archiveDeck(deckId, 'exited')
 
         this.reactor.notifyDj(`Deck "${deckName}" session exited (${reason}). Report: ${rPath}`)
         logger.info(`[booth-daemon] deck "${deckName}" session-end: ${reason}, pane killed`)
@@ -302,7 +299,7 @@ export class Daemon {
 
         this.stopWaiter('dj')
         this.signal.unwatch('dj')
-        this.state.setDjStatus('stopped')
+        this.state.archiveDj('exited')
 
         logger.info(`[booth-daemon] DJ session-end: ${reason}`)
         return { ok: true }
@@ -347,10 +344,8 @@ export class Daemon {
         if (!deck || typeof deck !== 'object' || typeof deck.id !== 'string' || typeof deck.name !== 'string') {
           return { error: 'valid deck object required (id, name)' }
         }
-        const sessionId = typeof msg.sessionId === 'string' && msg.sessionId ? msg.sessionId : null
-        if (!sessionId) return { error: 'sessionId string required' }
         this.registerDeck(deck)
-        this.state.removeArchiveEntry(sessionId)
+        // Archive entry stays — history is preserved across spin/kill cycles
         return { ok: true }
       }
       case 'session-changed': {
@@ -473,15 +468,19 @@ export class Daemon {
 
     const socket = deriveSocket(this.projectRoot)
 
-    // Archive all active decks before killing
-    for (const deck of this.state.getAllDecks()) {
-      this.state.archiveDeck(deck, 'stopped')
-    }
+    // Collect pane IDs before archiving (archiveDeck clears cache)
+    const deckPanes = this.state.getAllDecks().map(d => ({ id: d.id, paneId: d.paneId }))
 
-    // Kill all deck windows
+    // Archive all active decks and DJ (preserves history for resume)
     for (const deck of this.state.getAllDecks()) {
-      if (deck.paneId) tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
-      this.signal.unwatch(deck.id)
+      this.state.archiveDeck(deck.id, 'stopped')
+    }
+    this.state.archiveDj('stopped')
+
+    // Kill all deck panes
+    for (const { id, paneId } of deckPanes) {
+      if (paneId) tmuxSafe(socket, 'kill-pane', '-t', paneId)
+      this.signal.unwatch(id)
     }
 
     // Kill DJ session
@@ -492,9 +491,6 @@ export class Daemon {
     for (const [id] of this.jsonlWaiters) this.stopWaiter(id)
     this.signal.unwatchAll()
 
-    // Clear all state so DB is clean on next startup
-    this.state.clearAllDecks()
-    this.state.removeDj()
     this.state.stop()
 
     if (this.healthTimer) clearInterval(this.healthTimer)

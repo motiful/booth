@@ -2,6 +2,8 @@ export type DeckStatus = 'working' | 'idle' | 'checking' | 'error' | 'needs-atte
 
 export type DeckMode = 'auto' | 'hold' | 'live'
 
+export type Lifecycle = 'active' | 'archived'
+
 export interface DeckInfo {
   id: string
   name: string
@@ -9,6 +11,7 @@ export interface DeckInfo {
   mode: DeckMode
   dir: string
   paneId: string
+  sessionId?: string
   jsonlPath?: string
   prompt?: string
   noLoop?: boolean

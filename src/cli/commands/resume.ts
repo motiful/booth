@@ -8,33 +8,37 @@ import { tmux, sleepMs } from '../../tmux.js'
 import { ensureDaemonAndSession, launchDJ, attachSession } from './start.js'
 import type { DeckInfo, DeckMode, ArchivedDeck, ExitReason } from '../../types.js'
 
-interface ArchiveRow {
-  id: string
+interface SessionRow {
+  rowid: number
   name: string
-  mode: string
-  dir: string
+  role: string
+  lifecycle: string
+  status: string
+  mode: string | null
+  dir: string | null
+  pane_id: string | null
+  session_id: string | null
   jsonl_path: string | null
-  session_id: string
   prompt: string | null
   no_loop: number
   exit_reason: string | null
   created_at: number
-  killed_at: number
+  updated_at: number
 }
 
-function rowToArchivedDeck(row: ArchiveRow): ArchivedDeck {
+function rowToArchivedDeck(row: SessionRow): ArchivedDeck {
   return {
-    id: row.id,
+    id: `deck-${row.name}`,
     name: row.name,
-    mode: row.mode as DeckMode,
-    dir: row.dir,
+    mode: (row.mode ?? 'auto') as DeckMode,
+    dir: row.dir ?? '',
     jsonlPath: row.jsonl_path ?? '',
-    sessionId: row.session_id,
+    sessionId: row.session_id ?? '',
     prompt: row.prompt ?? undefined,
     noLoop: row.no_loop === 1 ? true : undefined,
     exitReason: (row.exit_reason as ExitReason) ?? undefined,
     createdAt: row.created_at,
-    killedAt: row.killed_at,
+    killedAt: row.updated_at,
   }
 }
 
@@ -48,7 +52,9 @@ export function readArchivesFromState(projectRoot: string): ArchivedDeck[] {
   const db = openDb(projectRoot)
   if (!db) return []
   try {
-    const rows = db.prepare(`SELECT * FROM archives ORDER BY killed_at DESC`).all() as ArchiveRow[]
+    const rows = db.prepare(`
+      SELECT * FROM sessions WHERE lifecycle = 'archived' AND role = 'deck' ORDER BY updated_at DESC
+    `).all() as SessionRow[]
     return rows.map(rowToArchivedDeck)
   } finally {
     db.close()
@@ -59,8 +65,10 @@ function readDjSessionIdFromState(projectRoot: string): string | undefined {
   const db = openDb(projectRoot)
   if (!db) return undefined
   try {
-    // Read from sessions table (DJ is a first-class citizen)
-    const row = db.prepare(`SELECT session_id FROM sessions WHERE id = 'dj' AND role = 'dj'`).get() as { session_id: string | null } | undefined
+    // Find the most recent DJ session (active or archived) for resume
+    const row = db.prepare(`
+      SELECT session_id FROM sessions WHERE role = 'dj' ORDER BY updated_at DESC LIMIT 1
+    `).get() as { session_id: string | null } | undefined
     if (row?.session_id) return row.session_id
     // Fallback: check legacy meta KV for migration
     const metaRow = db.prepare(`SELECT value FROM meta WHERE key = 'djSessionId'`).get() as { value: string } | undefined
@@ -75,8 +83,8 @@ function listArchiveEntries(projectRoot: string, name?: string): ArchivedDeck[] 
   if (!db) return []
   try {
     const rows = name
-      ? db.prepare(`SELECT * FROM archives WHERE name = ? ORDER BY killed_at DESC`).all(name) as ArchiveRow[]
-      : db.prepare(`SELECT * FROM archives ORDER BY killed_at DESC`).all() as ArchiveRow[]
+      ? db.prepare(`SELECT * FROM sessions WHERE name = ? AND lifecycle = 'archived' AND role = 'deck' ORDER BY updated_at DESC`).all(name) as SessionRow[]
+      : db.prepare(`SELECT * FROM sessions WHERE lifecycle = 'archived' AND role = 'deck' ORDER BY updated_at DESC`).all() as SessionRow[]
     return rows.map(rowToArchivedDeck)
   } finally {
     db.close()
@@ -87,7 +95,9 @@ function findArchiveEntryBySessionId(projectRoot: string, sessionId: string): Ar
   const db = openDb(projectRoot)
   if (!db) return undefined
   try {
-    const row = db.prepare(`SELECT * FROM archives WHERE session_id = ? LIMIT 1`).get(sessionId) as ArchiveRow | undefined
+    const row = db.prepare(`
+      SELECT * FROM sessions WHERE session_id = ? AND lifecycle = 'archived' AND role = 'deck' LIMIT 1
+    `).get(sessionId) as SessionRow | undefined
     return row ? rowToArchivedDeck(row) : undefined
   } finally {
     db.close()
@@ -99,7 +109,9 @@ function readResumableArchives(projectRoot: string): ArchivedDeck[] {
   const db = openDb(projectRoot)
   if (!db) return []
   try {
-    const rows = db.prepare(`SELECT * FROM archives WHERE exit_reason = 'stopped' ORDER BY killed_at DESC`).all() as ArchiveRow[]
+    const rows = db.prepare(`
+      SELECT * FROM sessions WHERE lifecycle = 'archived' AND role = 'deck' AND exit_reason = 'stopped' ORDER BY updated_at DESC
+    `).all() as SessionRow[]
     return rows.map(rowToArchivedDeck)
   } finally {
     db.close()
