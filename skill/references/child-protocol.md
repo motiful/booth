@@ -70,6 +70,18 @@ After a deck goes idle (auto/hold modes only), the daemon sends `[booth-check]`.
 - DJ exists
 - Booth infrastructure
 
+## Forbidden Commands
+
+Decks MUST NEVER execute the following booth commands:
+
+| Command | Why forbidden |
+|---------|--------------|
+| `booth stop` | Kills the entire tmux session — DJ, all other decks, everything dies |
+| `booth restart` | Internally runs stop — same destruction |
+| `booth shutdown` | Alias for stop |
+
+The only booth command a deck MAY run is `booth reload` (hot-restart daemon code without killing any pane). Even this should be rare — decks are workers, not infrastructure operators.
+
 ## Spinning a Deck
 
 ```bash

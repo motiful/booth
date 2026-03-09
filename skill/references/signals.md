@@ -14,9 +14,8 @@ Every deck has a JSONL stream. The daemon tails it in real-time.
 |-------|--------|--------|
 | working | `type=user` or `assistant(tool_use/thinking)` or `progress` | JSONL |
 | idle | `subtype=turn_duration` or `subtype=stop_hook_summary` or `type=last-prompt` | JSONL |
-| error | `subtype=api_error` | JSONL |
-| needs-attention | `[NEEDS ATTENTION]` in assistant text | JSONL |
-| stopped | Pane detected dead during health check, or CC session self-exited (SessionEnd hook) | Daemon (internal) |
+| checking | Set by reactor when sending `[booth-check]` | Daemon (internal) |
+| exited | CC session self-exited (SessionEnd hook) or `booth kill` | Daemon (internal) |
 
 ### Design rules
 
@@ -24,6 +23,7 @@ Every deck has a JSONL stream. The daemon tails it in real-time.
 - No multi-signal cross-validation
 - No debounce needed (idle signals are definitive; state deduplicates repeated idle)
 - capture-pane is debug only, never for core detection
+- Shutdown does NOT change deck status — decks stay working/idle in DB for resume
 
 ## Alert Scenarios
 
@@ -32,20 +32,7 @@ All alerts are delivered as `[booth-alert] <natural language description>`. Ther
 | Scenario | Trigger | Action |
 |----------|---------|--------|
 | Check complete | Deck idle + report has terminal status | DJ: read report, deliver or retry |
-| Error | Error persists beyond 30s recovery window | DJ: spin review deck or escalate to user |
-| Needs attention | Deck flagged `[NEEDS ATTENTION]` | DJ: check what it needs |
 | Deck exited | CC session self-exited (via SessionEnd hook) | DJ: read exit report, decide re-spin or acknowledge |
-
-### Error Recovery Window
-
-Deck errors have a 30-second recovery window before alerting DJ:
-
-1. Error detected (API error, pane issue)
-2. Start 30s timer
-3. If deck emits a `working` event within 30s → error silently absorbed, no alert
-4. If 30s elapses with no recovery → alert DJ with context ("during check" or "during work")
-
-This prevents transient errors (rate limits, network blips) from triggering unnecessary escalation.
 
 ### Idle + Check Flow (Mode-Dependent)
 
@@ -91,9 +78,9 @@ The 3s delay allows `--dangerously-skip-permissions` to auto-resolve if possible
 
 | Signal | Target | When |
 |--------|--------|------|
-| `[booth-alert]` | DJ | Deck state change (idle with report, error, needs-attention) |
+| `[booth-alert]` | DJ | Deck state change (idle with report, deck exited) |
 | `[booth-check]` | Deck | Deck idle, no report file yet |
-| `[booth-beat]` | DJ | Timer: DJ idle + decks working + cooldown elapsed |
+| `[booth-beat]` | DJ | Timer: DJ idle + decks active + cooldown elapsed |
 
 ## Alert Delivery
 
@@ -126,24 +113,68 @@ If the deck was spun with `--no-loop`, an additional suffix is appended: `Skip t
 | `ERROR` | Abnormal crash during execution |
 | `EXIT` | CC session self-exited (user `/exit`, timeout, crash) |
 
-## SessionEnd Hook — Deck Exit Detection
+## Deck Exit — Six Scenarios
 
-When a deck's CC session exits on its own (`/exit`, crash, timeout), the CC `SessionEnd` hook fires instantly — no need to wait for the 30s health check.
+| Scenario | Trigger | Hook behavior | DJ notified? | DB status change |
+|----------|---------|---------------|-------------|-----------------|
+| A: `booth kill <name>` | DJ/user kills deck | kill-pane runs first, removeDeck (sync) follows immediately → hook IPC arrives after exitDeck → no match → silent exit | No (caller knows) | → exited (permanent) |
+| B: CC self-exit (`/exit`) | CC exits gracefully | Hook fires → finds match in DB → writes EXIT report → IPC `deck-exited` → daemon notifyDj | Yes (`[booth-alert]`) | → exited |
+| C: `tmux kill-pane` (external) | User/script kills pane | Same as B — CC receives SIGHUP → graceful exit → hook fires | Yes (`[booth-alert]`) | → exited |
+| D: `booth stop` (global shutdown) | DJ/user stops everything | kill-pane → CC SIGHUP → hook fires → daemon already dead → socket connect fails → silent exit | No (daemon is dead) | **No change** (stays working/idle for resume) |
+| E: `kill -9 <CC_PID>` (SIGKILL) | Force-kill CC process | Hook does NOT fire (SIGKILL is uncatchable) | No | No change until pruneStaleDecks |
+| F: `kill -9 <daemon_PID>` | Force-kill daemon | Deck CC processes continue running (independent of daemon) | No (daemon is dead) | No change until new daemon starts + pruneStaleDecks |
 
-### Data Flow
+### Scenario A: `booth kill <name>` (DJ/user initiated)
 
 ```
-CC exits → SessionEnd hook → bash wrapper → Node.js handler
-→ read stdin JSON {session_id, transcript_path, cwd, reason}
-→ read .booth/state.json → match deck by jsonlPath
-→ if DJ session: exit silently (no report, no IPC)
-→ if deck: write EXIT report to .booth/reports/<deck>.md
-→ IPC 'deck-exited' → daemon cleanup → notifyDj()
+booth kill → IPC "kill-deck" → daemon:
+  1. tmux kill-pane — sends SIGHUP to CC process
+  2. removeDeck() — synchronous: exitDeck (DB → exited) + unwatch + clearTimers
+  3. IPC handler returns { ok: true }
+  --- later (async, separate process) ---
+  4. CC receives SIGHUP → graceful exit → SessionEnd hook fires
+  5. Hook queries DB → status already 'exited' (step 2) → no match → silent exit
 ```
 
-### Behavior
+No race condition: kill-pane triggers an async chain (SIGHUP → CC shutdown → hook → IPC), while removeDeck completes synchronously in the same event-loop tick. By the time the hook's IPC arrives, exitDeck has long finished.
 
-- Deck is marked `stopped` (not removed) — stays visible in `booth ls`
-- Exit report includes the last user-assistant exchange from the JSONL tail
-- If daemon is unreachable, report is still written to disk — health check serves as fallback
-- DJ exit (`/exit` in DJ pane) is silently ignored — no report generated
+### Scenario B: CC self-exit (`/exit`, crash, timeout)
+
+```
+CC exits gracefully → SessionEnd hook fires:
+  1. read stdin JSON {session_id, transcript_path, cwd, reason}
+  2. query SQLite — match deck by jsonlPath (status != 'exited')
+  3. write EXIT report to .booth/reports/<deck>.md
+  4. IPC "deck-exited" → daemon: exitDeck() + notifyDj()
+```
+
+DJ receives `[booth-alert]` and can decide to re-spin or acknowledge.
+
+### Scenario C: `tmux kill-pane` (external kill)
+
+Same path as Scenario B — CC receives SIGHUP and exits gracefully, firing the SessionEnd hook. DJ is notified.
+
+### Scenario D: `booth stop` (global shutdown)
+
+```
+booth stop → IPC "shutdown" → daemon:
+  1. kill all deck panes (but NOT exitDeck — status preserved)
+  2. kill DJ tmux session
+  3. close DB, IPC socket, daemon exits
+  4. Each kill-pane → SIGHUP → CC → SessionEnd hook fires
+  5. Hook tries to connect daemon socket → daemon already dead → silent exit
+```
+
+Deck status stays working/idle in DB. On next `booth` start, decks with status != 'exited' are resumable. `pruneStaleDecks` on daemon startup cleans any whose pane no longer exists.
+
+### Scenario E: `kill -9 <CC_PID>` (SIGKILL)
+
+SIGKILL is uncatchable — SessionEnd hook does NOT fire. Deck status is stale in DB until:
+- Daemon health check detects pane disappeared → logs warning
+- Next daemon startup → `pruneStaleDecks` → exitDeck for missing panes
+
+### Scenario F: `kill -9 <daemon_PID>` (SIGKILL daemon)
+
+Daemon dies immediately. Deck CC processes continue running independently (they don't depend on daemon). On next `booth` command:
+- New daemon starts → loads DB → `pruneStaleDecks` checks pane liveness
+- Living decks resume monitoring; dead decks get exitDeck'd

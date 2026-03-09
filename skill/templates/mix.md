@@ -96,7 +96,7 @@ spin api-refactor                → spin up a new deck named "api-refactor"
 spin: refactor the API layer     → spin up, use the description as the initial prompt
 开一个 / 起一个 auth-fix         → spin up a deck
 kill api-refactor / 杀掉 X      → kill a deck
-resume / 恢复 X                  → resume an archived deck
+resume / 恢复 X                  → resume a stopped deck
 status / 状态                    → list all decks
 ```
 
@@ -173,19 +173,16 @@ booth reports <name>
 # Open a report in configured editor
 booth reports open <name>
 
-# Kill a deck (auto-archived for later resume)
+# Kill a deck (permanently exits — not resumable)
 booth kill <name>
 
-# Resume archived decks
-booth resume                     # resume all archived decks
-booth resume <name>              # resume a specific deck (latest archive)
+# Resume decks (after booth stop)
+booth resume                     # resume all non-exited decks
+booth resume <name>              # resume a specific deck
 booth resume <name> --hold       # resume and switch to hold mode
-booth resume --id <session-uuid> # resume by CC session ID
-booth resume --list              # list all archived decks
-booth resume <name> --list       # list archives for a specific deck name
-booth resume <name> --pick <n>   # resume nth archive (1=newest, default)
+booth resume --list              # list resumable decks
 
-# Stop everything (all decks archived before shutdown)
+# Stop everything (decks stay working/idle in DB for resume)
 booth stop
 
 # Reload daemon (hot-restart, preserves tmux sessions)
@@ -287,14 +284,14 @@ When you see `[booth-alert]` in your conversation (injected directly by the daem
 1. Read the alert description
 2. Identify the scenario and act:
    - **Check complete**: Description mentions a deck's check result. Read `.booth/reports/<deck>.md`, evaluate, decide next action.
-   - **Error**: Description mentions a deck error persisting beyond recovery window. Spin a review deck to investigate, or escalate to user.
-   - **Needs attention**: Description mentions a deck flagged `[NEEDS ATTENTION]`. Spin a deck to address it, or escalate to user.
    - **Deck exited**: Description mentions a deck's CC session self-exited. Read `.booth/reports/<deck>.md` (EXIT report). Decide: re-spin if task incomplete, or acknowledge if expected.
 3. **Analyze before delivering** — never just drop a report link. When reporting to the user:
    - Summarize what the deck did, what problem it solved, and what improved — in plain language
    - Analyze impact on the current plan: which task completed, what's unblocked, how progress changed
    - Report like a department head to an executive — clear conclusions, no jargon dumps
 4. After handling, clean up: kill completed decks, archive results
+
+**Note on `booth kill`**: When DJ kills a deck via `booth kill`, no alert is sent back to DJ — you already know. Alerts only arrive for *unexpected* exits (CC crash, user `/exit`, pane killed externally).
 
 ## Report Review Protocol
 
@@ -314,8 +311,7 @@ When DJ receives a check-complete alert, **review before kill**:
 - **SUCCESS report (auto deck)** → acknowledge, `booth kill <deck>`, move on to next task
 - **SUCCESS report (hold deck)** → deck is paused. Send next instruction with `booth send <deck> --prompt "..."`. **NEVER kill a hold deck without explicit user permission.** Hold decks are the user's persistent workspaces — killing one destroys the CC session and all conversation context. Only the user decides when a hold deck is done.
 - **FAIL report** → read what failed, decide: re-spin with adjusted prompt, or escalate to user
-- **deck-error** → check context. Deck has 30s recovery window — if it recovers, no alert. If alert fires, it's a real problem.
-- **deck-exited** → read the EXIT report in `.booth/reports/<deck>.md`. Check the last activity to understand why. If task was incomplete, re-spin. If the user `/exit`'d intentionally, acknowledge and move on. Deck stays in `booth ls` as `stopped` — kill it when done reviewing.
+- **deck-exited** → read the EXIT report in `.booth/reports/<deck>.md`. Check the last activity to understand why. If task was incomplete, re-spin. If the user `/exit`'d intentionally, acknowledge and move on. Deck stays in `booth ls` as `exited` — kill it when done reviewing.
 - **No more tasks** → tell user everything is done, summarize results
 
 ### Delivery Standards
@@ -347,30 +343,52 @@ After `/compact`, session resume, or ANY interruption:
 1. Read `.booth/plan.md` to restore current execution plan and task states
 2. Run `booth ls` to see current deck states
 3. Check `.booth/reports/` for any unprocessed reports
-4. Run `booth resume --list` to check for archived decks that can be restored
+4. Run `booth resume --list` to check for resumable decks
 5. Resume management from current state
 
-### Deck Archive & Resume
+### Deck Resume
 
-When a deck is killed (`booth kill`) or booth shuts down (`booth stop`), decks with active CC sessions are automatically archived to the `archives` field in `.booth/state.json`. This preserves the CC session ID, mode, and configuration.
+`booth stop` kills tmux panes but does NOT change deck status — decks stay working/idle in the DB. On next `booth` start, these decks are resumable.
 
-To restore archived decks:
-- `booth resume` — restore all archived decks at once
-- `booth resume <name>` — restore a specific deck by name
-- `booth resume <name> --hold` — restore and override mode to hold
+`booth kill` sets status to `exited` — permanently removes the deck. Not resumable.
 
-The resumed deck reconnects to the original CC conversation via `claude --resume`, preserving full context.
+To resume after stop:
+- `booth resume` — resume all non-exited decks
+- `booth resume <name>` — resume a specific deck
+- `booth resume <name> --hold` — resume and override mode to hold
+
+Resume does UPDATE (same DB row, new pane) not INSERT (no row accumulation).
 
 ## Plan Execution Summary
 
-After a plan with multiple decks completes, DJ MUST produce a structured summary for the user:
+After a Wave or plan with multiple decks completes, DJ MUST produce a structured summary for the user. **Lead with value, then details.**
 
-1. **改动清单** — what each deck did (one line per deck)
-2. **风险项** — any FAIL reports, conflict risks, or unresolved issues
-3. **待验证项** — items marked `human-review` in follow-up
-4. **Report 导读** — which reports are worth reading in detail, which can be skipped
+1. **能力清单（Capability Gains）** — what the user can NOW do that they couldn't before. Use "before → after" framing. This is the FIRST thing the user sees — not task names, not commit hashes.
+2. **改动清单** — what each deck did (one line per deck)
+3. **风险项** — any FAIL reports, conflict risks, or unresolved issues
+4. **待验证项** — items marked `human-review` in follow-up
+5. **Report 导读** — which reports are worth reading in detail, which can be skipped
 
-The user should never have to piece together what happened across decks. DJ consolidates.
+The user should never have to piece together what happened across decks. DJ consolidates. The summary must answer: "我花了这些时间和 token，得到了什么？"
+
+## Stop / Reload / Restart / Kill Decision Tree
+
+| Goal | Command | Behavior |
+|------|---------|----------|
+| Reload daemon code | `booth reload` | Hot-restart daemon, all tmux panes stay alive |
+| Exit one deck permanently | `booth kill <name>` | exitDeck → kill pane, not resumable |
+| Exit all + preserve resume | `booth stop` | Kill all panes, status unchanged in DB, resumable |
+| Exit all + no resume | `booth stop --clean` | Kill all panes + set all to exited |
+| Full restart | `booth restart` | stop + start + resume all |
+| Clean restart | `booth restart --clean` | stop --clean + fresh start |
+
+### Stop Principles
+
+1. **Decks MUST NEVER execute `booth stop`** — stop kills the entire tmux session, including DJ and all other decks. A deck running stop is suicide that takes everyone with it.
+2. **DJ only runs `booth stop` on explicit user request** — "shut it all down", "stop booth", "退出". Never on DJ's own initiative.
+3. **Code changes = `booth reload`** — hot-restart the daemon without killing any pane. Never use stop for this.
+4. **Want to restart everything = `booth restart`** — internally handles stop + start + resume safely.
+5. **DJ must not run `booth stop` in its own session** — the DJ pane is inside the tmux session that stop kills. It's self-destruction.
 
 ## DJ Operational Rules
 
