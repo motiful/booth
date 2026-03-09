@@ -101,6 +101,15 @@ export class BoothState extends EventEmitter {
     this.emit('deck:removed', deck)
   }
 
+  exitAllDecks(): void {
+    const now = Date.now()
+    this.db.prepare(`
+      UPDATE sessions SET status = 'exited', updated_at = ?
+      WHERE role = 'deck' AND status != 'exited'
+    `).run(now)
+    this.decks.clear()
+  }
+
   clearAllDecks(): void {
     this.db.prepare(`DELETE FROM sessions WHERE role = 'deck' AND status != 'exited'`).run()
     this.decks.clear()

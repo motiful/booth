@@ -15,11 +15,11 @@ export async function restartCommand(args: string[]): Promise<void> {
 
   if (await isDaemonRunning(projectRoot)) {
     try {
-      await ipcRequest(projectRoot, { cmd: 'shutdown' })
+      await ipcRequest(projectRoot, { cmd: clean ? 'shutdown-clean' : 'shutdown' })
     } catch {
       // Daemon may exit before responding — that's fine
     }
-    console.log('[booth] daemon stopped')
+    console.log(`[booth] daemon stopped${clean ? ' (clean)' : ''}`)
   } else {
     console.log('[booth] daemon was not running')
   }

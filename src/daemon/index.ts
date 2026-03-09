@@ -408,6 +408,9 @@ export class Daemon {
       case 'shutdown':
         setTimeout(() => this.shutdown(), 100)
         return { ok: true }
+      case 'shutdown-clean':
+        setTimeout(() => this.shutdownClean(), 100)
+        return { ok: true }
       default:
         return { error: `unknown command: ${msg.cmd}` }
     }
@@ -470,6 +473,13 @@ export class Daemon {
 
     logger.info('[booth-daemon] state persisted, exiting for reload')
     process.exit(0)
+  }
+
+  private shutdownClean(): void {
+    logger.info('[booth-daemon] clean shutdown — marking all sessions exited')
+    this.state.exitAllDecks()
+    this.state.exitDj()
+    this.shutdown()
   }
 
   private shutdown(): void {

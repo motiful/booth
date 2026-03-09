@@ -595,6 +595,12 @@ SKILL.md split + init command. Decouples DJ protocol from skill entrypoint; adds
 - `readDjSessionIdFromState` 增加 `status != 'exited'` 过滤（killed DJ 不恢复）
 - 包含 D-merge resume 清理（archive → status-based）
 
+#### E4.5. pruneStaleDecks 修复 ✅ (02d2233)
+
+- pruneStaleDecks 不再调 exitDeck，改为 clearPaneId（deck 保持 working/idle 供 resume）
+- healthCheck 增加 `!deck.paneId` guard，避免 pane 清空后每 30s 产生无意义告警
+- 核心修复由 cb61b9c（lifecycle simplification deck）完成，本 deck 补充 healthCheck guard
+
 #### E4. Stop --clean 对齐 ⏳
 
 - 确认 stop 和 restart 的 --clean 参数对齐
