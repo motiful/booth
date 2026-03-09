@@ -14,7 +14,6 @@ const CHECK_DELAY = 500
 const CHECK_POLL_INTERVAL = 30_000
 const BEAT_INITIAL_COOLDOWN = 5 * 60_000
 const BEAT_MAX_COOLDOWN = 60 * 60_000
-const ERROR_RECOVERY_WINDOW = 30_000
 const PLAN_APPROVE_DELAY = 3_000
 const MAX_CHECK_ROUNDS = 5
 
@@ -27,20 +26,11 @@ export class Reactor {
   private beatCooldown = BEAT_INITIAL_COOLDOWN
   private lastBeatAt = Date.now()
 
-  // Error recovery state
-  private errorTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  private errorContext = new Map<string, { checkPhase: boolean }>()
-
   // Plan mode auto-approve state
   private planModeTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   // DJ notification dedup cache — tracks which holding decks have already been
   // reported to DJ, so beat doesn't re-notify about them.
-  // NOT a deck state — purely a reactor-local filter for beat summaries.
-  // Lifecycle: check complete (hold mode) → notifyDj → add to set →
-  //   beat filters out → deck working → clear from set.
-  // Cleared on: onDeckWorking, clearDeckTimers. Lost on daemon reload (harmless:
-  // DJ gets re-notified, which is idempotent and preferable to missing a notification).
   private holdingNotified = new Set<string>()
 
   // Check poll timers — safety net for missed idle signals
@@ -57,9 +47,7 @@ export class Reactor {
 
   start(): void {
     this.state.on('deck:idle', (deck: DeckInfo) => this.onDeckIdle(deck))
-    this.state.on('deck:error', (deck: DeckInfo) => this.onDeckError(deck))
     this.state.on('deck:working', (deck: DeckInfo) => this.onDeckWorking(deck))
-    this.state.on('deck:needs-attention', (deck: DeckInfo) => this.onDeckNeedsAttention(deck))
     this.state.on('deck:state-changed', (_change: DeckStateChange) => this.resetBeat())
     this.state.on('dj:status-changed', () => this.scheduleBeat())
 
@@ -129,8 +117,7 @@ export class Reactor {
       // Capture git snapshot for diff detection on next idle
       this.checkSnapshot.set(deck.id, this.captureSnapshot(deck.dir))
 
-      // Set checking status optimistically — ensures idle→checking
-      // transition fires, so subsequent idle signal won't be deduped
+      // Set checking status optimistically
       this.state.updateDeckStatus(deck.id, 'checking')
       this.state.updateDeck(deck.id, { checkSentAt: Date.now() })
       this.startCheckPoll(deck.id)
@@ -171,7 +158,6 @@ export class Reactor {
         this.clearCheckPollTimer(deck.id)
         this.archiveStaleReport(rPath!, deck.name)
         logger.info(`[booth-reactor] deck "${deck.name}" check round ${round}/${MAX_CHECK_ROUNDS} complete with changes — triggering round ${nextRound}`)
-        // Re-fetch deck from state — the original `deck` param has stale checkSentAt
         const refreshed = this.state.getDeck(deck.id)
         if (refreshed) this.triggerCheck(refreshed)
         return
@@ -231,16 +217,11 @@ export class Reactor {
 
   // --- Git diff detection for check loop ---
 
-  /** Capture full git state: HEAD + tracked changes (excluding .booth/, .claude/) */
   private captureSnapshot(dir: string): string {
     try {
       const head = execFileSync('git', ['rev-parse', 'HEAD'], {
         cwd: dir, encoding: 'utf8', timeout: 5_000,
       }).trim()
-      // Use git status --porcelain which refreshes index first (deterministic output).
-      // git diff is sensitive to index stat cache — deck operations during check
-      // (git status, git add, etc.) can refresh the cache, causing identical working
-      // trees to produce different diff output between two captures.
       const raw = execFileSync('git', ['status', '--porcelain', '-uno'], {
         cwd: dir, encoding: 'utf8', timeout: 5_000,
       })
@@ -257,7 +238,6 @@ export class Reactor {
     }
   }
 
-  /** Compare current git state against saved snapshot — true only if something changed */
   private hasGitChanges(dir: string, savedSnapshot: string): boolean {
     if (!savedSnapshot) return false
     try {
@@ -363,7 +343,6 @@ export class Reactor {
     }
 
     // action === 'exit' — auto-approve for auto/hold after delay
-    // If deck progresses on its own within the delay, the timer is canceled
     logger.info(`[booth-reactor] deck "${deck.name}" plan-mode exit — scheduling auto-approve (${PLAN_APPROVE_DELAY / 1000}s)`)
 
     this.clearPlanModeTimer(deckId)
@@ -412,12 +391,6 @@ export class Reactor {
   // --- Deck timer cleanup ---
 
   clearDeckTimers(deckId: string): void {
-    const timer = this.errorTimers.get(deckId)
-    if (timer) {
-      clearTimeout(timer)
-      this.errorTimers.delete(deckId)
-    }
-    this.errorContext.delete(deckId)
     this.holdingNotified.delete(deckId)
     this.checkRounds.delete(deckId)
     this.checkSnapshot.delete(deckId)
@@ -438,53 +411,16 @@ export class Reactor {
     }).catch(err => logger.error(`[booth-reactor] DJ notify threw: ${err}`))
   }
 
-  // --- Error / attention handlers ---
-
-  private onDeckError(deck: DeckInfo): void {
-    // If there's already a recovery timer for this deck, let it run
-    if (this.errorTimers.has(deck.id)) return
-
-    const checkPhase = !!deck.checkSentAt
-    this.errorContext.set(deck.id, { checkPhase })
-
-    const timer = setTimeout(() => {
-      // Timer expired without recovery — alert DJ
-      this.errorTimers.delete(deck.id)
-      this.errorContext.delete(deck.id)
-
-      const phase = checkPhase ? 'during check' : 'during work'
-      const msg = `Deck "${deck.name}" encountered an error ${phase} (no recovery after ${ERROR_RECOVERY_WINDOW / 1000}s)`
-      this.notifyDj(msg)
-      this.systemNotify(`Booth: ${msg}`)
-    }, ERROR_RECOVERY_WINDOW)
-
-    this.errorTimers.set(deck.id, timer)
-    logger.warn(`[booth-reactor] deck "${deck.name}" error — recovery window started (${ERROR_RECOVERY_WINDOW / 1000}s)`)
-  }
+  // --- Deck working handler ---
 
   private onDeckWorking(deck: DeckInfo): void {
     // Clear holding-notified flag — deck is active again
     this.holdingNotified.delete(deck.id)
-
-    // Cancel error recovery timer if active
-    const timer = this.errorTimers.get(deck.id)
-    if (timer) {
-      clearTimeout(timer)
-      this.errorTimers.delete(deck.id)
-      this.errorContext.delete(deck.id)
-      logger.info(`[booth-reactor] deck "${deck.name}" recovered from error`)
-    }
     // Cancel plan mode timer — deck progressed, approval was auto-granted
     if (this.planModeTimers.has(deck.id)) {
       this.clearPlanModeTimer(deck.id)
       logger.debug(`[booth-reactor] deck "${deck.name}" plan mode auto-resolved`)
     }
-  }
-
-  private onDeckNeedsAttention(deck: DeckInfo): void {
-    const msg = `Deck "${deck.name}" needs attention`
-    this.notifyDj(msg)
-    this.systemNotify(`Booth: ${msg}`)
   }
 
   private openReport(filePath: string): void {

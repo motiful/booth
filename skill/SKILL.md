@@ -14,7 +14,7 @@ Booth injects signals into CC sessions via the editor proxy (Ctrl+G mechanism):
 | Signal | Target | Meaning |
 |--------|--------|---------|
 | `[booth-check]` | Deck | Self-verify your work and write a report |
-| `[booth-alert]` | DJ | A deck needs attention (check complete, error, exit) |
+| `[booth-alert]` | DJ | A deck needs attention (check complete, deck exited) |
 | `[booth-beat]` | DJ | Periodic patrol — review deck states |
 
 ## Deck Modes
@@ -42,7 +42,7 @@ Decks write reports to `.booth/reports/<deck>.md`:
 |------|---------|
 | `.booth/` | Booth runtime directory (project-local) |
 | `.booth/reports/` | Deck check reports |
-| `.booth/state.json` | Daemon state (decks, archives, DJ status) |
+| `.booth/booth.db` | Daemon state (SQLite: decks, DJ, reports) |
 | `.booth/mix.md` | DJ management guidelines (customizable) |
 | `.booth/check.md` | Deck self-verification template (customizable) |
 | `.booth/beat.md` | Beat patrol checklist (customizable) |

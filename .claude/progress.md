@@ -554,7 +554,58 @@ SKILL.md split + init command. Decouples DJ protocol from skill entrypoint; adds
 - [x] resume.ts/session-end-hook.ts 适配新 schema
 - [x] sub-agent review: 修复 archive 查询缺 `role='deck'` 过滤（DJ 行混入 resume 列表）
 
-### Phase 2.9 — Worktree Isolation (NEXT — 最高优先级)
+### Wave E — Signal-Reactive Lifecycle Simplification (IN PROGRESS — 2026-03-09)
+
+> **价值**：简化状态机、统一退出逻辑、修复 resume 核心缺陷。做完后 booth 的生命周期管理从"能用但脆弱"变成"简洁且健壮"。stop→resume 全链路可靠，DJ 作为系统内核自动恢复。
+
+#### E1. 状态模型简化 ✅（代码完成，编译通过，部分 E2E）
+
+**改动**：11 文件，净减 159 行
+- DeckStatus: 6 值 → 4 值（`working | idle | checking | exited`）
+- 删除：`ExitReason`、`ArchivedDeck`、`Lifecycle` 类型
+- 删除：error/needs-attention 信号处理
+- shutdown 不改 deck status（保持 working/idle 供 resume）
+- resume 从 INSERT 改为 UPDATE（不累积 DB 行）
+- `archiveDeck` → `exitDeck`，`archiveDj` → `exitDj`
+- 文档：signals.md/mix.md/SKILL.md/README.md 更新
+
+**退出信号 6 场景分析（已验证设计健壮性）**：
+
+| 场景 | SessionEnd hook | DJ 通知 | Status 变化 |
+|------|----------------|---------|-------------|
+| A. `booth kill` | 触发但 exitDeck 已先执行 → 静默 | 无 | → exited |
+| B. CC 自行退出 | 触发 → deck-exited IPC | 有 | → exited |
+| C. `tmux kill-pane` | 触发 → deck-exited IPC | 有 | → exited |
+| D. `booth stop` | 触发但 daemon 已死 → 静默 | 无 | 不变 |
+| E. `kill -9 <CC>` | 不触发（SIGKILL） | 无 | pruneStaleDecks 兜底 |
+| F. `kill -9 <daemon>` | N/A | N/A | deck 继续，新 daemon 接管 |
+
+#### E2. 文档沉淀 — 退出信号 + Stop 原则 ✅ (dd77073)
+
+- 退出信号 A-F 完整路径 → `skill/references/signals.md`
+- Stop 限制原则 → `skill/templates/mix.md` + `skill/references/child-protocol.md`
+- Stop/reload/restart/kill 决策树 → mix.md
+- `.booth/mix.md` 同步（决策树 + stop 原则段落）
+
+#### E3. Resume 恢复 DJ ✅ (63de30f)
+
+- `resumeAllDecks` 新增 DJ resume：读 `sessions WHERE role='dj' AND status != 'exited'`，传 sessionId 给 `launchDJ`
+- 返回 `{ djResumed: boolean }`，callers 据此决定是否 fallback 到新 DJ
+- `bareBoothCommand`、`restartCommand`、`resumeCommand` 三个入口全部适配
+- `readDjSessionIdFromState` 增加 `status != 'exited'` 过滤（killed DJ 不恢复）
+- 包含 D-merge resume 清理（archive → status-based）
+
+#### E4. Stop --clean 对齐 ⏳
+
+- 确认 stop 和 restart 的 --clean 参数对齐
+- stop 默认保留状态，`--clean` 设所有 deck 为 exited
+
+#### E5. Stop→Resume E2E 验证 ⏳
+
+- 依赖 E3
+- 用户手动执行 booth stop → 验证 DB → booth resume → DJ + deck 全部恢复
+
+### Phase 2.9 — Worktree Isolation (NEXT — E 完成后)
 
 - [ ] 每个 deck 工作在独立 git worktree 中
 - [ ] 确认 CC 在 worktree 中正常工作（CLAUDE.md、report 路径等）

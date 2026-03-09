@@ -81,19 +81,13 @@ export function parseEventState(line: string): DeckStatus | null {
     const sub = (ev.subtype ?? '') as string
     if (sub === 'turn_duration') return 'idle'
     if (sub === 'stop_hook_summary') return 'idle'
-    if (sub === 'api_error') return 'error'
+    // api_error: ignore (transient, CC retries on its own)
     return null
   }
 
   if (t === 'assistant') {
     const msg = (ev.message ?? {}) as Record<string, unknown>
     const content = (msg.content ?? []) as Array<Record<string, unknown>>
-
-    for (const c of content) {
-      if (c?.type === 'text' && typeof c.text === 'string') {
-        if (c.text.includes('[NEEDS ATTENTION]')) return 'needs-attention'
-      }
-    }
 
     const types = new Set(content.filter(c => c?.type).map(c => c.type))
     if (types.has('tool_use') || types.has('thinking')) return 'working'

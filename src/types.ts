@@ -1,8 +1,7 @@
-export type DeckStatus = 'working' | 'idle' | 'checking' | 'error' | 'needs-attention' | 'stopped'
+export type DeckStatus = 'working' | 'idle' | 'checking' | 'exited'
 
 export type DeckMode = 'auto' | 'hold' | 'live'
 
-export type Lifecycle = 'active' | 'archived'
 
 export interface DeckInfo {
   id: string
@@ -34,20 +33,4 @@ export interface DeckStateChange {
   prev: DeckStatus
   next: DeckStatus
   timestamp: number
-}
-
-export type ExitReason = 'killed' | 'stopped' | 'exited' | 'crashed'
-
-export interface ArchivedDeck {
-  id: string
-  name: string
-  mode: DeckMode
-  dir: string
-  jsonlPath: string
-  sessionId: string
-  prompt?: string
-  noLoop?: boolean
-  exitReason?: ExitReason
-  createdAt: number
-  killedAt: number
 }

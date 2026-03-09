@@ -3,7 +3,7 @@ import { existsSync, readFileSync, renameSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import Database from 'better-sqlite3'
 import { boothPath, STATE_FILE, DB_FILE } from '../constants.js'
-import type { DeckInfo, DjInfo, DeckStatus, DeckStateChange, DeckMode, ArchivedDeck, ExitReason } from '../types.js'
+import type { DeckInfo, DjInfo, DeckStatus, DeckStateChange, DeckMode } from '../types.js'
 
 export class BoothState extends EventEmitter {
   private db!: Database.Database
@@ -26,6 +26,7 @@ export class BoothState extends EventEmitter {
     this.db.pragma('foreign_keys = ON')
     this.initSchema()
     this.migrateFromJson()
+    this.migrateLifecycle()
     this.loadCache()
   }
 
@@ -61,7 +62,7 @@ export class BoothState extends EventEmitter {
         status = ?, mode = ?, dir = ?, pane_id = ?, session_id = ?,
         jsonl_path = ?, prompt = ?, no_loop = ?, check_sent_at = ?,
         updated_at = ?
-      WHERE name = ? AND lifecycle = 'active' AND role = 'deck'
+      WHERE name = ? AND role = 'deck' AND status != 'exited'
     `).run(
       updated.status, updated.mode, updated.dir, updated.paneId,
       updated.sessionId ?? null, updated.jsonlPath ?? null,
@@ -75,17 +76,16 @@ export class BoothState extends EventEmitter {
   }
 
   /**
-   * Archive a deck: UPDATE lifecycle='archived', set exit_reason, remove from cache.
-   * This is the normal kill/exit/stop path. History is preserved.
+   * Exit a deck: UPDATE status='exited', remove from cache.
    */
-  archiveDeck(deckId: string, exitReason: ExitReason): void {
+  exitDeck(deckId: string): void {
     const deck = this.decks.get(deckId)
     if (!deck) return
     const now = Date.now()
     this.db.prepare(`
-      UPDATE sessions SET lifecycle = 'archived', exit_reason = ?, status = 'stopped', updated_at = ?
-      WHERE name = ? AND lifecycle = 'active' AND role = 'deck'
-    `).run(exitReason, now, deck.name)
+      UPDATE sessions SET status = 'exited', updated_at = ?
+      WHERE name = ? AND role = 'deck' AND status != 'exited'
+    `).run(now, deck.name)
     this.decks.delete(deckId)
     this.emit('deck:removed', deck)
   }
@@ -96,14 +96,49 @@ export class BoothState extends EventEmitter {
   removeDeck(deckId: string): void {
     const deck = this.decks.get(deckId)
     if (!deck) return
-    this.db.prepare(`DELETE FROM sessions WHERE name = ? AND lifecycle = 'active' AND role = 'deck'`).run(deck.name)
+    this.db.prepare(`DELETE FROM sessions WHERE name = ? AND role = 'deck' AND status != 'exited'`).run(deck.name)
     this.decks.delete(deckId)
     this.emit('deck:removed', deck)
   }
 
   clearAllDecks(): void {
-    this.db.prepare(`DELETE FROM sessions WHERE role = 'deck' AND lifecycle = 'active'`).run()
+    this.db.prepare(`DELETE FROM sessions WHERE role = 'deck' AND status != 'exited'`).run()
     this.decks.clear()
+  }
+
+  /**
+   * Resume a deck: UPDATE pane_id + status='working' on existing row.
+   * No INSERT — reuses the same DB row.
+   */
+  resumeDeck(name: string, paneId: string): void {
+    const now = Date.now()
+    const result = this.db.prepare(`
+      UPDATE sessions SET pane_id = ?, status = 'working', updated_at = ?
+      WHERE name = ? AND role = 'deck' AND status != 'exited'
+    `).run(paneId, now, name)
+
+    if (result.changes === 0) return
+
+    // Reload into cache
+    const row = this.db.prepare(`
+      SELECT * FROM sessions WHERE name = ? AND role = 'deck' AND status != 'exited'
+    `).get(name) as SessionRow | undefined
+    if (row) {
+      const deck = rowToDeckInfo(row)
+      this.decks.set(deck.id, deck)
+    }
+  }
+
+  clearPaneId(deckId: string): void {
+    const deck = this.decks.get(deckId)
+    if (!deck) return
+    const now = Date.now()
+    this.db.prepare(`
+      UPDATE sessions SET pane_id = NULL, updated_at = ?
+      WHERE name = ? AND role = 'deck' AND status != 'exited'
+    `).run(now, deck.name)
+    deck.paneId = ''
+    deck.updatedAt = now
   }
 
   updateDeckStatus(deckId: string, status: DeckStatus): void {
@@ -115,7 +150,7 @@ export class BoothState extends EventEmitter {
 
     this.db.prepare(`
       UPDATE sessions SET status = ?, updated_at = ?
-      WHERE name = ? AND lifecycle = 'active' AND role = 'deck'
+      WHERE name = ? AND role = 'deck' AND status != 'exited'
     `).run(status, now, deck.name)
 
     deck.status = status
@@ -126,8 +161,6 @@ export class BoothState extends EventEmitter {
 
     if (status === 'working') this.emit('deck:working', deck)
     if (status === 'idle') this.emit('deck:idle', deck)
-    if (status === 'error') this.emit('deck:error', deck)
-    if (status === 'needs-attention') this.emit('deck:needs-attention', deck)
   }
 
   getDeck(deckId: string): DeckInfo | undefined {
@@ -143,7 +176,7 @@ export class BoothState extends EventEmitter {
   }
 
   hasActiveDecks(): boolean {
-    return [...this.decks.values()].some(d => d.status !== 'stopped')
+    return this.decks.size > 0
   }
 
   // --- DJ methods ---
@@ -168,36 +201,36 @@ export class BoothState extends EventEmitter {
     this.db.prepare(`
       UPDATE sessions SET
         status = ?, pane_id = ?, session_id = ?, jsonl_path = ?, updated_at = ?
-      WHERE name = 'DJ' AND role = 'dj' AND lifecycle = 'active'
+      WHERE name = 'DJ' AND role = 'dj' AND status != 'exited'
     `).run(updated.status, updated.paneId, updated.sessionId ?? null, updated.jsonlPath ?? null, updated.updatedAt)
     Object.assign(this.djCache, patch)
     this.djCache.updatedAt = updated.updatedAt
   }
 
   /**
-   * Archive DJ: UPDATE lifecycle='archived'. Preserves session ID for resume.
+   * Exit DJ: UPDATE status='exited'. Preserves session ID for resume.
    */
-  archiveDj(exitReason: ExitReason): void {
+  exitDj(): void {
     if (!this.djCache) return
     const now = Date.now()
     this.db.prepare(`
-      UPDATE sessions SET lifecycle = 'archived', exit_reason = ?, status = 'stopped', updated_at = ?
-      WHERE name = 'DJ' AND role = 'dj' AND lifecycle = 'active'
-    `).run(exitReason, now)
+      UPDATE sessions SET status = 'exited', updated_at = ?
+      WHERE name = 'DJ' AND role = 'dj' AND status != 'exited'
+    `).run(now)
     this.djCache = undefined
   }
 
   /**
-   * Physical DELETE — only for cleanup. Normal flow uses archiveDj.
+   * Physical DELETE — only for cleanup. Normal flow uses exitDj.
    */
   removeDj(): void {
-    this.db.prepare(`DELETE FROM sessions WHERE name = 'DJ' AND role = 'dj' AND lifecycle = 'active'`).run()
+    this.db.prepare(`DELETE FROM sessions WHERE name = 'DJ' AND role = 'dj' AND status != 'exited'`).run()
     this.djCache = undefined
   }
 
   // Thin wrappers for backward compatibility (used by reactor.ts, signal handler)
   getDjStatus(): DeckStatus {
-    return this.djCache?.status ?? 'stopped'
+    return this.djCache?.status ?? 'exited'
   }
 
   setDjStatus(status: DeckStatus): void {
@@ -205,44 +238,11 @@ export class BoothState extends EventEmitter {
     const now = Date.now()
     this.db.prepare(`
       UPDATE sessions SET status = ?, updated_at = ?
-      WHERE name = 'DJ' AND role = 'dj' AND lifecycle = 'active'
+      WHERE name = 'DJ' AND role = 'dj' AND status != 'exited'
     `).run(status, now)
     this.djCache.status = status
     this.djCache.updatedAt = now
     this.emit('dj:status-changed', status)
-  }
-
-  // --- Archive query methods (read from lifecycle='archived') ---
-
-  getArchives(): ArchivedDeck[] {
-    const rows = this.db.prepare(`
-      SELECT * FROM sessions WHERE lifecycle = 'archived' AND role = 'deck' ORDER BY updated_at DESC
-    `).all() as SessionRow[]
-    return rows.map(rowToArchivedDeck)
-  }
-
-  findArchiveEntry(name: string): ArchivedDeck | undefined {
-    const row = this.db.prepare(`
-      SELECT * FROM sessions WHERE name = ? AND lifecycle = 'archived' AND role = 'deck' ORDER BY updated_at DESC LIMIT 1
-    `).get(name) as SessionRow | undefined
-    return row ? rowToArchivedDeck(row) : undefined
-  }
-
-  findArchiveEntryBySessionId(sessionId: string): ArchivedDeck | undefined {
-    const row = this.db.prepare(`
-      SELECT * FROM sessions WHERE session_id = ? AND lifecycle = 'archived' AND role = 'deck' LIMIT 1
-    `).get(sessionId) as SessionRow | undefined
-    return row ? rowToArchivedDeck(row) : undefined
-  }
-
-  listArchiveEntries(name?: string): ArchivedDeck[] {
-    if (name) {
-      const rows = this.db.prepare(`
-        SELECT * FROM sessions WHERE name = ? AND lifecycle = 'archived' AND role = 'deck' ORDER BY updated_at DESC
-      `).all(name) as SessionRow[]
-      return rows.map(rowToArchivedDeck)
-    }
-    return this.getArchives()
   }
 
   // --- Schema & Migration ---
@@ -309,14 +309,12 @@ export class BoothState extends EventEmitter {
         prompt      TEXT,
         no_loop     INTEGER DEFAULT 0,
         check_sent_at INTEGER,
-        exit_reason TEXT,
         report_status TEXT,
         created_at  INTEGER NOT NULL,
         updated_at  INTEGER NOT NULL
       );
 
-      CREATE UNIQUE INDEX idx_active_name ON sessions(name) WHERE lifecycle = 'active';
-      CREATE INDEX idx_sessions_lifecycle ON sessions(lifecycle);
+      CREATE UNIQUE INDEX idx_active_name ON sessions(name) WHERE status != 'exited';
       CREATE INDEX idx_sessions_role ON sessions(role);
     `)
   }
@@ -329,16 +327,7 @@ export class BoothState extends EventEmitter {
       // 2. Read archives if they exist
       let oldArchives: OldArchiveRow[] = []
       if (hasArchives) {
-        // Handle archives table that may or may not have exit_reason
-        const archiveInfo = this.db.prepare(`PRAGMA table_info(archives)`).all() as { name: string }[]
-        const hasExitReason = archiveInfo.some(c => c.name === 'exit_reason')
-
-        if (hasExitReason) {
-          oldArchives = this.db.prepare(`SELECT * FROM archives`).all() as OldArchiveRow[]
-        } else {
-          const rows = this.db.prepare(`SELECT * FROM archives`).all() as Omit<OldArchiveRow, 'exit_reason'>[]
-          oldArchives = rows.map(r => ({ ...r, exit_reason: null }))
-        }
+        oldArchives = this.db.prepare(`SELECT * FROM archives`).all() as OldArchiveRow[]
       }
 
       // 3. Drop old tables
@@ -350,27 +339,27 @@ export class BoothState extends EventEmitter {
 
       // 5. Insert old sessions as active
       const insertSession = this.db.prepare(`
-        INSERT INTO sessions (name, role, lifecycle, status, mode, dir, pane_id, session_id, jsonl_path, prompt, no_loop, check_sent_at, exit_reason, report_status, created_at, updated_at)
-        VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO sessions (name, role, lifecycle, status, mode, dir, pane_id, session_id, jsonl_path, prompt, no_loop, check_sent_at, report_status, created_at, updated_at)
+        VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       for (const s of oldSessions) {
         insertSession.run(
           s.name, s.role, s.status, s.mode, s.dir, s.pane_id,
           s.session_id, s.jsonl_path, s.prompt, s.no_loop,
-          s.check_sent_at, s.exit_reason, s.report_status,
+          s.check_sent_at, s.report_status,
           s.created_at, s.updated_at
         )
       }
 
-      // 6. Insert old archives as archived sessions
+      // 6. Insert old archives as exited sessions
       const insertArchive = this.db.prepare(`
-        INSERT INTO sessions (name, role, lifecycle, status, mode, dir, session_id, jsonl_path, prompt, no_loop, exit_reason, created_at, updated_at)
-        VALUES (?, 'deck', 'archived', 'stopped', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO sessions (name, role, lifecycle, status, mode, dir, session_id, jsonl_path, prompt, no_loop, created_at, updated_at)
+        VALUES (?, 'deck', 'active', 'exited', ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       for (const a of oldArchives) {
         insertArchive.run(
           a.name, a.mode, a.dir, a.session_id, a.jsonl_path,
-          a.prompt, a.no_loop, a.exit_reason ?? 'stopped',
+          a.prompt, a.no_loop,
           a.created_at, a.killed_at
         )
       }
@@ -399,12 +388,12 @@ export class BoothState extends EventEmitter {
           }
         }
 
-        // Migrate archives as archived sessions
+        // Migrate archives as exited sessions
         if (Array.isArray(raw.archives)) {
-          for (const a of raw.archives as ArchivedDeck[]) {
+          for (const a of raw.archives) {
             this.db.prepare(`
-              INSERT OR IGNORE INTO sessions (name, role, lifecycle, status, mode, dir, session_id, jsonl_path, prompt, no_loop, exit_reason, created_at, updated_at)
-              VALUES (?, 'deck', 'archived', 'stopped', ?, ?, ?, ?, ?, ?, 'stopped', ?, ?)
+              INSERT OR IGNORE INTO sessions (name, role, lifecycle, status, mode, dir, session_id, jsonl_path, prompt, no_loop, created_at, updated_at)
+              VALUES (?, 'deck', 'active', 'exited', ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
               a.name, a.mode, a.dir, a.sessionId, a.jsonlPath,
               a.prompt ?? null, a.noLoop ? 1 : 0,
@@ -429,19 +418,52 @@ export class BoothState extends EventEmitter {
     }
   }
 
+  /**
+   * One-time migration: lifecycle-based → status-based model.
+   * All archived rows become exited. Old statuses (error/stopped/needs-attention) become exited.
+   * Rebuild unique index on status instead of lifecycle.
+   */
+  private migrateLifecycle(): void {
+    // Check if old lifecycle index exists
+    const hasOldIndex = (this.db.prepare(
+      `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_sessions_lifecycle'`
+    ).get() as { name: string } | undefined) !== undefined
+
+    if (!hasOldIndex) return // already migrated
+
+    this.db.transaction(() => {
+      // All archived rows → exited
+      this.db.prepare(`
+        UPDATE sessions SET status = 'exited'
+        WHERE lifecycle = 'archived'
+      `).run()
+
+      // Clean up old statuses on active rows
+      this.db.prepare(`
+        UPDATE sessions SET status = 'exited'
+        WHERE status IN ('error', 'stopped', 'needs-attention')
+      `).run()
+
+      // Drop old indexes and rebuild
+      this.db.exec(`DROP INDEX IF EXISTS idx_active_name`)
+      this.db.exec(`DROP INDEX IF EXISTS idx_sessions_lifecycle`)
+      this.db.exec(`CREATE UNIQUE INDEX idx_active_name ON sessions(name) WHERE status != 'exited'`)
+    })()
+  }
+
   private loadCache(): void {
-    // Load active decks into memory cache
+    // Load non-exited decks into memory cache
     const rows = this.db.prepare(`
-      SELECT * FROM sessions WHERE role = 'deck' AND lifecycle = 'active'
+      SELECT * FROM sessions WHERE role = 'deck' AND status != 'exited'
     `).all() as SessionRow[]
     for (const row of rows) {
       const deck = rowToDeckInfo(row)
       this.decks.set(deck.id, deck)
     }
 
-    // Load active DJ
+    // Load non-exited DJ
     const djRow = this.db.prepare(`
-      SELECT * FROM sessions WHERE role = 'dj' AND lifecycle = 'active'
+      SELECT * FROM sessions WHERE role = 'dj' AND status != 'exited'
     `).get() as SessionRow | undefined
     if (djRow) {
       this.djCache = {
@@ -497,7 +519,6 @@ interface SessionRow {
   prompt: string | null
   no_loop: number
   check_sent_at: number | null
-  exit_reason: string | null
   report_status: string | null
   created_at: number
   updated_at: number
@@ -517,7 +538,6 @@ interface OldSessionRow {
   prompt: string | null
   no_loop: number
   check_sent_at: number | null
-  exit_reason: string | null
   report_status: string | null
   created_at: number
   updated_at: number
@@ -532,7 +552,6 @@ interface OldArchiveRow {
   session_id: string
   prompt: string | null
   no_loop: number
-  exit_reason: string | null
   created_at: number
   killed_at: number
 }
@@ -552,21 +571,5 @@ function rowToDeckInfo(row: SessionRow): DeckInfo {
     checkSentAt: row.check_sent_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-  }
-}
-
-function rowToArchivedDeck(row: SessionRow): ArchivedDeck {
-  return {
-    id: `deck-${row.name}`,
-    name: row.name,
-    mode: (row.mode ?? 'auto') as DeckMode,
-    dir: row.dir ?? '',
-    jsonlPath: row.jsonl_path ?? '',
-    sessionId: row.session_id ?? '',
-    prompt: row.prompt ?? undefined,
-    noLoop: row.no_loop === 1 ? true : undefined,
-    exitReason: (row.exit_reason as ExitReason) ?? undefined,
-    createdAt: row.created_at,
-    killedAt: row.updated_at,
   }
 }

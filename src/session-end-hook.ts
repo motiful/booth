@@ -80,7 +80,7 @@ function findSessionByJsonlPath(projectRoot: string, jsonlPath: string): Session
   try {
     const db = new Database(dbPath, { readonly: true })
     try {
-      const row = db.prepare(`SELECT name, role FROM sessions WHERE jsonl_path = ? AND lifecycle = 'active' LIMIT 1`).get(jsonlPath) as SessionMatch | undefined
+      const row = db.prepare(`SELECT name, role FROM sessions WHERE jsonl_path = ? AND status != 'exited' LIMIT 1`).get(jsonlPath) as SessionMatch | undefined
       return row ?? undefined
     } finally {
       db.close()

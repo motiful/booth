@@ -27,6 +27,7 @@ export class Daemon {
   private ipcServer?: Server
   private healthTimer?: ReturnType<typeof setInterval>
   private jsonlWaiters = new Map<string, ReturnType<typeof setInterval>>()
+  private paneLost = new Set<string>()
   private reloading = false
 
   constructor(opts: DaemonOptions) {
@@ -63,10 +64,10 @@ export class Daemon {
       }
     })
 
-    // Validate and restore existing decks from state.json
+    // Validate and restore existing decks from state
     this.pruneStaleDecks()
     for (const deck of this.state.getAllDecks()) {
-      if (deck.jsonlPath && deck.status !== 'stopped') {
+      if (deck.jsonlPath) {
         this.watchOrWait(deck.id, deck.jsonlPath)
       }
     }
@@ -94,7 +95,7 @@ export class Daemon {
   }
 
   removeDeck(deckId: string): void {
-    this.state.archiveDeck(deckId, 'killed')
+    this.state.exitDeck(deckId)
     this.stopWaiter(deckId)
     this.signal.unwatch(deckId)
     this.reactor.clearDeckTimers(deckId)
@@ -106,23 +107,21 @@ export class Daemon {
 
   private pruneStaleDecks(): void {
     const socket = deriveSocket(this.projectRoot)
-    const stale: string[] = []
+    let cleared = 0
 
     for (const deck of this.state.getAllDecks()) {
+      if (!deck.paneId) continue
       const check = tmuxSafe(socket, 'display-message', '-t', deck.paneId, '-p', '#{pane_pid}')
       if (!check.ok || !check.output.trim()) {
-        stale.push(deck.id)
+        logger.warn(`[booth-daemon] deck "${deck.name}" pane gone, cleared pane_id (resumable)`)
+        this.state.clearPaneId(deck.id)
+        this.signal.unwatch(deck.id)
+        cleared++
       }
     }
 
-    for (const id of stale) {
-      const deck = this.state.getDeck(id)
-      logger.warn(`[booth-daemon] removing stale deck "${deck?.name}" (pane gone)`)
-      this.removeDeck(id)
-    }
-
-    if (stale.length) {
-      logger.info(`[booth-daemon] pruned ${stale.length} stale deck(s) from previous session`)
+    if (cleared) {
+      logger.info(`[booth-daemon] cleared pane_id on ${cleared} deck(s) from previous session`)
     }
   }
 
@@ -163,7 +162,7 @@ export class Daemon {
     const deck = this.state.getDeck(deckId)
     if (!deck) return
 
-    // Same path — no-op (e.g. initial SessionStart for a just-spun deck)
+    // Same path — no-op
     if (deck.jsonlPath === jsonlPath) return
 
     // Unwatch old
@@ -236,7 +235,7 @@ export class Daemon {
       case 'status':
         return {
           ok: true,
-          dj: this.state.getDj() ?? { status: 'stopped' },
+          dj: this.state.getDj() ?? { status: 'exited' },
           decks: this.state.getAllDecks(),
           workingDecks: this.state.hasWorkingDecks(),
         }
@@ -259,7 +258,6 @@ export class Daemon {
         if (!deckId) return { error: 'deckId string required' }
         const socket = deriveSocket(this.projectRoot)
         const deck = this.state.getDeck(deckId)
-        // Kill tmux pane by paneId (stable), not window name (tmux auto-renames)
         if (deck?.paneId) {
           tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
         }
@@ -276,17 +274,17 @@ export class Daemon {
         const deck = this.state.getDeck(deckId)
         if (!deck) return { ok: true }
 
-        // Kill tmux pane — CC exited so shell is idle, no reason to keep the window
+        // Kill tmux pane — CC exited so shell is idle
         const socket = deriveSocket(this.projectRoot)
         if (deck.paneId) {
           tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
         }
 
-        // Cleanup — archive (single atomic step)
+        // Cleanup — exit (single atomic step)
         this.stopWaiter(deckId)
         this.signal.unwatch(deckId)
         this.reactor.clearDeckTimers(deckId)
-        this.state.archiveDeck(deckId, 'exited')
+        this.state.exitDeck(deckId)
 
         this.reactor.notifyDj(`Deck "${deckName}" session exited (${reason}). Report: ${rPath}`)
         logger.info(`[booth-daemon] deck "${deckName}" session-end: ${reason}, pane killed`)
@@ -299,7 +297,7 @@ export class Daemon {
 
         this.stopWaiter('dj')
         this.signal.unwatch('dj')
-        this.state.archiveDj('exited')
+        this.state.exitDj()
 
         logger.info(`[booth-daemon] DJ session-end: ${reason}`)
         return { ok: true }
@@ -308,8 +306,6 @@ export class Daemon {
         const targetId = typeof msg.targetId === 'string' && msg.targetId ? msg.targetId : null
         const message = typeof msg.message === 'string' && msg.message ? msg.message : null
         if (!targetId || !message) return { error: 'targetId and message strings required' }
-        // Fire-and-forget: respond immediately, send async in background.
-        // Avoids IPC timeout when protectedSendToCC waits for Ctrl+G close.
         sendMessage(
           this.projectRoot, this.state, targetId, message
         ).then(result => {
@@ -332,7 +328,6 @@ export class Daemon {
         }
         this.state.updateDeck(deckId, { mode })
         logger.info(`[booth-daemon] deck "${deck.name}" mode → ${mode}`)
-        // If switching to auto/hold and deck is idle, trigger a check
         if ((mode === 'auto' || mode === 'hold') && deck.status === 'idle') {
           const updated = this.state.getDeck(deckId)!
           this.reactor.triggerCheck(updated)
@@ -340,12 +335,23 @@ export class Daemon {
         return { ok: true }
       }
       case 'resume-deck': {
-        const deck = msg.deck as DeckInfo | undefined
-        if (!deck || typeof deck !== 'object' || typeof deck.id !== 'string' || typeof deck.name !== 'string') {
-          return { error: 'valid deck object required (id, name)' }
+        const name = typeof msg.name === 'string' && msg.name ? msg.name : null
+        const paneId = typeof msg.paneId === 'string' && msg.paneId ? msg.paneId : null
+        const jsonlPath = typeof msg.jsonlPath === 'string' ? msg.jsonlPath : undefined
+        if (!name || !paneId) {
+          return { error: 'name and paneId strings required' }
         }
-        this.registerDeck(deck)
-        // Archive entry stays — history is preserved across spin/kill cycles
+        this.state.resumeDeck(name, paneId)
+        // Clear paneLost if previously marked
+        this.paneLost.delete(`deck-${name}`)
+        // Start watching JSONL if available
+        const deck = this.state.getDeck(`deck-${name}`)
+        if (deck?.jsonlPath) {
+          this.watchOrWait(deck.id, deck.jsonlPath)
+        } else if (jsonlPath) {
+          this.state.updateDeck(`deck-${name}`, { jsonlPath })
+          this.watchOrWait(`deck-${name}`, jsonlPath)
+        }
         return { ok: true }
       }
       case 'session-changed': {
@@ -367,7 +373,6 @@ export class Daemon {
             this.updateDeckJsonl(dId, transcriptPath)
             return { ok: true, target: dId }
           }
-          // deckId not registered yet (race with register-deck) — skip silently
           return { ok: true, skipped: 'deck not registered yet' }
         }
 
@@ -392,7 +397,6 @@ export class Daemon {
         }
 
         this.updateDjJsonl(jsonlPath)
-        // DJ just connected — trigger immediate beat so DJ gets recovery context
         this.reactor.scheduleImmediateBeat()
         return { ok: true }
       }
@@ -402,7 +406,6 @@ export class Daemon {
         setTimeout(() => this.gracefulReload(), 100)
         return { ok: true }
       case 'shutdown':
-        // Respond before shutting down
         setTimeout(() => this.shutdown(), 100)
         return { ok: true }
       default:
@@ -414,26 +417,31 @@ export class Daemon {
     this.healthTimer = setInterval(() => {
       const socket = deriveSocket(this.projectRoot)
 
-      // Check deck panes
+      // Check deck panes — log loss but don't change status
       for (const deck of this.state.getAllDecks()) {
-        if (deck.status === 'stopped') continue
         const check = tmuxSafe(socket, 'display-message', '-t', deck.paneId, '-p', '#{pane_pid}')
         if (!check.ok || !check.output.trim()) {
-          logger.warn(`[booth-daemon] deck "${deck.name}" pane gone — marking error`)
-          this.signal.unwatch(deck.id)
-          this.state.updateDeckStatus(deck.id, 'error')
+          if (!this.paneLost.has(deck.id)) {
+            logger.warn(`[booth-daemon] deck "${deck.name}" pane gone — awaiting resume`)
+            this.signal.unwatch(deck.id)
+            this.paneLost.add(deck.id)
+          }
+        } else {
+          // Pane recovered (e.g., after resume)
+          if (this.paneLost.has(deck.id)) {
+            this.paneLost.delete(deck.id)
+          }
         }
       }
 
       // Check DJ pane
       const dj = this.state.getDj()
-      if (dj && dj.status !== 'stopped') {
+      if (dj) {
         const target = dj.paneId || `${SESSION}:0`
         const check = tmuxSafe(socket, 'display-message', '-t', target, '-p', '#{pane_pid}')
         if (!check.ok || !check.output.trim()) {
-          logger.warn('[booth-daemon] DJ pane gone — marking stopped')
+          logger.warn('[booth-daemon] DJ pane gone')
           this.signal.unwatch('dj')
-          this.state.setDjStatus('stopped')
         }
       }
     }, 30_000)
@@ -468,16 +476,10 @@ export class Daemon {
 
     const socket = deriveSocket(this.projectRoot)
 
-    // Collect pane IDs before archiving (archiveDeck clears cache)
+    // Collect pane IDs before any cleanup
     const deckPanes = this.state.getAllDecks().map(d => ({ id: d.id, paneId: d.paneId }))
 
-    // Archive all active decks and DJ (preserves history for resume)
-    for (const deck of this.state.getAllDecks()) {
-      this.state.archiveDeck(deck.id, 'stopped')
-    }
-    this.state.archiveDj('stopped')
-
-    // Kill all deck panes
+    // Kill all deck panes (don't change deck status — they stay working/idle in DB for resume)
     for (const { id, paneId } of deckPanes) {
       if (paneId) tmuxSafe(socket, 'kill-pane', '-t', paneId)
       this.signal.unwatch(id)
