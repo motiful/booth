@@ -68,7 +68,7 @@ export function readResumableDecks(projectRoot: string): ResumableDeck[] {
   }
 }
 
-function readDjSessionIdFromState(projectRoot: string): string | undefined {
+export function readDjSessionIdFromState(projectRoot: string): string | undefined {
   const db = openDb(projectRoot)
   if (!db) return undefined
   try {

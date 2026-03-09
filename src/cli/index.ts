@@ -15,7 +15,7 @@ import { statusCommand } from './commands/status.js'
 import { peekCommand } from './commands/peek.js'
 import { sendCommand } from './commands/send.js'
 import { reportsCommand } from './commands/reports.js'
-import { resumeCommand, resumeAllDecks, readResumableDecks } from './commands/resume.js'
+import { resumeCommand, resumeAllDecks, readResumableDecks, readDjSessionIdFromState } from './commands/resume.js'
 import { restartCommand } from './commands/restart.js'
 import { initCommand } from './commands/init.js'
 import { isInitialized } from '../skills.js'
@@ -70,18 +70,24 @@ async function bareBoothCommand(): Promise<void> {
     return
   }
 
-  // Daemon not running — check for resumable decks
+  // Daemon not running — check for resumable decks or DJ
   const resumable = readResumableDecks(projectRoot)
-  if (resumable.length === 0) {
-    // No resumable decks → start fresh
+  const hasDj = !!readDjSessionIdFromState(projectRoot)
+  if (resumable.length === 0 && !hasDj) {
+    // Nothing resumable → start fresh
     await startCommand([])
     return
   }
 
-  // Has resumable decks → prompt user
-  console.log(`[booth] Found ${resumable.length} resumable deck(s):`)
-  for (const d of resumable) {
-    console.log(`  - ${d.name} [${d.mode}]`)
+  // Has resumable decks or DJ → prompt user
+  if (resumable.length > 0) {
+    console.log(`[booth] Found ${resumable.length} resumable deck(s):`)
+    for (const d of resumable) {
+      console.log(`  - ${d.name} [${d.mode}]`)
+    }
+  }
+  if (hasDj) {
+    console.log('[booth] Found resumable DJ session')
   }
   console.log()
 
