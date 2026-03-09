@@ -32,15 +32,18 @@ export async function restartCommand(args: string[]): Promise<void> {
   removeSessionStartHook(projectRoot)
   removeSessionEndHook(projectRoot)
 
-  // Phase 2: Setup daemon + tmux + DJ
+  // Phase 2: Setup daemon + tmux
   await ensureDaemonAndSession(projectRoot)
-  await launchDJ(projectRoot)
 
-  // Phase 3: Resume archived decks only (DJ already launched in Phase 2)
+  // Phase 3: Resume DJ + decks (or clean start)
   if (!clean) {
     console.log('[booth] resuming archived decks...')
-    await resumeAllDecks(projectRoot, socket)
+    const { djResumed } = await resumeAllDecks(projectRoot, socket)
+    if (!djResumed) {
+      await launchDJ(projectRoot)
+    }
   } else {
+    await launchDJ(projectRoot)
     console.log('[booth] clean start (no deck recovery)')
   }
 

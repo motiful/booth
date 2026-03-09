@@ -1,5 +1,5 @@
 import { createInterface } from 'node:readline'
-import { findProjectRoot } from '../constants.js'
+import { findProjectRoot, deriveSocket } from '../constants.js'
 import { isDaemonRunning } from '../ipc.js'
 import { startCommand, ensureDaemonAndSession, launchDJ, attachSession } from './commands/start.js'
 import { spinCommand } from './commands/spin.js'
@@ -15,7 +15,7 @@ import { statusCommand } from './commands/status.js'
 import { peekCommand } from './commands/peek.js'
 import { sendCommand } from './commands/send.js'
 import { reportsCommand } from './commands/reports.js'
-import { resumeCommand, readArchivesFromState } from './commands/resume.js'
+import { resumeCommand, resumeAllDecks, readResumableDecks } from './commands/resume.js'
 import { restartCommand } from './commands/restart.js'
 import { initCommand } from './commands/init.js'
 import { isInitialized } from '../skills.js'
@@ -32,9 +32,9 @@ Usage:
   booth peek <name>    View a deck's tmux pane content
   booth send <name> --prompt "..."  Send a prompt to an idle/holding deck
   booth kill <name>    Kill a deck
-  booth resume         Resume archived decks (auto-starts daemon if needed)
-  booth resume <name>  Resume a specific archived deck
-  booth resume --list  List all archived decks
+  booth resume         Resume decks (auto-starts daemon if needed)
+  booth resume <name>  Resume a specific deck
+  booth resume --list  List all resumable decks
   booth stop           Stop booth (daemon + all decks)
   booth restart        Restart booth (stop + start + resume all)
   booth restart --clean  Restart booth clean (stop + start, no deck recovery)
@@ -70,18 +70,18 @@ async function bareBoothCommand(): Promise<void> {
     return
   }
 
-  // Daemon not running — check for archived decks
-  const archives = readArchivesFromState(projectRoot)
-  if (archives.length === 0) {
-    // No archives → start fresh
+  // Daemon not running — check for resumable decks
+  const resumable = readResumableDecks(projectRoot)
+  if (resumable.length === 0) {
+    // No resumable decks → start fresh
     await startCommand([])
     return
   }
 
-  // Has archives → prompt user
-  console.log(`[booth] Found ${archives.length} archived deck(s):`)
-  for (const a of archives) {
-    console.log(`  - ${a.name} [${a.mode}]`)
+  // Has resumable decks → prompt user
+  console.log(`[booth] Found ${resumable.length} resumable deck(s):`)
+  for (const d of resumable) {
+    console.log(`  - ${d.name} [${d.mode}]`)
   }
   console.log()
 
@@ -90,16 +90,23 @@ async function bareBoothCommand(): Promise<void> {
     ['r', 'f', 'resume', 'fresh', '']
   )
 
-  // Setup daemon + DJ first (non-blocking)
+  // Setup daemon + tmux session
   await ensureDaemonAndSession(projectRoot)
-  await launchDJ(projectRoot)
 
   if (choice !== 'f' && choice !== 'fresh') {
-    console.log('[booth] resuming archived decks...')
-    await resumeCommand([])
+    // Resume decks + DJ (DJ uses --resume <sessionId>)
+    console.log('[booth] resuming decks...')
+    const socket = deriveSocket(projectRoot)
+    const { djResumed } = await resumeAllDecks(projectRoot, socket)
+    if (!djResumed) {
+      await launchDJ(projectRoot)
+    }
+  } else {
+    await launchDJ(projectRoot)
   }
 
   // Attach last (blocks until user detaches)
+  console.log('[booth] attaching...')
   attachSession(projectRoot)
 }
 

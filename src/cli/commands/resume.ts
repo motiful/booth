@@ -6,13 +6,23 @@ import { findProjectRoot, deriveSocket, boothPath, DB_FILE, SESSION } from '../.
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { tmux, sleepMs } from '../../tmux.js'
 import { ensureDaemonAndSession, launchDJ, attachSession } from './start.js'
-import type { DeckInfo, DeckMode, ArchivedDeck, ExitReason } from '../../types.js'
+import type { DeckInfo, DeckMode } from '../../types.js'
+
+interface ResumableDeck {
+  name: string
+  mode: DeckMode
+  dir: string
+  sessionId: string
+  jsonlPath: string
+  prompt?: string
+  noLoop?: boolean
+  createdAt: number
+}
 
 interface SessionRow {
   rowid: number
   name: string
   role: string
-  lifecycle: string
   status: string
   mode: string | null
   dir: string | null
@@ -21,24 +31,20 @@ interface SessionRow {
   jsonl_path: string | null
   prompt: string | null
   no_loop: number
-  exit_reason: string | null
   created_at: number
   updated_at: number
 }
 
-function rowToArchivedDeck(row: SessionRow): ArchivedDeck {
+function rowToResumable(row: SessionRow): ResumableDeck {
   return {
-    id: `deck-${row.name}`,
     name: row.name,
     mode: (row.mode ?? 'auto') as DeckMode,
     dir: row.dir ?? '',
-    jsonlPath: row.jsonl_path ?? '',
     sessionId: row.session_id ?? '',
+    jsonlPath: row.jsonl_path ?? '',
     prompt: row.prompt ?? undefined,
     noLoop: row.no_loop === 1 ? true : undefined,
-    exitReason: (row.exit_reason as ExitReason) ?? undefined,
     createdAt: row.created_at,
-    killedAt: row.updated_at,
   }
 }
 
@@ -48,14 +54,15 @@ function openDb(projectRoot: string): Database.Database | null {
   return new Database(dbPath, { readonly: true })
 }
 
-export function readArchivesFromState(projectRoot: string): ArchivedDeck[] {
+/** Read all non-exited decks — these are resumable after shutdown */
+export function readResumableDecks(projectRoot: string): ResumableDeck[] {
   const db = openDb(projectRoot)
   if (!db) return []
   try {
     const rows = db.prepare(`
-      SELECT * FROM sessions WHERE lifecycle = 'archived' AND role = 'deck' ORDER BY updated_at DESC
+      SELECT * FROM sessions WHERE role = 'deck' AND status != 'exited' ORDER BY updated_at DESC
     `).all() as SessionRow[]
-    return rows.map(rowToArchivedDeck)
+    return rows.map(rowToResumable)
   } finally {
     db.close()
   }
@@ -65,54 +72,12 @@ function readDjSessionIdFromState(projectRoot: string): string | undefined {
   const db = openDb(projectRoot)
   if (!db) return undefined
   try {
-    // Find the most recent DJ session (active or archived) for resume
     const row = db.prepare(`
-      SELECT session_id FROM sessions WHERE role = 'dj' ORDER BY updated_at DESC LIMIT 1
+      SELECT session_id FROM sessions WHERE role = 'dj' AND status != 'exited' ORDER BY updated_at DESC LIMIT 1
     `).get() as { session_id: string | null } | undefined
     if (row?.session_id) return row.session_id
-    // Fallback: check legacy meta KV for migration
     const metaRow = db.prepare(`SELECT value FROM meta WHERE key = 'djSessionId'`).get() as { value: string } | undefined
     return metaRow?.value ?? undefined
-  } finally {
-    db.close()
-  }
-}
-
-function listArchiveEntries(projectRoot: string, name?: string): ArchivedDeck[] {
-  const db = openDb(projectRoot)
-  if (!db) return []
-  try {
-    const rows = name
-      ? db.prepare(`SELECT * FROM sessions WHERE name = ? AND lifecycle = 'archived' AND role = 'deck' ORDER BY updated_at DESC`).all(name) as SessionRow[]
-      : db.prepare(`SELECT * FROM sessions WHERE lifecycle = 'archived' AND role = 'deck' ORDER BY updated_at DESC`).all() as SessionRow[]
-    return rows.map(rowToArchivedDeck)
-  } finally {
-    db.close()
-  }
-}
-
-function findArchiveEntryBySessionId(projectRoot: string, sessionId: string): ArchivedDeck | undefined {
-  const db = openDb(projectRoot)
-  if (!db) return undefined
-  try {
-    const row = db.prepare(`
-      SELECT * FROM sessions WHERE session_id = ? AND lifecycle = 'archived' AND role = 'deck' LIMIT 1
-    `).get(sessionId) as SessionRow | undefined
-    return row ? rowToArchivedDeck(row) : undefined
-  } finally {
-    db.close()
-  }
-}
-
-/** Read only resumable archives (exit_reason = 'stopped') */
-function readResumableArchives(projectRoot: string): ArchivedDeck[] {
-  const db = openDb(projectRoot)
-  if (!db) return []
-  try {
-    const rows = db.prepare(`
-      SELECT * FROM sessions WHERE lifecycle = 'archived' AND role = 'deck' AND exit_reason = 'stopped' ORDER BY updated_at DESC
-    `).all() as SessionRow[]
-    return rows.map(rowToArchivedDeck)
   } finally {
     db.close()
   }
@@ -123,38 +88,23 @@ export async function resumeCommand(args: string[]): Promise<void> {
 
   const listFlag = args.includes('--list')
   const isHold = args.includes('--hold')
-  const idIdx = args.indexOf('--id')
-  const sessionId = idIdx !== -1 ? args[idIdx + 1] : undefined
-  if (idIdx !== -1 && (!sessionId || sessionId.startsWith('--'))) {
-    console.error('[booth] --id requires a session ID value')
-    process.exit(1)
-  }
-  const pickIdx = args.indexOf('--pick')
-  const pickVal = pickIdx !== -1 ? args[pickIdx + 1] : undefined
-  const pick = pickVal !== undefined ? parseInt(pickVal, 10) : 1
-  if (pickIdx !== -1 && (Number.isNaN(pick) || pick < 1)) {
-    console.error('[booth] --pick must be a positive number')
-    process.exit(1)
-  }
-  const flagValues = new Set<string | undefined>([sessionId, pickVal])
-  const name = args.find(a => !a.startsWith('--') && !flagValues.has(a))
+  const name = args.find(a => !a.startsWith('--'))
 
-  // --list: show archived decks
+  // --list: show resumable decks
   if (listFlag) {
-    const entries = listArchiveEntries(projectRoot, name)
-    if (entries.length === 0) {
-      console.log(name ? `No archived decks matching "${name}"` : 'No archived decks')
+    const entries = readResumableDecks(projectRoot)
+    const filtered = name ? entries.filter(e => e.name === name) : entries
+    if (filtered.length === 0) {
+      console.log(name ? `No resumable decks matching "${name}"` : 'No resumable decks')
       return
     }
-    console.log('Archived decks:')
-    for (let i = 0; i < entries.length; i++) {
-      const e = entries[i]
-      const ago = formatAgo(Date.now() - e.killedAt)
+    console.log('Resumable decks:')
+    for (let i = 0; i < filtered.length; i++) {
+      const e = filtered[i]
       const mode = e.mode[0].toUpperCase()
       const sid = e.sessionId.slice(0, 8) + '...'
       const missing = !existsSync(e.jsonlPath) ? '  (JSONL missing!)' : ''
-      const reason = e.exitReason ? ` (${e.exitReason})` : ''
-      console.log(`  [${i + 1}] ${e.name.padEnd(12)} killed ${ago.padEnd(8)} [${mode}] session: ${sid}${reason}${missing}`)
+      console.log(`  [${i + 1}] ${e.name.padEnd(12)} [${mode}] session: ${sid}${missing}`)
     }
     return
   }
@@ -166,66 +116,57 @@ export async function resumeCommand(args: string[]): Promise<void> {
 
   const socket = deriveSocket(projectRoot)
 
-  // --id: resume by session ID
-  if (sessionId) {
-    const entry = findArchiveEntryBySessionId(projectRoot, sessionId)
-    if (!entry) {
-      console.error(`[booth] no archive entry with session ID "${sessionId}"`)
-      process.exit(1)
-    }
-    await resumeOne(projectRoot, socket, entry, isHold ? 'hold' : undefined)
-    return
-  }
-
   // resume <name>: resume by deck name
   if (name) {
-    const entries = listArchiveEntries(projectRoot, name)
+    const entries = readResumableDecks(projectRoot).filter(e => e.name === name)
     if (entries.length === 0) {
-      console.error(`[booth] no archived deck named "${name}"`)
+      console.error(`[booth] no resumable deck named "${name}"`)
       process.exit(1)
     }
-    const idx = pick - 1
-    if (idx < 0 || idx >= entries.length) {
-      console.error(`[booth] pick ${pick} out of range (1-${entries.length})`)
-      process.exit(1)
-    }
-    await resumeOne(projectRoot, socket, entries[idx], isHold ? 'hold' : undefined)
+    await resumeOne(projectRoot, socket, entries[0], isHold ? 'hold' : undefined)
     return
   }
 
-  // No args: resume all stopped archives + DJ, then attach
-  await resumeAllDecks(projectRoot, socket)
-
-  // Resume DJ with previous session if available
-  const djSessionId = readDjSessionIdFromState(projectRoot)
-  await launchDJ(projectRoot, djSessionId)
+  // No args: resume all non-exited decks + DJ, then attach
+  const { djResumed } = await resumeAllDecks(projectRoot, socket)
+  if (!djResumed) {
+    await launchDJ(projectRoot)
+  }
   console.log('[booth] attaching...')
   attachSession(projectRoot)
 }
 
 /**
- * Resume all stopped archived decks (no DJ, no attach).
- * Used by restart to recover decks without re-launching DJ.
+ * Resume all non-exited decks + DJ.
+ * Returns whether DJ was successfully resumed (caller should launch fresh DJ if not).
  */
-export async function resumeAllDecks(projectRoot: string, socket: string): Promise<void> {
-  const entries = readResumableArchives(projectRoot)
+export async function resumeAllDecks(projectRoot: string, socket: string): Promise<{ djResumed: boolean }> {
+  const entries = readResumableDecks(projectRoot)
   if (entries.length === 0) {
-    console.log('[booth] no resumable decks (only stopped decks can be resumed)')
-    return
-  }
-  for (const entry of entries) {
-    if (!existsSync(entry.jsonlPath)) {
-      console.warn(`[booth] skipping "${entry.name}" — JSONL missing: ${entry.jsonlPath}`)
-      continue
+    console.log('[booth] no resumable decks')
+  } else {
+    for (const entry of entries) {
+      if (!existsSync(entry.jsonlPath)) {
+        console.warn(`[booth] skipping "${entry.name}" — JSONL missing: ${entry.jsonlPath}`)
+        continue
+      }
+      await resumeOne(projectRoot, socket, entry)
     }
-    await resumeOne(projectRoot, socket, entry)
   }
+
+  // Resume DJ if a non-exited session exists
+  const djSessionId = readDjSessionIdFromState(projectRoot)
+  if (djSessionId) {
+    await launchDJ(projectRoot, djSessionId)
+    return { djResumed: true }
+  }
+  return { djResumed: false }
 }
 
 async function resumeOne(
   projectRoot: string,
   socket: string,
-  entry: ArchivedDeck,
+  entry: ResumableDeck,
   modeOverride?: DeckMode
 ): Promise<void> {
   if (!existsSync(entry.jsonlPath)) {
@@ -233,7 +174,7 @@ async function resumeOne(
     return
   }
 
-  // Check no active deck with same name
+  // Check no active deck with same name in daemon
   const res = await ipcRequest(projectRoot, { cmd: 'ls' }) as { decks: DeckInfo[] }
   if (res.decks?.some(d => d.name === entry.name)) {
     console.error(`[booth] deck "${entry.name}" is already active`)
@@ -244,43 +185,32 @@ async function resumeOne(
     '-P', '-F', '#{pane_id}')
 
   const mode = modeOverride ?? entry.mode
-  const deck: DeckInfo = {
-    id: entry.id,
+
+  // IPC resume-deck: UPDATE existing row, not INSERT
+  await ipcRequest(projectRoot, {
+    cmd: 'resume-deck',
     name: entry.name,
-    status: 'working',
-    mode,
-    dir: entry.dir,
     paneId,
     jsonlPath: entry.jsonlPath,
-    noLoop: entry.noLoop,
-    createdAt: entry.createdAt,
-    updatedAt: Date.now(),
-  }
-
-  await ipcRequest(projectRoot, { cmd: 'resume-deck', deck, sessionId: entry.sessionId })
+  })
 
   // Set EDITOR proxy (same as spin.ts)
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
   const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
 
-  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${deck.id}"`
+  const deckId = `deck-${entry.name}`
+  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${deckId}"`
 
   sleepMs(500)
   tmux(socket, 'send-keys', '-t', paneId,
     `${envSetup} && claude --dangerously-skip-permissions --resume "${entry.sessionId}"; reset`, 'Enter')
 
+  // If mode override, update via IPC
+  if (modeOverride && modeOverride !== entry.mode) {
+    await ipcRequest(projectRoot, { cmd: 'set-mode', deckId, mode: modeOverride })
+  }
+
   const modeLabel = mode !== entry.mode ? ` [${mode}<-${entry.mode}]` : ` [${mode}]`
   console.log(`[booth] deck "${entry.name}" resumed${modeLabel} (pane: ${paneId})`)
-}
-
-function formatAgo(ms: number): string {
-  const s = Math.floor(ms / 1000)
-  if (s < 60) return `${s}s ago`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ago`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h ago`
-  const d = Math.floor(h / 24)
-  return `${d}d ago`
 }
