@@ -477,6 +477,14 @@ export class Daemon {
 
   private shutdownClean(): void {
     logger.info('[booth-daemon] clean shutdown — marking all sessions exited')
+    const socket = deriveSocket(this.projectRoot)
+
+    // Kill deck panes before clearing cache (shutdown won't see them after exitAll)
+    for (const deck of this.state.getAllDecks()) {
+      if (deck.paneId) tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
+      this.signal.unwatch(deck.id)
+    }
+
     this.state.exitAllDecks()
     this.state.exitDj()
     this.shutdown()
