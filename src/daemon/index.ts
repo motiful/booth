@@ -29,6 +29,7 @@ export class Daemon {
   private jsonlWaiters = new Map<string, ReturnType<typeof setInterval>>()
   private paneLost = new Set<string>()
   private reloading = false
+  private shuttingDown = false
 
   constructor(opts: DaemonOptions) {
     this.projectRoot = opts.projectRoot
@@ -265,6 +266,9 @@ export class Daemon {
         return { ok: true }
       }
       case 'deck-exited': {
+        // During shutdown, ignore exit hooks to preserve resumability
+        if (this.shuttingDown) return { ok: true, skipped: 'shutting-down' }
+
         const deckId = typeof msg.deckId === 'string' && msg.deckId ? msg.deckId : null
         if (!deckId) return { error: 'deckId string required' }
         const deckName = typeof msg.deckName === 'string' ? msg.deckName : deckId
@@ -291,6 +295,9 @@ export class Daemon {
         return { ok: true }
       }
       case 'dj-exited': {
+        // During shutdown, ignore exit hooks to preserve resumability
+        if (this.shuttingDown) return { ok: true, skipped: 'shutting-down' }
+
         const reason = typeof msg.reason === 'string' ? msg.reason : 'unknown'
         const dj = this.state.getDj()
         if (!dj) return { ok: true }
@@ -406,9 +413,11 @@ export class Daemon {
         setTimeout(() => this.gracefulReload(), 100)
         return { ok: true }
       case 'shutdown':
+        this.shuttingDown = true
         setTimeout(() => this.shutdown(), 100)
         return { ok: true }
       case 'shutdown-clean':
+        this.shuttingDown = true
         setTimeout(() => this.shutdownClean(), 100)
         return { ok: true }
       default:
