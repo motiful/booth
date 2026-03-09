@@ -419,6 +419,7 @@ export class Daemon {
 
       // Check deck panes — log loss but don't change status
       for (const deck of this.state.getAllDecks()) {
+        if (!deck.paneId) continue
         const check = tmuxSafe(socket, 'display-message', '-t', deck.paneId, '-p', '#{pane_pid}')
         if (!check.ok || !check.output.trim()) {
           if (!this.paneLost.has(deck.id)) {
