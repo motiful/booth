@@ -366,9 +366,11 @@ export class Daemon {
         if (!transcriptPath) return { error: 'transcriptPath required' }
         const role = typeof msg.role === 'string' ? msg.role : null
         const dId = typeof msg.deckId === 'string' ? msg.deckId : null
+        const sessionId = typeof msg.sessionId === 'string' ? msg.sessionId : undefined
 
         // DJ session change
         if (role === 'dj') {
+          if (sessionId) this.state.updateDj({ sessionId })
           this.updateDjJsonl(transcriptPath)
           return { ok: true, target: 'dj' }
         }
@@ -377,6 +379,7 @@ export class Daemon {
         if (dId) {
           const deck = this.state.getDeck(dId)
           if (deck) {
+            if (sessionId) this.state.updateDeck(dId, { sessionId })
             this.updateDeckJsonl(dId, transcriptPath)
             return { ok: true, target: dId }
           }

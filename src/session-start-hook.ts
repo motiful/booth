@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from 'node:fs'
-import { findProjectRoot, boothPath, STATE_FILE } from './constants.js'
+import { findProjectRoot, boothPath, DB_FILE } from './constants.js'
 import { ipcRequest } from './ipc.js'
 
 interface SessionStartInput {
@@ -47,9 +47,9 @@ async function main(): Promise<void> {
     return
   }
 
-  // Check if booth is running
-  const statePath = boothPath(projectRoot, STATE_FILE)
-  if (!existsSync(statePath)) return
+  // Check if booth is configured for this project
+  const dbPath = boothPath(projectRoot, DB_FILE)
+  if (!existsSync(dbPath)) return
 
   // Notify daemon — no stdout (would be injected as CC context)
   try {

@@ -55,6 +55,7 @@ export async function spinCommand(args: string[]): Promise<void> {
     mode,
     dir: projectRoot,
     paneId,
+    sessionId,
     jsonlPath,
     prompt: prompt || undefined,
     noLoop: noLoop || undefined,
