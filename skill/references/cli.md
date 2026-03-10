@@ -7,8 +7,8 @@
 | `booth` | Start booth (interactive: resume / start fresh / show status) |
 | `booth init` | Register booth skill and check recommended skills (re-runnable) |
 | `booth spin <name>` | Create a new deck (parallel CC session) |
-| `booth ls` | List all active decks with status, mode, and age |
-| `booth ls -a` | List all decks including exited (historical view) |
+| `booth ls` | List DJ + all active decks with status, mode, and age |
+| `booth ls -a` | List DJ + all decks including exited (historical, default limit 20) |
 | `booth status <name>` | Show detailed info for a specific deck |
 | `booth peek <name>` | View a deck's terminal output (capture-pane) |
 | `booth send <name> --prompt "..."` | Send a prompt to a deck (idle/holding) |
@@ -63,14 +63,15 @@ booth resume [<name>] [--list] [--hold] [--id <session-id>] [--pick <n>]
 ## ls Options
 
 ```
-booth ls [-a | --all]
+booth ls [-a | --all] [-n <limit> | --limit <limit>]
 ```
 
 | Flag | Effect |
 |------|--------|
-| `-a`, `--all` | Show all decks including exited (reads from DB, works without daemon) |
+| `-a`, `--all` | Show all sessions (DJ + decks) including exited (reads from DB, works without daemon) |
+| `-n <limit>`, `--limit <limit>` | Max rows to show in `-a` mode (default: 20) |
 
-Without `-a`, shows only active decks from daemon cache (requires running daemon).
+Both `booth ls` and `booth ls -a` show the DJ session as the first row with a `[DJ]` icon. Without `-a`, shows DJ + active decks from daemon cache (requires running daemon). With `-a`, reads from DB directly and defaults to 20 rows — use `-n` to adjust (e.g., `booth ls -a -n 50`).
 
 ## peek Options
 

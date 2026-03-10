@@ -234,7 +234,7 @@ export class Daemon {
       case 'ping':
         return { ok: true, pid: process.pid }
       case 'ls':
-        return { ok: true, decks: this.state.getAllDecks() }
+        return { ok: true, dj: this.state.getDj() ?? null, decks: this.state.getAllDecks() }
       case 'status':
         return {
           ok: true,
