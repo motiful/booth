@@ -24,6 +24,8 @@ Every deck has a JSONL stream. The daemon tails it in real-time.
 - No debounce needed (idle signals are definitive; state deduplicates repeated idle)
 - capture-pane is debug only, never for core detection
 - Shutdown does NOT change deck status — decks stay working/idle in DB for resume
+- Records persist forever — `booth kill` marks exited (UPDATE), never deletes DB rows
+- Clean shutdown (`--clean`) marks all decks exited — they won't auto-resume but can be manually resumed
 
 ## Alert Scenarios
 
@@ -117,7 +119,7 @@ If the deck was spun with `--no-loop`, an additional suffix is appended: `Skip t
 
 | Scenario | Trigger | Hook behavior | DJ notified? | DB status change |
 |----------|---------|---------------|-------------|-----------------|
-| A: `booth kill <name>` | DJ/user kills deck | kill-pane runs first, removeDeck (sync) follows immediately → hook IPC arrives after exitDeck → no match → silent exit | No (caller knows) | → exited (permanent) |
+| A: `booth kill <name>` | DJ/user kills deck | kill-pane runs first, exitDeck (sync) follows immediately → hook IPC arrives after exitDeck → no match → silent exit | No (caller knows) | → exited (row preserved in DB) |
 | B: CC self-exit (`/exit`) | CC exits gracefully | Hook fires → finds match in DB → writes EXIT report → IPC `deck-exited` → daemon notifyDj | Yes (`[booth-alert]`) | → exited |
 | C: `tmux kill-pane` (external) | User/script kills pane | Same as B — CC receives SIGHUP → graceful exit → hook fires | Yes (`[booth-alert]`) | → exited |
 | D: `booth stop` (global shutdown) | DJ/user stops everything | kill-pane → CC SIGHUP → hook fires → daemon already dead → socket connect fails → silent exit | No (daemon is dead) | **No change** (stays working/idle for resume) |
@@ -129,14 +131,14 @@ If the deck was spun with `--no-loop`, an additional suffix is appended: `Skip t
 ```
 booth kill → IPC "kill-deck" → daemon:
   1. tmux kill-pane — sends SIGHUP to CC process
-  2. removeDeck() — synchronous: exitDeck (DB → exited) + unwatch + clearTimers
+  2. exitDeck() — synchronous: UPDATE status='exited' + unwatch + clearTimers
   3. IPC handler returns { ok: true }
   --- later (async, separate process) ---
   4. CC receives SIGHUP → graceful exit → SessionEnd hook fires
   5. Hook queries DB → status already 'exited' (step 2) → no match → silent exit
 ```
 
-No race condition: kill-pane triggers an async chain (SIGHUP → CC shutdown → hook → IPC), while removeDeck completes synchronously in the same event-loop tick. By the time the hook's IPC arrives, exitDeck has long finished.
+No race condition: kill-pane triggers an async chain (SIGHUP → CC shutdown → hook → IPC), while exitDeck completes synchronously in the same event-loop tick. By the time the hook's IPC arrives, exitDeck has long finished. The DB row is preserved (never deleted) — visible in `booth ls -a`.
 
 ### Scenario B: CC self-exit (`/exit`, crash, timeout)
 

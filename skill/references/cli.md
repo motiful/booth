@@ -8,13 +8,14 @@
 | `booth init` | Register booth skill and check recommended skills (re-runnable) |
 | `booth spin <name>` | Create a new deck (parallel CC session) |
 | `booth ls` | List all active decks with status, mode, and age |
+| `booth ls -a` | List all decks including exited (historical view) |
 | `booth status <name>` | Show detailed info for a specific deck |
 | `booth peek <name>` | View a deck's terminal output (capture-pane) |
 | `booth send <name> --prompt "..."` | Send a prompt to a deck (idle/holding) |
-| `booth kill <name>` | Kill a deck and remove it from state |
-| `booth resume` | Resume all archived decks (auto-starts daemon if needed) |
-| `booth resume <name>` | Resume a specific archived deck (auto-starts daemon if needed) |
-| `booth resume --list` | List archived decks available for resume |
+| `booth kill <name>` | Kill a deck (marks exited, row preserved in DB) |
+| `booth resume` | Resume all non-exited decks (auto-starts daemon if needed) |
+| `booth resume <name>` | Resume a specific deck by name — unconditional, any status |
+| `booth resume --list` | List all decks (any status) for resume selection |
 | `booth stop` | Stop booth entirely (daemon + all decks + tmux session) |
 | `booth restart` | Restart booth (stop + start + resume all archived decks) |
 | `booth restart --clean` | Restart booth clean (stop + start, no deck recovery) |
@@ -52,10 +53,24 @@ booth resume [<name>] [--list] [--hold] [--id <session-id>] [--pick <n>]
 
 | Flag | Effect |
 |------|--------|
-| `--list` | List archived decks without resuming |
+| `--list` | List all decks (any status) without resuming |
 | `--hold` | Resume in hold mode regardless of original mode |
 | `--id <session-id>` | Resume by CC session ID |
 | `--pick <n>` | When multiple archives share a name, pick the nth (default: 1) |
+
+**Resume is unconditional.** `booth resume <name>` works for any deck regardless of status (working, idle, checking, exited). Status is not a gate — the user wants to see the conversation history. `booth resume` (no args) only auto-resumes non-exited decks (system auto-resume has its own criteria).
+
+## ls Options
+
+```
+booth ls [-a | --all]
+```
+
+| Flag | Effect |
+|------|--------|
+| `-a`, `--all` | Show all decks including exited (reads from DB, works without daemon) |
+
+Without `-a`, shows only active decks from daemon cache (requires running daemon).
 
 ## peek Options
 
@@ -111,9 +126,12 @@ booth reports fix-typo   # read a report
 ### 5. Clean up
 
 ```bash
-booth kill fix-typo      # kill a single deck
-booth stop               # stop everything (daemon + all decks)
+booth kill fix-typo      # kill a single deck (marks exited, row preserved)
+booth stop               # stop everything (status preserved for resume)
+booth stop --clean       # stop everything (marks all exited)
 ```
+
+**Records persist forever.** `booth kill` and `booth stop --clean` mark decks as exited but never delete DB rows. Use `booth ls -a` to view the full history including exited decks.
 
 ## Modes: auto / hold / live
 
@@ -135,15 +153,16 @@ Mode switches take effect on the next state transition. If a check is already in
 
 ## reload vs restart vs stop
 
-| | `booth reload` | `booth restart` | `booth restart --clean` | `booth stop` |
-|--|----------------|-----------------|------------------------|--------------|
-| **What it does** | Hot-restart daemon only | Stop everything, start fresh, resume archived decks | Stop everything, start fresh, no deck recovery | Kill daemon + all decks + tmux session |
-| **Deck impact** | None — tmux panes survive | Decks archived then resumed (new CC sessions with `--resume`) | All deck archives preserved but not resumed | All decks destroyed |
-| **When to use** | After updating booth code, fixing daemon bugs | Full reset while preserving deck history | Full reset, discard previous work context | Shutting down for the day, resetting everything |
-| **DJ context** | Preserved (same session) | New DJ session — gets immediate beat for recovery | New DJ session — clean start | Gone |
-| **Reversibility** | Non-destructive | Mostly non-destructive (decks resume from archives) | Non-destructive (archives still exist for manual `booth resume`) | Destructive |
+| | `booth reload` | `booth restart` | `booth restart --clean` | `booth stop` | `booth stop --clean` |
+|--|----------------|-----------------|------------------------|--------------|---------------------|
+| **What it does** | Hot-restart daemon only | Stop + start + resume non-exited decks | Stop clean + start fresh | Kill daemon + all decks, preserve status | Kill daemon + all decks, mark all exited |
+| **Deck status** | Unchanged | Preserved → resumed to working | All → exited | Unchanged (working/idle in DB) | All → exited |
+| **Auto-resume?** | N/A | Yes (non-exited decks) | No | On next `booth` start | No (but `booth resume <name>` works) |
+| **When to use** | After updating booth code | Full reset while preserving progress | Full reset, discard old context | Shutting down, plan to resume later | Shutting down, clean slate |
+| **DJ context** | Preserved (same session) | New DJ — immediate beat | New DJ — clean start | Gone | Gone |
+| **Records** | Preserved | Preserved | Preserved (rows stay, status=exited) | Preserved | Preserved (rows stay, status=exited) |
 
-**Rule of thumb:** Use `reload` when only the daemon needs a restart. Use `restart` for a clean slate with deck recovery. Use `restart --clean` when you want a fresh start without old decks. Use `stop` only when you want to tear everything down.
+**Rule of thumb:** Use `reload` when only the daemon needs a restart. Use `restart` for a clean slate with deck recovery. Use `restart --clean` when you want a fresh start without old decks. Use `stop` to shut down and resume later. Use `stop --clean` for a clean shutdown. **No operation deletes DB rows** — `booth ls -a` always shows the full history.
 
 ### DJ wake-up on restart
 

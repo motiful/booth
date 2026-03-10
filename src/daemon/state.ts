@@ -90,17 +90,6 @@ export class BoothState extends EventEmitter {
     this.emit('deck:removed', deck)
   }
 
-  /**
-   * Physical DELETE — only for cleanup of very old data. Not part of normal kill flow.
-   */
-  removeDeck(deckId: string): void {
-    const deck = this.decks.get(deckId)
-    if (!deck) return
-    this.db.prepare(`DELETE FROM sessions WHERE name = ? AND role = 'deck' AND status != 'exited'`).run(deck.name)
-    this.decks.delete(deckId)
-    this.emit('deck:removed', deck)
-  }
-
   exitAllDecks(): void {
     const now = Date.now()
     this.db.prepare(`
@@ -110,25 +99,26 @@ export class BoothState extends EventEmitter {
     this.decks.clear()
   }
 
-  clearAllDecks(): void {
-    this.db.prepare(`DELETE FROM sessions WHERE role = 'deck' AND status != 'exited'`).run()
-    this.decks.clear()
-  }
-
   /**
    * Resume a deck: UPDATE pane_id + status='working' on existing row.
    * No INSERT — reuses the same DB row.
+   * Unconditional — works on any status including exited (for user-initiated resume).
    */
   resumeDeck(name: string, paneId: string): void {
     const now = Date.now()
+    // Update the most recent row for this name (any status, including exited)
     const result = this.db.prepare(`
       UPDATE sessions SET pane_id = ?, status = 'working', updated_at = ?
-      WHERE name = ? AND role = 'deck' AND status != 'exited'
+      WHERE rowid = (
+        SELECT rowid FROM sessions
+        WHERE name = ? AND role = 'deck'
+        ORDER BY updated_at DESC LIMIT 1
+      )
     `).run(paneId, now, name)
 
     if (result.changes === 0) return
 
-    // Reload into cache
+    // Reload into cache (row is now non-exited)
     const row = this.db.prepare(`
       SELECT * FROM sessions WHERE name = ? AND role = 'deck' AND status != 'exited'
     `).get(name) as SessionRow | undefined
@@ -226,14 +216,6 @@ export class BoothState extends EventEmitter {
       UPDATE sessions SET status = 'exited', updated_at = ?
       WHERE name = 'DJ' AND role = 'dj' AND status != 'exited'
     `).run(now)
-    this.djCache = undefined
-  }
-
-  /**
-   * Physical DELETE — only for cleanup. Normal flow uses exitDj.
-   */
-  removeDj(): void {
-    this.db.prepare(`DELETE FROM sessions WHERE name = 'DJ' AND role = 'dj' AND status != 'exited'`).run()
     this.djCache = undefined
   }
 

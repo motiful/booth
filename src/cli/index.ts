@@ -15,7 +15,7 @@ import { statusCommand } from './commands/status.js'
 import { peekCommand } from './commands/peek.js'
 import { sendCommand } from './commands/send.js'
 import { reportsCommand } from './commands/reports.js'
-import { resumeCommand, resumeAllDecks, readResumableDecks, readDjSessionIdFromState } from './commands/resume.js'
+import { resumeCommand, resumeAllDecks, readResumableDecks, readDjSessionIdFromState, readDeckForResume, readAllDecks } from './commands/resume.js'
 import { restartCommand } from './commands/restart.js'
 import { initCommand } from './commands/init.js'
 import { isInitialized } from '../skills.js'
@@ -27,7 +27,8 @@ Usage:
   booth                Start booth (interactive: resume / start fresh / show status)
   booth init           First-time setup (register skills, can re-run for recovery)
   booth spin <name>    Create a new deck (parallel CC instance)
-  booth ls             List all deck states
+  booth ls             List all active deck states
+  booth ls -a          List all decks including exited (historical)
   booth status <name>  Show details for a specific deck
   booth peek <name>    View a deck's tmux pane content
   booth send <name> --prompt "..."  Send a prompt to an idle/holding deck

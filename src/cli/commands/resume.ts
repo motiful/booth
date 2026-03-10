@@ -54,7 +54,7 @@ function openDb(projectRoot: string): Database.Database | null {
   return new Database(dbPath, { readonly: true })
 }
 
-/** Read all non-exited decks — these are resumable after shutdown */
+/** Read all non-exited decks — used by system auto-resume during start/restart */
 export function readResumableDecks(projectRoot: string): ResumableDeck[] {
   const db = openDb(projectRoot)
   if (!db) return []
@@ -63,6 +63,35 @@ export function readResumableDecks(projectRoot: string): ResumableDeck[] {
       SELECT * FROM sessions WHERE role = 'deck' AND status != 'exited' ORDER BY updated_at DESC
     `).all() as SessionRow[]
     return rows.map(rowToResumable)
+  } finally {
+    db.close()
+  }
+}
+
+/** Read a specific deck by name — unconditional, any status including exited.
+ *  Used by user-initiated `booth resume <name>`. */
+export function readDeckForResume(projectRoot: string, name: string): (ResumableDeck & { status: string }) | undefined {
+  const db = openDb(projectRoot)
+  if (!db) return undefined
+  try {
+    const row = db.prepare(`
+      SELECT * FROM sessions WHERE name = ? AND role = 'deck' ORDER BY updated_at DESC LIMIT 1
+    `).get(name) as SessionRow | undefined
+    return row ? { ...rowToResumable(row), status: row.status } : undefined
+  } finally {
+    db.close()
+  }
+}
+
+/** Read all decks — any status, for listing purposes */
+export function readAllDecks(projectRoot: string): (ResumableDeck & { status: string })[] {
+  const db = openDb(projectRoot)
+  if (!db) return []
+  try {
+    const rows = db.prepare(`
+      SELECT * FROM sessions WHERE role = 'deck' ORDER BY updated_at DESC
+    `).all() as SessionRow[]
+    return rows.map(r => ({ ...rowToResumable(r), status: r.status }))
   } finally {
     db.close()
   }
@@ -90,21 +119,22 @@ export async function resumeCommand(args: string[]): Promise<void> {
   const isHold = args.includes('--hold')
   const name = args.find(a => !a.startsWith('--'))
 
-  // --list: show resumable decks
+  // --list: show all decks (any status) for resume selection
   if (listFlag) {
-    const entries = readResumableDecks(projectRoot)
+    const entries = readAllDecks(projectRoot)
     const filtered = name ? entries.filter(e => e.name === name) : entries
     if (filtered.length === 0) {
-      console.log(name ? `No resumable decks matching "${name}"` : 'No resumable decks')
+      console.log(name ? `No decks matching "${name}"` : 'No decks found')
       return
     }
-    console.log('Resumable decks:')
+    console.log('Decks:')
     for (let i = 0; i < filtered.length; i++) {
       const e = filtered[i]
       const mode = e.mode[0].toUpperCase()
-      const sid = e.sessionId.slice(0, 8) + '...'
+      const sid = e.sessionId ? e.sessionId.slice(0, 8) + '...' : '(none)'
       const missing = !existsSync(e.jsonlPath) ? '  (JSONL missing!)' : ''
-      console.log(`  [${i + 1}] ${e.name.padEnd(12)} [${mode}] session: ${sid}${missing}`)
+      const statusTag = e.status === 'exited' ? ' [exited]' : ''
+      console.log(`  [${i + 1}] ${e.name.padEnd(12)} [${mode}] session: ${sid}${statusTag}${missing}`)
     }
     return
   }
@@ -116,14 +146,14 @@ export async function resumeCommand(args: string[]): Promise<void> {
 
   const socket = deriveSocket(projectRoot)
 
-  // resume <name>: resume by deck name
+  // resume <name>: resume by deck name (unconditional — works for any status)
   if (name) {
-    const entries = readResumableDecks(projectRoot).filter(e => e.name === name)
-    if (entries.length === 0) {
-      console.error(`[booth] no resumable deck named "${name}"`)
+    const entry = readDeckForResume(projectRoot, name)
+    if (!entry) {
+      console.error(`[booth] no deck named "${name}" found`)
       process.exit(1)
     }
-    await resumeOne(projectRoot, socket, entries[0], isHold ? 'hold' : undefined)
+    await resumeOne(projectRoot, socket, entry, isHold ? 'hold' : undefined)
     return
   }
 
