@@ -606,15 +606,29 @@ SKILL.md split + init command. Decouples DJ protocol from skill entrypoint; adds
 - 确认 stop 和 restart 的 --clean 参数对齐
 - stop 默认保留状态，`--clean` 设所有 deck 为 exited
 
-#### E5.1. Unconditional Resume + ls -a ✅ (dd78c8b)
+#### E5.1. Unconditional Resume + ls -a + Dead Code Removal ✅ (8675d12, 38bf765)
 
 - `booth resume <name>` 无条件恢复 — 不再过滤 exited 状态
-- `readDeckByName()` 查询无 status 过滤，取 `ORDER BY updated_at DESC LIMIT 1`
-- `state.resumeDeck()` 改用 rowid 匹配（不再排除 exited）
-- `booth ls -a` / `--all` — 查询 DB 全部 deck 含 exited
-- `ls-all` IPC 命令 + `getAllDecksFromDb()` 方法
-- 确认 kill 使用 exitDeck（UPDATE），无 DELETE 操作
-- 碰文件：resume.ts, ls.ts, cli/index.ts, daemon/index.ts, state.ts
+- `readDeckForResume()` 查询无 status 过滤，取 `ORDER BY updated_at DESC LIMIT 1`
+- `resumeAllDecks()` 保持不变（仅 non-exited，系统自动恢复）
+- 两条 resume 路径共享 `resumeOne()`，但选择标准独立
+- `state.resumeDeck()` 改用 rowid 子查询匹配（不再排除 exited）
+- `booth ls -a` / `--all` — 直接读 DB（无需 daemon），显示全部 deck 含 exited
+- `booth resume --list` 显示全部 deck（含 [exited] 标记）
+- 删除 dead DELETE 代码：`state.removeDeck()`、`state.clearAllDecks()`、`state.removeDj()`
+- Records persist forever — 所有退出操作均为 UPDATE status='exited'，无 DELETE
+- 设计文档：`.booth/reports/lifecycle-design-detail.md`（event-state matrix）
+- Skill docs 更新：signals.md（record persistence）、cli.md（ls -a, unconditional resume, stop --clean）
+- 碰文件：state.ts, resume.ts, ls.ts, cli/index.ts, signals.md, cli.md
+
+#### E5.2. session_id 持久化修复 ✅ (7b2adb1)
+
+- 三个 bug 导致 deck session_id 永远为 NULL：
+  1. spin.ts 漏掉 sessionId 字段 → registerDeck 存 NULL
+  2. session-start-hook 检查 state.json（已迁移）→ hook 静默退出
+  3. session-changed handler 忽略 msg.sessionId → 从不更新 DB
+- 修复：spin 时写入 + hook 检查 booth.db + handler 提取并存储 sessionId
+- 碰文件：spin.ts, daemon/index.ts, session-start-hook.ts
 
 #### E5. Stop→Resume E2E 验证 ⏳
 
