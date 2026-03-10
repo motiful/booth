@@ -16,6 +16,7 @@ const BEAT_INITIAL_COOLDOWN = 5 * 60_000
 const BEAT_MAX_COOLDOWN = 60 * 60_000
 const PLAN_APPROVE_DELAY = 3_000
 const MAX_CHECK_ROUNDS = 5
+const CHECK_STALE_THRESHOLD = 10 * 60_000
 
 export class Reactor {
   private state: BoothState
@@ -80,10 +81,10 @@ export class Reactor {
   }
 
   triggerCheck(deck: DeckInfo): void {
-    setTimeout(() => this.runCheck(deck), CHECK_DELAY)
+    setTimeout(() => this.runCheck(deck, true), CHECK_DELAY)
   }
 
-  private runCheck(deck: DeckInfo): void {
+  private runCheck(deck: DeckInfo, fromIdle = false): void {
     let rPath = findLatestReport(this.projectRoot, deck.name)
 
     // Stale report detection: if report exists but is older than the deck, archive it
@@ -93,10 +94,19 @@ export class Reactor {
     }
 
     if (!rPath) {
-      // Check already sent — waiting for deck to write report (poll will retry)
       if (deck.checkSentAt) {
-        logger.debug(`[booth-reactor] deck "${deck.name}" check already sent, waiting for report`)
-        return
+        if (fromIdle) {
+          // Deck went idle without writing report — resend.
+          // [booth-check] is idempotent (signals.md), safe after compaction/limit/crash.
+          logger.info(`[booth-reactor] deck "${deck.name}" idle without report — resending check (idempotent)`)
+          this.state.updateDeck(deck.id, { checkSentAt: undefined })
+          this.clearCheckPollTimer(deck.id)
+          // Fall through to send check below
+        } else {
+          // Poll path — only check for report, don't resend (avoids message pile-up)
+          logger.debug(`[booth-reactor] deck "${deck.name}" check already sent, waiting for report`)
+          return
+        }
       }
 
       // No report yet → trigger deck self-check via .booth/check.md
@@ -260,10 +270,7 @@ export class Reactor {
   scheduleBeat(): void {
     if (this.beatTimer) clearTimeout(this.beatTimer)
 
-    if (this.state.getDjStatus() !== 'idle') {
-      logger.debug('[booth-reactor] beat skipped: DJ not idle')
-      return
-    }
+    // Beat fires unconditionally when decks exist — DJ's message queue handles delivery.
     if (!this.state.hasActiveDecks()) {
       logger.debug('[booth-reactor] beat skipped: no active decks')
       return
@@ -277,16 +284,28 @@ export class Reactor {
   }
 
   private fireBeat(): void {
-    if (this.state.getDjStatus() !== 'idle') return
     if (!this.state.hasActiveDecks()) return
 
+    const now = Date.now()
     const decks = this.state.getAllDecks()
     const working = decks.filter(d => d.status === 'working').map(d => d.name)
-    const checking = decks.filter(d => d.status === 'checking').map(d => d.name)
     const idle = decks.filter(d => d.status === 'idle' && !this.holdingNotified.has(d.id)).map(d => d.name)
 
+    const checkingNormal: string[] = []
+    const checkingStale: string[] = []
+    for (const d of decks) {
+      if (d.status === 'checking' || d.checkSentAt) {
+        const elapsed = d.checkSentAt ? now - d.checkSentAt : 0
+        if (elapsed > CHECK_STALE_THRESHOLD) {
+          checkingStale.push(`${d.name} (${Math.round(elapsed / 60_000)}min)`)
+        } else {
+          checkingNormal.push(d.name)
+        }
+      }
+    }
+
     // All active decks are holding and already notified — nothing for DJ to act on
-    if (!working.length && !checking.length && !idle.length) {
+    if (!working.length && !checkingNormal.length && !checkingStale.length && !idle.length) {
       logger.debug('[booth-reactor] beat skipped: all active decks are notified holding')
       return
     }
@@ -295,7 +314,8 @@ export class Reactor {
     const summary = [
       `[booth-beat] Status update:`,
       working.length ? `  Working: ${working.join(', ')}` : '',
-      checking.length ? `  Checking: ${checking.join(', ')}` : '',
+      checkingNormal.length ? `  Checking: ${checkingNormal.join(', ')}` : '',
+      checkingStale.length ? `  ⚠ STALE CHECK: ${checkingStale.join(', ')} — may be stuck` : '',
       idle.length ? `  Idle: ${idle.join(', ')}` : '',
       existsSync(beatPath) ? `  Read ${beatPath} for your checklist.` : `  Check .booth/reports/ for completed deck reports.`,
     ].filter(Boolean).join('\n')
