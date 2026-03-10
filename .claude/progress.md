@@ -80,7 +80,7 @@ Signal Delivery (single channel):
   - Beat as periodic fallback (adaptive cooldown 5→10→20→…→60min)
 
 .booth/ Directory (gitignored):
-  state.json                          — runtime state (decks + archives + DJ status, event-driven + debounce)
+  booth.db                             — runtime state (SQLite: sessions, DJ, deck status — migrated from state.json)
   daemon.sock                          — daemon IPC
   logs/daemon-YYYY-MM-DD.log           — Winston daily rotate (7d retention)
   logs/daemon-stderr.log               — uncaught errors fallback
@@ -601,10 +601,11 @@ SKILL.md split + init command. Decouples DJ protocol from skill entrypoint; adds
 - healthCheck 增加 `!deck.paneId` guard，避免 pane 清空后每 30s 产生无意义告警
 - 核心修复由 cb61b9c（lifecycle simplification deck）完成，本 deck 补充 healthCheck guard
 
-#### E4. Stop --clean 对齐 ⏳
+#### E4. Stop --clean 对齐 ✅ (dc1fdcf, 94d0be7)
 
-- 确认 stop 和 restart 的 --clean 参数对齐
+- stop 和 restart 的 --clean 参数对齐
 - stop 默认保留状态，`--clean` 设所有 deck 为 exited
+- shutdownClean() 先 exitAllDecks() + exitDj() 再 shutdown()
 
 #### E5.1. Unconditional Resume + ls -a + Dead Code Removal ✅ (8675d12, 38bf765)
 

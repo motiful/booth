@@ -17,7 +17,7 @@
 | `booth resume <name>` | Resume a specific deck by name — unconditional, any status |
 | `booth resume --list` | List all decks (any status) for resume selection |
 | `booth stop` | Stop booth entirely (daemon + all decks + tmux session) |
-| `booth restart` | Restart booth (stop + start + resume all archived decks) |
+| `booth restart` | Restart booth (stop + start + resume all non-exited decks) |
 | `booth restart --clean` | Restart booth clean (stop + start, no deck recovery) |
 | `booth reload` | Hot-restart daemon (preserves tmux sessions and deck state) |
 | `booth auto <name>` | Switch deck to auto mode |
@@ -184,16 +184,16 @@ A deck shows `working` in `booth ls` but doesn't seem to be making progress.
 
 ### Beat not triggering
 
-Beat requires all three conditions simultaneously:
-1. At least one deck is `working`
-2. DJ is `idle`
-3. Cooldown has elapsed (starts at 5 min, doubles each time, caps at 60 min)
+Beat requires both conditions:
+1. At least one active deck exists (any status except exited)
+2. Cooldown has elapsed (starts at 5 min, doubles each time, caps at 60 min)
+
+DJ status does NOT gate beat — CC's message queue handles delivery to a working session. See `reactor-rules.md` Rule 3.
 
 If beat isn't firing:
-- **DJ not idle:** If DJ is working (processing an alert, spinning decks), beat is suppressed. This is expected
-- **No working decks:** Beat only fires when decks are active. Check `booth ls`
+- **No active decks:** Beat only fires when decks are active. Check `booth ls`
 - **Cooldown:** After a beat, the next one is delayed (5 → 10 → 20 → 40 → 60 min). A user interaction or deck state change resets the cooldown to 5 min
-- **JSONL path issue:** The daemon must be tailing DJ's JSONL to detect DJ idle state. If the JSONL path was not communicated on startup, the daemon can't detect DJ status. Try `booth reload`
+- **JSONL path issue:** The daemon must be tailing DJ's JSONL for status detection. If the JSONL path was not communicated on startup, try `booth reload`
 
 ### Report not found
 
@@ -225,4 +225,4 @@ booth reports <name>    # prints report content (finds latest match)
 
 - **Daemon won't start:** Check `.booth/logs/daemon-stderr.log` for errors
 - **Socket stale:** If `booth` reports daemon running but commands fail, the socket file may be stale. Run `booth stop` then `booth` to reset
-- **State corruption:** If `state.json` is corrupted, `booth stop` + delete `.booth/state.json` + `booth` to start fresh
+- **State corruption:** If `booth.db` is corrupted, `booth stop` + delete `.booth/booth.db` + `booth` to start fresh

@@ -82,7 +82,7 @@ The 3s delay allows `--dangerously-skip-permissions` to auto-resolve if possible
 |--------|--------|------|
 | `[booth-alert]` | DJ | Deck state change (idle with report, deck exited) |
 | `[booth-check]` | Deck | Deck idle, no report file yet |
-| `[booth-beat]` | DJ | Timer: DJ idle + decks active + cooldown elapsed |
+| `[booth-beat]` | DJ | Timer: active decks exist + cooldown elapsed (fires regardless of DJ status) |
 
 ## Alert Delivery
 

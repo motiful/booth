@@ -2,17 +2,18 @@
 
 ## What Beat Is
 
-Beat is DJ's periodic patrol mechanism. When decks are working and DJ is idle, the daemon sends `[booth-beat]` to prompt DJ to check on things.
+Beat is DJ's periodic patrol mechanism. When active decks exist, the daemon periodically sends `[booth-beat]` to DJ with a status summary. Beat fires regardless of DJ status — CC's message queue handles delivery to a working session.
 
 ## Trigger Conditions
 
-All three must be true simultaneously:
+Both must be true:
 
-1. At least one deck status is `working`
-2. DJ status is `idle`
-3. Time since last beat >= cooldown interval
+1. At least one active deck exists (any status except exited)
+2. Time since last beat >= cooldown interval
 
-No working decks → beat stops naturally. No manual stop needed.
+No active decks → beat stops naturally. No manual stop needed.
+
+**DJ status does not gate beat.** The exact time DJ is busy is when decks are most likely to need attention. See `reactor-rules.md` Rule 3.
 
 ## Adaptive Cooldown
 
@@ -52,11 +53,18 @@ _Decks working, nothing for you to do._
 
 Users can customize `.booth/beat.md` for their workflow.
 
+## Anomaly Flagging
+
+Beat isn't just a status dump — it flags anomalies that need attention:
+
+- **⚠ STALE CHECK**: Deck stuck in checking for >10 minutes. May be at API limit, context compaction, or genuinely stuck.
+- Decks idle without prior notification (not in holding-notified set)
+
 ## Beat vs Alerts
 
 | Mechanism | Trigger | Purpose |
 |-----------|---------|---------|
-| Alert | Deck state change (idle/error/needs-attention) | React to events |
-| Beat | Timer (DJ idle + decks working) | Proactive patrol |
+| Alert | Deck state change (idle with report / deck exited) | React to events |
+| Beat | Timer (active decks + cooldown elapsed) | Proactive patrol |
 
 Alerts are reactive. Beat is proactive. Both are mechanical — no "remembering" needed.
