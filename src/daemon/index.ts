@@ -65,18 +65,20 @@ export class Daemon {
       }
     })
 
-    // Validate and restore existing decks from state
+    // Validate and restore existing decks from state.
+    // replayLines=0: state is already in DB, no need to replay JSONL history
+    // (replaying causes stale idle/working signals to re-trigger handlers)
     this.pruneStaleDecks()
     for (const deck of this.state.getAllDecks()) {
       if (deck.jsonlPath) {
-        this.watchOrWait(deck.id, deck.jsonlPath)
+        this.watchOrWait(deck.id, deck.jsonlPath, 0)
       }
     }
 
     // Restore DJ JSONL from persisted state, or wait for IPC notification.
     const dj = this.state.getDj()
     if (dj?.jsonlPath) {
-      this.watchOrWait('dj', dj.jsonlPath)
+      this.watchOrWait('dj', dj.jsonlPath, 0)
     }
 
     await this.startIpc()
@@ -126,10 +128,10 @@ export class Daemon {
     }
   }
 
-  private watchOrWait(id: string, jsonlPath: string): void {
+  private watchOrWait(id: string, jsonlPath: string, replayLines?: number): void {
     this.stopWaiter(id)
     if (existsSync(jsonlPath)) {
-      this.signal.watch(id, jsonlPath)
+      this.signal.watch(id, jsonlPath, replayLines)
       logger.info(`[booth-daemon] ${id} → watching ${jsonlPath}`)
       return
     }
@@ -140,7 +142,7 @@ export class Daemon {
       attempts++
       if (existsSync(jsonlPath)) {
         this.stopWaiter(id)
-        this.signal.watch(id, jsonlPath)
+        this.signal.watch(id, jsonlPath, replayLines)
         logger.info(`[booth-daemon] ${id} → watching ${jsonlPath} (waited ${attempts}s)`)
       } else if (attempts >= JSONL_WAIT_MAX_ATTEMPTS) {
         this.stopWaiter(id)

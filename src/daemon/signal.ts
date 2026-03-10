@@ -23,10 +23,10 @@ interface Watcher {
 export class SignalCollector extends EventEmitter {
   private watchers = new Map<string, Watcher>()
 
-  watch(deckId: string, jsonlPath: string): void {
+  watch(deckId: string, jsonlPath: string, replayLines = 20): void {
     if (this.watchers.has(deckId)) return
 
-    const child = spawn('tail', ['-f', '-n', '20', jsonlPath], {
+    const child = spawn('tail', ['-f', '-n', String(replayLines), jsonlPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
 
