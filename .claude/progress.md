@@ -606,6 +606,16 @@ SKILL.md split + init command. Decouples DJ protocol from skill entrypoint; adds
 - 确认 stop 和 restart 的 --clean 参数对齐
 - stop 默认保留状态，`--clean` 设所有 deck 为 exited
 
+#### E5.1. Unconditional Resume + ls -a ✅ (dd78c8b)
+
+- `booth resume <name>` 无条件恢复 — 不再过滤 exited 状态
+- `readDeckByName()` 查询无 status 过滤，取 `ORDER BY updated_at DESC LIMIT 1`
+- `state.resumeDeck()` 改用 rowid 匹配（不再排除 exited）
+- `booth ls -a` / `--all` — 查询 DB 全部 deck 含 exited
+- `ls-all` IPC 命令 + `getAllDecksFromDb()` 方法
+- 确认 kill 使用 exitDeck（UPDATE），无 DELETE 操作
+- 碰文件：resume.ts, ls.ts, cli/index.ts, daemon/index.ts, state.ts
+
 #### E5. Stop→Resume E2E 验证 ⏳
 
 - 依赖 E3

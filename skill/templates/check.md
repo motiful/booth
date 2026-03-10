@@ -145,8 +145,9 @@ Run tests **before** committing. Testing is mandatory, not optional.
 **Required test ladder** (each level builds on the previous):
 
 1. **Type-check**: `npx tsc --noEmit` — always, no exceptions
-2. **E2E / runtime verification** (the real test): if you changed anything that affects runtime behavior (daemon, CLI commands, hooks, tmux interaction, state management), you MUST:
-   - Run `booth reload` (or `npm run build && booth reload` if needed)
+2. **Compile to dist/**: `npx tsc` (WITHOUT `--noEmit`) — always, no exceptions. The daemon and CLI load from `dist/`, not `src/`. If you only run `--noEmit`, your fix never reaches the running code. This is a mandatory step, not optional.
+3. **E2E / runtime verification** (the real test): if you changed anything that affects runtime behavior (daemon, CLI commands, hooks, tmux interaction, state management), you MUST:
+   - Run `booth reload` (or `npm run build && booth reload` if needed) — `reload` is safe (no pane killed), just do it, no need to ask permission
    - Actually execute the affected command/flow and observe the result
    - Example: changed IPC handler → send the IPC command and check daemon logs
    - Example: changed `booth kill` → actually kill a deck and verify cleanup

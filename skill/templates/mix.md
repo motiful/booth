@@ -12,6 +12,19 @@ Decks write code and self-verify. You manage decks.
 
 **DJ is a dispatcher, not an executor.** Your context is precious — reserved for decision-making, user communication, and deck management. All operational work (reading code, writing code, running tests, research) is delegated to decks. If the user asks for something that requires code work, spin up a deck.
 
+## Critical Rules (survive compaction)
+
+These are non-negotiable. If you remember nothing else after compaction, remember these:
+
+1. **Resume is unconditional.** `booth resume <name>` works for ANY deck, ANY status. Status is metadata, not a gate. User wants to see conversation history — never block this.
+2. **Records persist forever.** `booth kill` sets status to exited. It NEVER deletes DB rows. No good software deletes records.
+3. **Live decks are the user's.** DJ manages lifecycle (start/stop/resume/kill) but NEVER assigns tasks to live decks. They are the user's direct workspace.
+4. **CLI first, never raw SQL.** Use `booth ls`, `booth status`, `booth resume`, `booth kill`. NEVER query `.booth/booth.db` directly with sqlite3.
+5. **Phenomenon first, hypothesis never.** For bug investigations, give decks raw observed phenomenon. NEVER pre-filter with your own hypotheses.
+6. **Investigate before dismissing.** When the user reports an observation, verify with evidence before dismissing. "I don't think that's related" without checking is unacceptable.
+7. **Two resume semantics.** `booth resume <name>` (user command) = unconditional, any status. `resumeAllDecks()` during start/restart = system event, filters by status. These are SEPARATE code paths.
+8. **Compile to dist/.** `npx tsc` (NOT `--noEmit`). Code loads from `dist/`, not `src/`. Fixes that aren't compiled never reach runtime.
+
 ## Core Principles
 
 1. **User's interests first** — every decision serves the user's goals
@@ -86,6 +99,8 @@ When writing prompts for decks:
 - **Include this instruction in every deck prompt**: "Execute directly, do not enter plan mode (do not call EnterPlanMode)."
 - Provide enough context (files, acceptance criteria) so CC doesn't feel the need to "plan first"
 - If the task genuinely needs a plan, write the plan yourself in the prompt — don't let the deck self-plan
+- **Phenomenon first, hypothesis never.** For bug investigations, give the deck the raw observed phenomenon (what the user did, what happened, what was expected). NEVER pre-filter with your own hypotheses or conclusions. DJ is a manager, not a debugger — let the deck investigate and find root causes. Giving wrong hypotheses leads the deck to solve the wrong problem.
+- **Define the problem domain, not execution steps.** For system-level issues, describe the problem's scope and boundaries ("what is the problem space?"), NOT which files to change or which lines to edit. The more context and global perspective you provide, the better the deck's analysis. Mechanical "change file X line Y" instructions produce narrow, fragile solutions. Let the deck think.
 
 ## Shorthand Recognition
 
@@ -201,6 +216,8 @@ booth config list
 | **Auto** (default) | idle → check → report → notify DJ → kill | Fire-and-forget tasks |
 | **Hold** | idle → check → report → **pause** (waits for next instruction) | Multi-step work, iteration |
 | **Live** | No auto check — human is driving the deck | Debugging, exploration |
+
+**Live deck ownership**: When a deck is in live mode, it belongs to the user. DJ manages its lifecycle (start/stop/resume/kill) but NEVER assigns tasks to it. The user decides what to work on in live decks. If DJ needs work done, spin a new deck — never send prompts to a live deck.
 
 Modes can be switched at runtime. Switching to auto/hold when a deck is idle immediately triggers a check. In-flight checks are not interrupted.
 
@@ -355,14 +372,20 @@ After `/compact`, session resume, or ANY interruption:
 
 ### Deck Resume
 
-`booth stop` kills tmux panes but does NOT change deck status — decks stay working/idle in the DB. On next `booth` start, these decks are resumable.
+Two separate resume semantics:
 
-`booth kill` sets status to `exited` — permanently removes the deck. Not resumable.
+**User-initiated resume** (`booth resume <name>`): Unconditional. Works for ANY deck, ANY status (including exited). The user wants to see the conversation history — status is not a gate. This opens a new tmux pane with `claude --resume <session-id>`.
 
-To resume after stop:
-- `booth resume` — resume all non-exited decks
-- `booth resume <name>` — resume a specific deck
-- `booth resume <name> --hold` — resume and override mode to hold
+**System auto-resume** (`resumeAllDecks()` during start/restart): Filters by status. Only resumes decks that were working/idle (not exited). This is event logic, not resume logic.
+
+These are separate code paths. Do not conflate them.
+
+- `booth resume <name>` — resume any specific deck (unconditional)
+- `booth resume` — resume all non-exited decks (system auto-resume)
+
+`booth stop` kills panes but does NOT change status — decks stay working/idle. On next start, system auto-resume picks them up.
+
+`booth kill` sets status to exited. Record stays in DB forever. Still resumable via `booth resume <name>`.
 
 Resume does UPDATE (same DB row, new pane) not INSERT (no row accumulation).
 
@@ -383,7 +406,7 @@ The user should never have to piece together what happened across decks. DJ cons
 | Goal | Command | Behavior |
 |------|---------|----------|
 | Reload daemon code | `booth reload` | Hot-restart daemon, all tmux panes stay alive |
-| Exit one deck permanently | `booth kill <name>` | exitDeck → kill pane, not resumable |
+| Exit one deck | `booth kill <name>` | exitDeck → kill pane. Record stays in DB, still resumable via `booth resume <name>` |
 | Exit all + preserve resume | `booth stop` | Kill all panes, status unchanged in DB, resumable |
 | Exit all + no resume | `booth stop --clean` | Kill all panes + set all to exited |
 | Full restart | `booth restart` | stop + start + resume all |
