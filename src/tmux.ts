@@ -219,23 +219,15 @@ async function protectedSendToCCImpl(socket: string, target: string, text: strin
     await delay(500)
 
     // 5. Submit the injected message.
-    //    Escape first — exits INSERT/vim mode if active, no-op otherwise.
-    //    NOTE: Custom keybindings (e.g. ctrl+k → chat:submit) don't work
-    //    reliably after editor proxy injection. Escape+Enter is the proven path.
-    tmux(socket, 'send-keys', '-t', target, 'Escape')
-    await delay(100)
+    //    Enter triggers chat:submit at the component level, works in all
+    //    vim modes (INSERT/NORMAL). No Escape needed — CC keybindings doc:
+    //    "Vim mode handles input at the text input level;
+    //     Keybindings handle actions at the component level."
+    //    NOTE: chat:submit cannot be rebound to custom keys (CC bug #24914).
     tmux(socket, 'send-keys', '-t', target, 'Enter')
 
     // 6. Wait for CC to process and show new prompt.
-    //    Use a shorter first timeout — if Enter didn't submit, retry once.
-    let prompted = await waitForPrompt(socket, target, 8_000)
-    if (!prompted) {
-      logger.warn('[booth-tmux] no prompt after 8s — retrying Enter')
-      tmux(socket, 'send-keys', '-t', target, 'Escape')
-      await delay(100)
-      tmux(socket, 'send-keys', '-t', target, 'Enter')
-      prompted = await waitForPrompt(socket, target, 22_000)
-    }
+    const prompted = await waitForPrompt(socket, target, 30_000)
     if (!prompted) {
       logger.warn('[booth-tmux] timeout waiting for prompt after injection')
       return  // finally block still runs cleanup
