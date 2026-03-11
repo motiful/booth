@@ -2,7 +2,7 @@
 
 > Current execution state. Read this first when starting a session.
 
-## Current Phase: Phase 2.9 — Worktree Isolation (NEXT)
+## Current Phase: Wave F — Backlog 清零
 
 ---
 
@@ -80,21 +80,37 @@ Signal Delivery (single channel):
 
 ---
 
-## Pending Items
+## Pending Items — Execution Order
 
-### Backlog (from audits)
+### Wave F — Backlog 清零
 
 - [ ] restore 后 status 刷新机制（避免 stale status + dedup）
 - [ ] Report 元数据管理（SQLite 索引 + read/unread/reviewed 状态 + 面板化）
 - [ ] **待验证**：/resume 是否触发 SessionStart（需实测）— 见 `../booth-backstage/research/session-monitor-design.md`
 
-### CC Compaction Research (调研完成，待实施)
+### Wave G — CC Compaction 防护
 
 > 调研文档：`../booth-backstage/research/cc-compaction-2026.md`（25+ 来源引用）
 
 - [ ] PreCompact hook 防护（DJ compaction 期间保护关键上下文）
 - [ ] CLAUDE.md Compact Instructions（compaction 后恢复指引）
 - [ ] 信号安全策略（compaction 前后信号连续性）
+
+### Wave H — npm 发布 + booth upgrade
+
+**前置条件**：booth 发布到 npm (`@motiful/booth`)。
+
+**设计**（已确定）：
+- 仅在 bare `booth`（无参数）时触发版本检查
+- 检查 npm registry 最新版本 vs 本地版本
+- 如有新版本，打印提示（不自动安装）
+
+**hook 点已就位**：`src/cli/index.ts` 的 `case undefined:` 分支
+
+- [ ] npm publish 准备（package.json 审查、README、LICENSE、prepublishOnly script）
+- [ ] `src/version.ts` — getCurrentVersion() + checkForUpdates()
+- [ ] bare `booth` 版本检查（npm registry fetch，5s timeout，失败静默跳过）
+- [ ] 提示格式：`[booth] New version available: 0.2.0 → npm update -g @motiful/booth`
 
 ### Phase 2.9 — Worktree Isolation
 
@@ -104,22 +120,7 @@ Signal Delivery (single channel):
 - [ ] deck kill 时自动清理 worktree
 - [ ] 冲突处理机制（deck 尝试 → 失败报告 DJ）
 
-### booth upgrade — 自动更新检查 (依赖 npm publish)
-
-**前置条件**：booth 发布到 npm (`@motiful/booth`)。未发布前此功能无法实现。
-
-**设计**（已确定）：
-- 仅在 bare `booth`（无参数）时触发版本检查
-- 检查 npm registry 最新版本 vs 本地版本
-- 如有新版本，打印提示（不自动安装）
-
-**hook 点已就位**：`src/cli/index.ts` 的 `case undefined:` 分支
-
-- [ ] `src/version.ts` — getCurrentVersion() + checkForUpdates()
-- [ ] bare `booth` 版本检查（npm registry fetch，5s timeout，失败静默跳过）
-- [ ] 提示格式：`[booth] New version available: 0.2.0 → npm update -g @motiful/booth`
-
-### Phase 3 — NOT YET IMPLEMENTED
+### Phase 3 — 远期
 
 - [ ] DJ context management (StatusLine hook + auto compact) — 调研完成，见 cc-compaction-2026.md
 - [ ] Guardian (进程自愈, 3-strike rule)
@@ -144,9 +145,12 @@ Signal Delivery (single channel):
 | 2.7 | Done | Pre-Phase 3 — reports CLI, sendKeysToCC, signal fix, check 八维度 |
 | 2.8 | Done | Input protection + signal simplification — protectedSendToCC, alert 移除 |
 | Wave C-E | Done | SQLite migration + lifecycle simplification + stop→resume E2E |
-| 2.9 | Next | Worktree isolation |
+| Wave F | **Next** | Backlog 清零 — restore 刷新、report 元数据、/resume 验证 |
+| Wave G | Queued | CC Compaction 防护 — PreCompact hook、Compact Instructions、信号安全 |
+| Wave H | Queued | npm 发布 + booth upgrade — 发布到 npm + 自动更新检查 |
+| 2.9 | Queued | Worktree isolation |
 | 3 | Outlined | Self-management — booth manages its own dev |
-| 4 | Outlined | Evolution — npm publish + future features |
+| 4 | Outlined | Evolution — future features |
 
 ## File Map
 
