@@ -55,6 +55,18 @@ After a deck goes idle (auto/hold modes only), the daemon sends `[booth-check]`.
 3. Writes a report to `.booth/reports/<deck>.md`
 4. Goes idle again — daemon sees report + idle → notifies DJ
 
+## Deck Environment
+
+Each deck's tmux pane has these environment variables:
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `BOOTH_DECK_ID` | UUID (session ID) | Unique identity for this deck session |
+| `BOOTH_DECK_NAME` | Deck name | Human-readable name |
+| `BOOTH_ROLE` | `deck` | Distinguishes deck from DJ |
+
+`BOOTH_DECK_ID` is the CC session UUID — the same value stored as `session_id` in the `sessions` table. It is used by hooks (e.g., session-start-hook) to associate events with a specific deck.
+
 ## What Decks Know
 
 - Their task (from the spin prompt)

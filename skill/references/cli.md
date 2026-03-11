@@ -29,6 +29,18 @@
 | `booth config get <key>` | Get a config value |
 | `booth config list` | Show all config |
 
+## Identifier Resolution
+
+All commands that accept `<name>` also accept a session ID (full UUID or hex prefix ≥ 4 chars). The resolver tries in order:
+
+1. **Full UUID** → exact `session_id` match in DB
+2. **Hex prefix ≥ 4 chars** → name exact match first, then `session_id` prefix match among active decks
+3. **Everything else** → treat as name (active first, then historical/exited)
+
+This means `booth status auth-fix`, `booth status a1b2c3d4`, and `booth status a1b2c3d4-...` all work. Internal addressing uses `sessionId` (UUID); name is a CLI convenience alias.
+
+The `BOOTH_DECK_ID` environment variable (set in each deck's tmux pane) contains the UUID session ID.
+
 ## spin Options
 
 ```
