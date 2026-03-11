@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { existsSync, statSync, renameSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { BoothState } from './state.js'
@@ -6,7 +6,6 @@ import { sendMessage } from './send-message.js'
 import { readReportStatus, isTerminalStatus, findLatestReport, parseReport } from './report.js'
 import { timestampedReportPath, boothPath, deriveSocket } from '../constants.js'
 import { tmuxSafe } from '../tmux.js'
-import { readConfig } from '../config.js'
 import { logger } from './logger.js'
 import type { DeckInfo, DeckStateChange } from '../types.js'
 
@@ -195,13 +194,11 @@ export class Reactor {
         const msg = `Deck "${deck.name}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Deck is holding. Report: ${rPath}`
         this.notifyDj(msg)
         this.holdingNotified.add(deck.id)
-        this.openReport(rPath)
         this.systemNotify(`Booth: ${deck.name} → ${status} (holding)`)
         logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status} (holding, round ${round})`)
       } else {
         const msg = `Deck "${deck.name}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Report: ${rPath}`
         this.notifyDj(msg)
-        this.openReport(rPath)
         this.systemNotify(`Booth: ${deck.name} → ${status}`)
         logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status} (round ${round})`)
       }
@@ -451,20 +448,6 @@ export class Reactor {
     }
   }
 
-  private openReport(filePath: string): void {
-    try {
-      const config = readConfig(this.projectRoot)
-      const editor = config.editor as string | undefined
-      const cmd = (editor && editor !== 'open')
-        ? editor
-        : (process.platform === 'darwin' ? 'open' : 'xdg-open')
-      spawn(cmd, [filePath], { detached: true, stdio: 'ignore' })
-        .on('error', () => {}) // swallow async spawn failures
-        .unref()
-    } catch {
-      // report open failure is non-critical
-    }
-  }
 
   private ingestReport(reportPath: string, deckName: string, round: number): void {
     try {
