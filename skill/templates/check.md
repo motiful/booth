@@ -193,6 +193,7 @@ A deck corresponds to one CC session. If a deck is resumed (`claude --resume`), 
 status: SUCCESS | FAIL | FAILED | ERROR
 rounds: 3
 deck: auth-refactor
+goal: "one-line summary of the original goal from [booth-check]"
 session-id: <CC session UUID, if known>
 timestamp: 2026-03-02T14:30:00Z
 follow-up:
@@ -203,6 +204,10 @@ follow-up:
   dj-action:
     - "更新 self-review dimensions"
 ---
+
+## Original Goal
+
+Copy the full **Original Goal** from the `[booth-check]` message here. This lets DJ verify your work against the original intent without cross-referencing.
 
 ## Summary
 

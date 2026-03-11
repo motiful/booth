@@ -87,8 +87,10 @@ Signal Delivery (single channel):
 - [x] restore 后 status 刷新 — reconcileStaleStatus() JSONL tail scan + session-changed 300ms debounce（88882a3, E2E verified）
 - [x] /resume 触发 SessionStart 验证 — 确认双触发 + debounce 修复，JSONL switched 2→0（88882a3, E2E verified）
 - [x] `--no-loop` 判断标准 + E2E hard rule — runtime-impact 硬边界（ecafe04, 164d0b2, 6c1bc33）
-- [ ] **Report 元数据改造**（进行中）— SQLite ingestion + 原始 goal 追溯 + DJ review 协议升级
+- [x] **Report 元数据改造** — SQLite ingestion pipeline complete（4bbf74e, 6cbff9d）
   - [x] DJ Review/Delivery 协议升级 — mix.md 四处强化回扣原始需求（f71f459）
+  - [x] Report SQLite ingestion — reactor auto-ingest + state CRUD + IPC endpoints + CLI upgrade（4bbf74e）
+  - [x] ON CONFLICT 修复 — re-ingest 保留 read metadata（6cbff9d）
 
 ### Wave G — CC Compaction 防护
 
