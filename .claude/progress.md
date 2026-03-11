@@ -84,9 +84,11 @@ Signal Delivery (single channel):
 
 ### Wave F — Backlog 清零
 
-- [ ] restore 后 status 刷新机制（避免 stale status + dedup）
-- [ ] Report 元数据管理（SQLite 索引 + read/unread/reviewed 状态 + 面板化）
-- [ ] **待验证**：/resume 是否触发 SessionStart（需实测）— 见 `../booth-backstage/research/session-monitor-design.md`
+- [x] restore 后 status 刷新 — reconcileStaleStatus() JSONL tail scan + session-changed 300ms debounce（88882a3, E2E verified）
+- [x] /resume 触发 SessionStart 验证 — 确认双触发 + debounce 修复，JSONL switched 2→0（88882a3, E2E verified）
+- [x] `--no-loop` 判断标准 + E2E hard rule — runtime-impact 硬边界（ecafe04, 164d0b2, 6c1bc33）
+- [ ] **Report 元数据改造**（进行中）— SQLite ingestion + 原始 goal 追溯 + DJ review 协议升级
+  - [x] DJ Review/Delivery 协议升级 — mix.md 四处强化回扣原始需求（f71f459）
 
 ### Wave G — CC Compaction 防护
 
@@ -130,7 +132,7 @@ Signal Delivery (single channel):
 - [ ] Attention management / work statistics
 - [ ] Mix 策略化 — .booth/ 文件作为刚性入口 + 路由器，可指向 domain-specific skills
 - [ ] 产品命名重新评估（Booth 语音输入易误识别为 Boost）
-- [ ] Reports 状态追踪（read/unread/done）— follow-up 自动 routing
+- [ ] Reports follow-up 自动 routing（report 中 dj-action 条目自动转 task）
 
 ---
 
@@ -145,7 +147,7 @@ Signal Delivery (single channel):
 | 2.7 | Done | Pre-Phase 3 — reports CLI, sendKeysToCC, signal fix, check 八维度 |
 | 2.8 | Done | Input protection + signal simplification — protectedSendToCC, alert 移除 |
 | Wave C-E | Done | SQLite migration + lifecycle simplification + stop→resume E2E |
-| Wave F | **Next** | Backlog 清零 — restore 刷新、report 元数据、/resume 验证 |
+| Wave F | **Active** | Backlog 清零 — 3/4 done, Report 元数据改造进行中 |
 | Wave G | Queued | CC Compaction 防护 — PreCompact hook、Compact Instructions、信号安全 |
 | Wave H | Queued | npm 发布 + booth upgrade — 发布到 npm + 自动更新检查 |
 | 2.9 | Queued | Worktree isolation |
