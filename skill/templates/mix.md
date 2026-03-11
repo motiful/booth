@@ -230,16 +230,16 @@ Common mode-switching patterns:
 
 By default, the check phase runs a sub-agent review loop (up to 5 rounds). Pass `--no-loop` to skip the sub-agent review — the deck still writes a report, but without independent verification.
 
-**--no-loop 的判断标准：会不会改变运行时行为？**
+**--no-loop 的判断标准：会不会改变 booth 系统行为？**
 
-| 改变运行时行为？ | 决定 | 例子 |
-|-----------------|------|------|
-| 是 | **必须 loop（默认）** | daemon 逻辑、CLI 命令、hook、state 管理、tmux 交互 |
-| 否 | **可以 no-loop** | 纯文档、调查分析、配置模板、进度更新 |
+| 改变系统行为？ | 决定 | 例子 |
+|--------------|------|------|
+| 是 | **必须 loop（默认）** | daemon 代码、CLI 命令、hook、state 管理、tmux 交互、行为文档（mix.md/check.md/beat.md）、SKILL.md |
+| 否 | **可以 no-loop** | 调查报告、进度更新、README、设计文档、注释修改 |
 
-这是硬边界，不是 judgment call。改了 `src/` 下任何 `.ts` 文件 → loop。只改了 `.md`/`.json`/`skill/` → 可以 no-loop。
+判断依据是**是否影响 booth 运行行为**，不是文件后缀。mix.md/check.md 虽然是 `.md` 文件，但直接控制 DJ 和 deck 行为，属于行为变更，必须 loop。
 
-The deciding factor is **runtime impact**, not task size. A one-line daemon fix needs loop. A 500-line doc doesn't.
+The deciding factor is **behavioral impact on booth**, not file extension. A one-line daemon fix needs loop. A 500-line design doc doesn't. A template change (mix.md, check.md) that alters DJ/deck behavior also needs loop.
 
 ### `booth ls` Display
 
@@ -264,7 +264,7 @@ Mode indicators: `[A]` auto, `[H]` hold, `[L]` live.
    - Default (auto + looper) for most tasks
    - `--hold` for tasks requiring iteration or follow-up
    - `--live` for human-driven exploration
-   - `--no-loop` for tasks that don't change runtime behavior (pure doc/config/skill changes)
+   - `--no-loop` for tasks that don't change booth system behavior (pure informational output: reports, design docs, progress updates)
 4. Run `booth spin <name> --prompt "<prompt>"` (with flags as needed)
 5. Deck starts working automatically — daemon monitors via JSONL
 

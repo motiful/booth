@@ -57,16 +57,16 @@ When a deck is spun with `--no-loop`, the sub-agent review loop is skipped entir
 
 ### When to use --no-loop vs default loop
 
-**判断标准：会不会改变运行时行为？**
+**判断标准：会不会改变 booth 系统行为？**
 
-| 改变运行时行为？ | 决定 | 例子 |
-|-----------------|------|------|
-| 是 | **必须 loop（默认）** | daemon 逻辑、CLI 命令、hook、state 管理、tmux 交互 |
-| 否 | **可以 no-loop** | 纯文档、调查分析、配置模板、进度更新 |
+| 改变系统行为？ | 决定 | 例子 |
+|--------------|------|------|
+| 是 | **必须 loop（默认）** | daemon 代码、CLI 命令、hook、state 管理、tmux 交互、行为文档（mix.md/check.md/beat.md）、SKILL.md |
+| 否 | **可以 no-loop** | 调查报告、进度更新、README、设计文档、注释修改 |
 
-这是硬边界，不是 judgment call。改了 `src/` 下任何 `.ts` 文件 → loop。只改了 `.md`/`.json`/`skill/` → 可以 no-loop。
+判断依据是**是否影响 booth 运行行为**，不是文件后缀。mix.md/check.md 虽然是 `.md` 文件，但直接控制 DJ 和 deck 行为，属于行为变更，必须 loop。
 
-The deciding factor is **runtime impact**, not task size. A one-line daemon fix needs loop. A 500-line doc doesn't.
+The deciding factor is **behavioral impact on booth**, not file extension. A one-line daemon fix needs loop. A 500-line design doc doesn't. A template change (mix.md, check.md) that alters DJ/deck behavior also needs loop.
 
 ## Round Info
 
