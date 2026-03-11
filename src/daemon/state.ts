@@ -365,6 +365,25 @@ export class BoothState extends EventEmitter {
         value TEXT
       );
     `)
+
+    // Step 0: Identity refactor schema prep
+    // Index session_id for future lookups (unique among active sessions)
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_session_id
+        ON sessions(session_id)
+        WHERE session_id IS NOT NULL AND status != 'exited'
+    `)
+
+    // Add session_id column to reports for future foreign-key-like association
+    try {
+      this.db.exec(`ALTER TABLE reports ADD COLUMN session_id TEXT`)
+    } catch {
+      // Column already exists — safe to ignore
+    }
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_reports_session ON reports(session_id)
+    `)
   }
 
   private createNewSchema(): void {
