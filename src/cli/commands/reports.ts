@@ -1,39 +1,17 @@
-import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
-import { join, basename } from 'node:path'
+import { readFileSync, existsSync } from 'node:fs'
+import { basename } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { findProjectRoot, reportsDir } from '../../constants.js'
-import { readReportStatus, findLatestReport } from '../../daemon/report.js'
+import { findProjectRoot } from '../../constants.js'
+import { findLatestReport } from '../../daemon/report.js'
 import { readConfig } from '../../config.js'
+import { ipcRequest, isDaemonRunning } from '../../ipc.js'
+import type { ReportInfo } from '../../types.js'
 
-const FRONTMATTER_RE = /^---\s*\n([\s\S]*?)\n---/
-
-interface FollowUp {
-  humanReview: number
-  blockedBy: number
-  djAction: number
-}
-
-const FOLLOW_UP_KEYS = ['human-review', 'blocked-by', 'dj-action'] as const
-
-function parseFollowUp(content: string): FollowUp {
-  const result: FollowUp = { humanReview: 0, blockedBy: 0, djAction: 0 }
-  const fmMatch = content.match(FRONTMATTER_RE)
-  if (!fmMatch) return result
-
-  const fm = fmMatch[1]
-
-  for (const key of FOLLOW_UP_KEYS) {
-    const re = new RegExp(`^\\s+${key}:\\s*\\n((?:\\s+-\\s+.+\\n?)*)`, 'm')
-    const match = fm.match(re)
-    if (match) {
-      const count = match[1].split('\n').filter(l => /^\s+-\s+/.test(l)).length
-      if (key === 'human-review') result.humanReview = count
-      else if (key === 'blocked-by') result.blockedBy = count
-      else if (key === 'dj-action') result.djAction = count
-    }
+function validateName(name: string): void {
+  if (basename(name) !== name) {
+    console.error(`[booth] invalid report name: "${name}"`)
+    process.exit(1)
   }
-
-  return result
 }
 
 function relativeTime(ms: number): string {
@@ -47,45 +25,11 @@ function relativeTime(ms: number): string {
   return `${days}d ago`
 }
 
-interface ReportEntry {
-  name: string
-  status: string | null
-  mtime: number
-  followUp: FollowUp
-}
-
-function listReports(projectRoot: string): ReportEntry[] {
-  const dir = reportsDir(projectRoot)
-  if (!existsSync(dir)) return []
-
-  const files = readdirSync(dir).filter(f => f.endsWith('.md'))
-  return files.map(f => {
-    const fullPath = join(dir, f)
-    const name = basename(f, '.md')
-    const status = readReportStatus(fullPath)
-    const mtime = statSync(fullPath).mtimeMs
-    let followUp: FollowUp = { humanReview: 0, blockedBy: 0, djAction: 0 }
-    try {
-      const content = readFileSync(fullPath, 'utf-8')
-      followUp = parseFollowUp(content)
-    } catch { /* ignore */ }
-    return { name, status, mtime, followUp }
-  }).sort((a, b) => b.mtime - a.mtime)
-}
-
-function validateName(name: string): void {
-  if (basename(name) !== name) {
-    console.error(`[booth] invalid report name: "${name}"`)
-    process.exit(1)
-  }
-}
-
-function formatFollowUp(fu: FollowUp): string {
+function formatFlags(r: ReportInfo): string {
   const parts: string[] = []
-  if (fu.humanReview > 0) parts.push(`${fu.humanReview} 待验证`)
-  if (fu.blockedBy > 0) parts.push(`${fu.blockedBy} blocked`)
-  if (fu.djAction > 0) parts.push(`${fu.djAction} DJ`)
-  return parts.length > 0 ? `   [${parts.join(', ')}]` : ''
+  if (r.hasHumanReview) parts.push('human-review')
+  if (r.hasDjAction) parts.push('dj-action')
+  return parts.length > 0 ? `  [${parts.join(', ')}]` : ''
 }
 
 export async function reportsCommand(args: string[]): Promise<void> {
@@ -110,8 +54,33 @@ export async function reportsCommand(args: string[]): Promise<void> {
     return
   }
 
+  // booth reports mark-read <name>
+  if (args[0] === 'mark-read') {
+    const name = args[1]
+    if (!name) {
+      console.error('Usage: booth reports mark-read <name>')
+      process.exit(1)
+    }
+    if (!(await isDaemonRunning(projectRoot))) {
+      console.error('[booth] daemon not running. Run "booth" first.')
+      process.exit(1)
+    }
+    const res = await ipcRequest(projectRoot, {
+      cmd: 'mark-report-read',
+      id: name,
+      reviewedBy: 'dj',
+    }) as { ok?: boolean; error?: string }
+    if (res.ok) {
+      console.log(`[booth] report "${name}" marked as read`)
+    } else {
+      console.error(`[booth] ${res.error}`)
+      process.exit(1)
+    }
+    return
+  }
+
   // booth reports <name> — print content
-  if (args[0] && args[0] !== 'open') {
+  if (args[0] && args[0] !== 'open' && args[0] !== 'mark-read') {
     const name = args[0]
     validateName(name)
     const rPath = findLatestReport(projectRoot, name)
@@ -124,21 +93,61 @@ export async function reportsCommand(args: string[]): Promise<void> {
     return
   }
 
-  // booth reports — list all
-  const reports = listReports(projectRoot)
-  if (reports.length === 0) {
+  // booth reports — list all (prefer SQLite via IPC, fallback to filesystem)
+  if (await isDaemonRunning(projectRoot)) {
+    const res = await ipcRequest(projectRoot, { cmd: 'list-reports' }) as { ok: boolean; reports: ReportInfo[] }
+    if (res.ok && res.reports) {
+      if (res.reports.length === 0) {
+        console.log('No reports.')
+        return
+      }
+      const maxName = Math.max(...res.reports.map(r => r.deckName.length))
+      console.log('Reports:')
+      for (const r of res.reports) {
+        const readIcon = r.readStatus === 'read' ? ' ' : '*'
+        const name = r.deckName.padEnd(maxName)
+        const status = r.status.padEnd(10)
+        const time = relativeTime(Date.now() - r.createdAt)
+        const rounds = r.rounds ? `r${r.rounds}` : ''
+        const flags = formatFlags(r)
+        console.log(`  ${readIcon} ${name}  ${status}  ${rounds.padEnd(4)} ${time}${flags}`)
+      }
+      return
+    }
+  }
+
+  // Fallback: filesystem scan (daemon not running or IPC failed)
+  const { reportsDir } = await import('../../constants.js')
+  const { readdirSync, statSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { readReportStatus } = await import('../../daemon/report.js')
+
+  const dir = reportsDir(projectRoot)
+  if (!existsSync(dir)) {
     console.log('No reports.')
     return
   }
 
-  const maxName = Math.max(...reports.map(r => r.name.length))
+  const files = readdirSync(dir).filter(f => f.endsWith('.md'))
+  if (files.length === 0) {
+    console.log('No reports.')
+    return
+  }
 
+  const entries = files.map(f => {
+    const fullPath = join(dir, f)
+    const name = basename(f, '.md')
+    const status = readReportStatus(fullPath)
+    const mtime = statSync(fullPath).mtimeMs
+    return { name, status, mtime }
+  }).sort((a, b) => b.mtime - a.mtime)
+
+  const maxName = Math.max(...entries.map(r => r.name.length))
   console.log('Reports:')
-  for (const r of reports) {
+  for (const r of entries) {
     const name = r.name.padEnd(maxName)
     const status = (r.status ?? 'UNKNOWN').padEnd(10)
     const time = relativeTime(Date.now() - r.mtime)
-    const followUp = formatFollowUp(r.followUp)
-    console.log(`  ${name}  ${status}  ${time}${followUp}`)
+    console.log(`  ${name}  ${status}  ${time}`)
   }
 }

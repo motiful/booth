@@ -3,7 +3,7 @@ import { existsSync, readFileSync, renameSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import Database from 'better-sqlite3'
 import { boothPath, STATE_FILE, DB_FILE } from '../constants.js'
-import type { DeckInfo, DjInfo, DeckStatus, DeckStateChange, DeckMode } from '../types.js'
+import type { DeckInfo, DjInfo, DeckStatus, DeckStateChange, DeckMode, ReportInfo } from '../types.js'
 
 export class BoothState extends EventEmitter {
   private db!: Database.Database
@@ -234,6 +234,68 @@ export class BoothState extends EventEmitter {
     this.djCache.status = status
     this.djCache.updatedAt = now
     this.emit('dj:status-changed', status)
+  }
+
+  // --- Report CRUD ---
+
+  insertReport(data: {
+    id: string
+    deckName: string
+    status: string
+    content: string
+    rounds?: number
+    hasHumanReview?: boolean
+    hasDjAction?: boolean
+  }): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO reports (id, deck_name, status, content, created_at, rounds, has_human_review, has_dj_action)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.id, data.deckName, data.status, data.content,
+      Date.now(), data.rounds ?? null,
+      data.hasHumanReview ? 1 : 0, data.hasDjAction ? 1 : 0
+    )
+  }
+
+  getReports(filter?: { deckName?: string; status?: string; readStatus?: string }): ReportInfo[] {
+    let sql = `SELECT * FROM reports WHERE 1=1`
+    const params: unknown[] = []
+    if (filter?.deckName) { sql += ` AND deck_name = ?`; params.push(filter.deckName) }
+    if (filter?.status) { sql += ` AND status = ?`; params.push(filter.status) }
+    if (filter?.readStatus) { sql += ` AND read_status = ?`; params.push(filter.readStatus) }
+    sql += ` ORDER BY created_at DESC`
+
+    const rows = this.db.prepare(sql).all(...params) as ReportRow[]
+    return rows.map(rowToReportInfo)
+  }
+
+  getReport(idOrDeckName: string): ReportInfo | undefined {
+    // Try by ID first, then by deck_name (most recent)
+    let row = this.db.prepare(`SELECT * FROM reports WHERE id = ?`).get(idOrDeckName) as ReportRow | undefined
+    if (!row) {
+      row = this.db.prepare(`SELECT * FROM reports WHERE deck_name = ? ORDER BY created_at DESC LIMIT 1`).get(idOrDeckName) as ReportRow | undefined
+    }
+    return row ? rowToReportInfo(row) : undefined
+  }
+
+  markReportRead(idOrDeckName: string, reviewedBy?: string, reviewNote?: string): boolean {
+    const now = Date.now()
+    // Try by ID first
+    let result = this.db.prepare(`
+      UPDATE reports SET read_status = 'read', read_at = ?, reviewed_by = ?, review_note = ?
+      WHERE id = ?
+    `).run(now, reviewedBy ?? null, reviewNote ?? null, idOrDeckName)
+
+    if (result.changes === 0) {
+      // Try by deck_name (most recent)
+      result = this.db.prepare(`
+        UPDATE reports SET read_status = 'read', read_at = ?, reviewed_by = ?, review_note = ?
+        WHERE rowid = (
+          SELECT rowid FROM reports WHERE deck_name = ? ORDER BY created_at DESC LIMIT 1
+        )
+      `).run(now, reviewedBy ?? null, reviewNote ?? null, idOrDeckName)
+    }
+    return result.changes > 0
   }
 
   // --- Schema & Migration ---
@@ -562,5 +624,37 @@ function rowToDeckInfo(row: SessionRow): DeckInfo {
     checkSentAt: row.check_sent_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+interface ReportRow {
+  id: string
+  deck_name: string
+  status: string
+  content: string
+  created_at: number
+  read_status: string
+  read_at: number | null
+  reviewed_by: string | null
+  review_note: string | null
+  rounds: number | null
+  has_human_review: number
+  has_dj_action: number
+}
+
+function rowToReportInfo(row: ReportRow): ReportInfo {
+  return {
+    id: row.id,
+    deckName: row.deck_name,
+    status: row.status,
+    content: row.content,
+    createdAt: row.created_at,
+    readStatus: row.read_status === 'read' ? 'read' : 'unread',
+    readAt: row.read_at ?? undefined,
+    reviewedBy: row.reviewed_by ?? undefined,
+    reviewNote: row.review_note ?? undefined,
+    rounds: row.rounds ?? undefined,
+    hasHumanReview: row.has_human_review === 1,
+    hasDjAction: row.has_dj_action === 1,
   }
 }

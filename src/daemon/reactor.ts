@@ -3,7 +3,7 @@ import { existsSync, statSync, renameSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { BoothState } from './state.js'
 import { sendMessage } from './send-message.js'
-import { readReportStatus, isTerminalStatus, findLatestReport } from './report.js'
+import { readReportStatus, isTerminalStatus, findLatestReport, parseReport } from './report.js'
 import { timestampedReportPath, boothPath, deriveSocket } from '../constants.js'
 import { tmuxSafe } from '../tmux.js'
 import { readConfig } from '../config.js'
@@ -182,6 +182,9 @@ export class Reactor {
       if (round >= MAX_CHECK_ROUNDS && hasChanges) {
         logger.warn(`[booth-reactor] deck "${deck.name}" hit MAX_CHECK_ROUNDS (${MAX_CHECK_ROUNDS}) with remaining changes`)
       }
+
+      // Ingest report into SQLite
+      this.ingestReport(rPath!, deck.name, round)
 
       if (deck.mode === 'hold') {
         const msg = `Deck "${deck.name}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Deck is holding. Report: ${rPath}`
@@ -455,6 +458,30 @@ export class Reactor {
         .unref()
     } catch {
       // report open failure is non-critical
+    }
+  }
+
+  private ingestReport(reportPath: string, deckName: string, round: number): void {
+    try {
+      const parsed = parseReport(reportPath)
+      if (!parsed) {
+        logger.warn(`[booth-reactor] report ingestion failed: could not parse ${reportPath}`)
+        return
+      }
+      // Use filename (without .md) as report ID for dedup
+      const id = reportPath.split('/').pop()?.replace(/\.md$/, '') ?? deckName
+      this.state.insertReport({
+        id,
+        deckName,
+        status: parsed.status,
+        content: parsed.content,
+        rounds: parsed.rounds ?? round,
+        hasHumanReview: parsed.hasHumanReview,
+        hasDjAction: parsed.hasDjAction,
+      })
+      logger.info(`[booth-reactor] report ingested: "${id}" (${parsed.status})`)
+    } catch (err) {
+      logger.error(`[booth-reactor] report ingestion threw: ${err}`)
     }
   }
 

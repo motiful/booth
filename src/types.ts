@@ -34,3 +34,18 @@ export interface DeckStateChange {
   next: DeckStatus
   timestamp: number
 }
+
+export interface ReportInfo {
+  id: string
+  deckName: string
+  status: string
+  content: string
+  createdAt: number
+  readStatus: 'unread' | 'read'
+  readAt?: number
+  reviewedBy?: string
+  reviewNote?: string
+  rounds?: number
+  hasHumanReview: boolean
+  hasDjAction: boolean
+}

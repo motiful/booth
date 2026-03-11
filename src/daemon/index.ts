@@ -470,6 +470,22 @@ export class Daemon {
         this.reactor.scheduleImmediateBeat()
         return { ok: true }
       }
+      case 'list-reports': {
+        const filter: { deckName?: string; status?: string; readStatus?: string } = {}
+        if (typeof msg.deckName === 'string') filter.deckName = msg.deckName
+        if (typeof msg.status === 'string') filter.status = msg.status
+        if (typeof msg.readStatus === 'string') filter.readStatus = msg.readStatus
+        const reports = this.state.getReports(filter)
+        return { ok: true, reports }
+      }
+      case 'mark-report-read': {
+        const id = typeof msg.id === 'string' && msg.id ? msg.id : null
+        if (!id) return { error: 'id (report id or deck name) required' }
+        const reviewedBy = typeof msg.reviewedBy === 'string' ? msg.reviewedBy : undefined
+        const reviewNote = typeof msg.reviewNote === 'string' ? msg.reviewNote : undefined
+        const updated = this.state.markReportRead(id, reviewedBy, reviewNote)
+        return updated ? { ok: true } : { error: `report not found: ${id}` }
+      }
       case 'reload':
         if (this.reloading) return { error: 'reload already in progress' }
         this.reloading = true

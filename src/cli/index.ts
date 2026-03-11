@@ -43,9 +43,10 @@ Usage:
   booth auto <name>    Switch deck to auto mode (default)
   booth hold <name>    Switch deck to hold mode (check but don't kill)
   booth reload         Hot-restart daemon (preserves tmux sessions)
-  booth reports        List all reports
+  booth reports        List all reports (with read/unread status)
   booth reports <name> Print a report to stdout
   booth reports open <name>  Open a report in editor
+  booth reports mark-read <name>  Mark a report as read
   booth config <cmd>   Manage config (set/get/list)
   booth --help         Show this help
 
