@@ -276,5 +276,20 @@ async function protectedSendToCCImpl(socket: string, target: string, text: strin
     logger.debug('[booth-tmux] copy-mode restored')
   }
 
+  // 9. Ensure INSERT mode so user can continue typing immediately.
+  //    Ctrl+G editor proxy may leave CC in NORMAL mode, which forces
+  //    the user to manually press 'i' before they can type again.
+  //    Only act when we POSITIVELY detect a non-INSERT vim mode indicator
+  //    (e.g. "-- NORMAL --"). If vim mode is off, no indicator appears
+  //    and we must not send 'a' (it would type literal 'a' into input).
+  if (!wasCopyMode) {
+    await delay(200)
+    const modeCheck = tmuxSafe(socket, 'capture-pane', '-t', target, '-p', '-S', '-1')
+    if (modeCheck.ok && /-- (?:NORMAL|VISUAL|REPLACE)/.test(modeCheck.output)) {
+      tmux(socket, 'send-keys', '-t', target, 'a')
+      logger.debug('[booth-tmux] sent "a" to restore INSERT mode')
+    }
+  }
+
   logger.info(`[booth-tmux] protectedSend done target=${target} restored=${restored}`)
 }
