@@ -149,7 +149,7 @@ Run tests **before** committing. Testing is mandatory, not optional.
    - Actually execute the affected command/flow and observe the result
    - Example: changed IPC handler → send the IPC command and check daemon logs
    - Example: changed `booth kill` → actually kill a deck and verify cleanup
-   - Example: changed state persistence → spin/kill/resume and check state.json
+   - Example: changed state persistence → spin/kill/resume and check booth.db
 4. **Cannot auto-test**: list concrete manual steps — but this is the LAST resort, not the default
 
 **The bar**: if you can test it, you must test it. "Compilation passed" as your only Test-Auto evidence for a runtime change is a FAIL. Deck reports that show only `npx tsc --noEmit: ✅ pass` for daemon/CLI changes will be rejected.
