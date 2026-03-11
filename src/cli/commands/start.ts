@@ -6,6 +6,7 @@ import { findProjectRoot, deriveSocket, initBoothDir, logsDir, generateSessionId
 import { hasSession, newSession, tmux, tmuxSafe, tmuxAttach } from '../../tmux.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { ensureSessionStartHook, ensureSessionEndHook } from '../../hooks.js'
+import { ensureBoothSubmitKey } from '../../keybindings.js'
 
 function forkDaemon(projectRoot: string): void {
   const daemonEntry = join(dirname(fileURLToPath(import.meta.url)), '../../daemon/run.js')
@@ -28,6 +29,7 @@ function forkDaemon(projectRoot: string): void {
 export async function ensureDaemonAndSession(projectRoot: string): Promise<void> {
   const socket = deriveSocket(projectRoot)
   initBoothDir(projectRoot)
+  ensureBoothSubmitKey()
 
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
   const sessionStartHookScript = join(packageRoot, 'skill', 'scripts', 'session-start-hook.sh')
