@@ -188,7 +188,7 @@ booth reports <name>
 # Open a report in configured editor
 booth reports open <name>
 
-# Kill a deck (permanently exits — not resumable)
+# Kill a deck (marks exited in DB — still resumable via booth resume <name>)
 booth kill <name>
 
 # Resume decks (after booth stop)

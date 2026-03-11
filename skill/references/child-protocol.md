@@ -23,8 +23,6 @@ Modes can be switched at runtime via `booth auto/hold/live <name>`.
 
 ```
 spin → working → idle → [booth-check] → checking → report → notify DJ → kill
-                      → error (30s window) → recovered / escalated
-                      → needs-attention → handled
 ```
 
 The standard fire-and-forget lifecycle. Deck works, self-verifies, reports, and is killed.

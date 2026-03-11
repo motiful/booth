@@ -378,7 +378,7 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 |-------|--------|-------------|
 | 1–2.8 | Done | Foundation → Core loop → Init → Modes → Input protection → Signal simplification |
 | Wave C–E | Done | SQLite migration → Lifecycle simplification → Stop→Resume E2E |
-| Wave F | Done | Backlog 清零 + socket fix + deck perm isolation |
+| Wave F | Done | Backlog 清零 + socket fix + deck perm isolation + fresh→clean refactor + resume --list 移除 |
 | Phase A | **Next** | 生存质量 — Compaction 防护、Worktree isolation、Guardian 调研 |
 | Phase B | Queued | Skills 整改 — Mix 策略化、skill 依赖链 |
 | Phase C | Queued | 产品打磨 — UIUX、Token 统计、产品命名 |

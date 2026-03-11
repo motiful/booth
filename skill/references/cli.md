@@ -47,14 +47,12 @@ Without `--prompt`, the deck starts as a bare CC session (useful with `--live`).
 ## resume Options
 
 ```
-booth resume [<name>] [--hold] [--id <session-id>] [--pick <n>]
+booth resume [<name>] [--hold]
 ```
 
 | Flag | Effect |
 |------|--------|
 | `--hold` | Resume in hold mode regardless of original mode |
-| `--id <session-id>` | Resume by CC session ID |
-| `--pick <n>` | When multiple archives share a name, pick the nth (default: 1) |
 
 **Resume is unconditional.** `booth resume <name>` works for any deck regardless of status (working, idle, checking, exited). Status is not a gate — the user wants to see the conversation history. `booth resume` (no args) only auto-resumes non-exited decks (system auto-resume has its own criteria).
 
