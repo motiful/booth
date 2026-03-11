@@ -50,7 +50,7 @@ function resolve(db: Database.Database, input: string): ResolvedDeck {
       throw new Error(`Ambiguous session ID prefix "${input}" — matches ${activePrefix.length} decks:\n${list}`)
     }
 
-    // Fallback: exited rows by session_id prefix
+    // Fallback: any remaining rows (active already excluded above) by session_id prefix
     const historyPrefix = db.prepare(
       `SELECT session_id, name FROM sessions WHERE session_id LIKE ? AND role = 'deck' ORDER BY updated_at DESC LIMIT 1`
     ).get(`${input}%`) as SessionRow | undefined
