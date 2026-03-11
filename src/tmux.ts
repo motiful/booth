@@ -63,15 +63,6 @@ export function isInCopyMode(socket: string, target: string): boolean {
   return result.ok && result.output !== '0'
 }
 
-export function isVimMode(): boolean {
-  try {
-    const raw = readFileSync(`${homedir()}/.claude.json`, 'utf-8')
-    return JSON.parse(raw).editorMode === 'vim'
-  } catch {
-    return false
-  }
-}
-
 // --- Ctrl+G Protected Send (input protection for all CC sessions) ---
 
 // Poll until a file no longer exists (async, non-blocking)
@@ -226,13 +217,9 @@ async function protectedSendToCCImpl(socket: string, target: string, text: strin
     await delay(500)
 
     // 5. Submit the injected message.
-    //    After Ctrl+G editor exits, CC may land in INSERT mode (vim mode).
-    //    In INSERT mode, Enter = newline, not submit.
-    //    Escape → NORMAL mode first, then Enter submits.
-    if (isVimMode()) {
-      tmux(socket, 'send-keys', '-t', target, 'Escape')
-      await delay(100)
-    }
+    //    Escape first — exits INSERT/vim mode if active, no-op otherwise.
+    tmux(socket, 'send-keys', '-t', target, 'Escape')
+    await delay(100)
     tmux(socket, 'send-keys', '-t', target, 'Enter')
 
     // 6. Wait for CC to process and show new prompt.
@@ -240,10 +227,8 @@ async function protectedSendToCCImpl(socket: string, target: string, text: strin
     let prompted = await waitForPrompt(socket, target, 8_000)
     if (!prompted) {
       logger.warn('[booth-tmux] no prompt after 8s — retrying Enter')
-      if (isVimMode()) {
-        tmux(socket, 'send-keys', '-t', target, 'Escape')
-        await delay(100)
-      }
+      tmux(socket, 'send-keys', '-t', target, 'Escape')
+      await delay(100)
       tmux(socket, 'send-keys', '-t', target, 'Enter')
       prompted = await waitForPrompt(socket, target, 22_000)
     }
