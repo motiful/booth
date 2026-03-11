@@ -104,8 +104,19 @@ Signal Delivery (single channel):
 - [x] protectedSendToCC 卡输入框修复 — 固定 300ms 延迟替换为 action-file 轮询 + Enter 重试（20a5028, E2E verified）
 - [x] protectedSendToCC vim INSERT 模式提交失败 — Ctrl+G 返回后 CC 可能处于 INSERT 模式，Enter=换行。修复：vim 模式下先发 Escape 退出 INSERT 再 Enter 提交（09bfb00）
 - [x] protectedSendToCC 无条件 Escape — 移除 isVimMode() 条件判断，无条件发 Escape→Enter。Escape 在非 vim 模式下是 no-op，更 robust（83b150d）
-- [x] ~~专用 ctrl+] 提交键~~ — 方案不可行：CC 不识别 ctrl+]（0x1D），且自定义 keybinding 在 editor proxy 注入后不生效。已回退（306b90e）
-- [x] waitForPrompt 误报修复 — regex `/[❯>]/` 匹配注入文本中的 ❯ 字符导致 1s 假阳性。改为 `/^\s*[❯>]\s*$/m` 仅匹配空提示行 + Enter 重试逻辑（306b90e, E2E verified）
+- [x] ~~专用 ctrl+] 提交键~~ — 方案不可行：CC 不识别 ctrl+]（0x1D），chat:submit 不响应自定义 keybinding（CC bug #24914）。已回退（306b90e）
+- [x] waitForPrompt 假阳性修复 — regex `/[❯>]/` 匹配注入文本中的 ❯ 字符导致过早返回。改为 `/^\s*[❯>]\s*$/m` 仅匹配空 prompt 行（306b90e, regex 验证通过 9/9 边界用例）
+- [x] protectedSendToCC 简化 — 移除 Escape（Enter 在所有 vim mode 下触发 chat:submit）+ 移除 retry（有打断 CC 生成的风险，假阳性修复后不再需要）（ed9b5c5）
+- [x] ~~INSERT mode restoration~~ — 伪需求：用户亲测 Ctrl+G 不改变 vim mode。已清理 step 9 代码（c195ac2）
+
+### Bug — tmux socket 不一致（已修复）
+
+- [x] **`booth send DJ` 消息丢失** — Daemon 内部 `sendMessage()` 每次重新 `deriveSocket()`，DJ pane 查找依赖 tmux session name `dj:0` 而非 state 中注册的 paneId。修复：Daemon 构造函数计算一次 socket 并传递到 Reactor 和 sendMessage；DJ pane 查找改用 `state.getDj().paneId`（与 deck 一致）。额外修复：plan-mode auto-approve 空 paneId guard + update-dj-jsonl pane 解析失败时 fail-fast。（1aa933a, E2E verified: reload → send → protectedSend done）
+
+### Deck 权限隔离（完成）
+
+- [x] **Deck 禁止执行 kill/stop/restart** — deck 环境注入 `BOOTH_ROLE=deck` + `BOOTH_DECK_NAME`，CLI kill/stop/restart 检查 env 硬拒绝（983a963, E2E verified）
+- [x] **Deck 身份注入** — spin.ts + resume.ts 注入 `BOOTH_ROLE=deck` + `BOOTH_DECK_NAME`，DJ 已有 `BOOTH_ROLE=dj`（start.ts:81）
 
 ### Wave G — CC Compaction 防护
 
@@ -164,7 +175,7 @@ Signal Delivery (single channel):
 | 2.7 | Done | Pre-Phase 3 — reports CLI, sendKeysToCC, signal fix, check 八维度 |
 | 2.8 | Done | Input protection + signal simplification — protectedSendToCC, alert 移除 |
 | Wave C-E | Done | SQLite migration + lifecycle simplification + stop→resume E2E |
-| Wave F | **Active** | Backlog 清零 — 3/4 done, Report 元数据改造进行中 |
+| Wave F | Done | Backlog 清零 + socket fix + deck perm isolation |
 | Wave G | Queued | CC Compaction 防护 — PreCompact hook、Compact Instructions、信号安全 |
 | Wave H | Queued | npm 发布 + booth upgrade — 发布到 npm + 自动更新检查 |
 | 2.9 | Queued | Worktree isolation |
