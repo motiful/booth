@@ -46,17 +46,25 @@ interface LsRow {
   updated_at: number
 }
 
-function parseLimit(args: string[]): number {
+function parseLsArgs(args: string[]): { limit: number; offset: number; noLimit: boolean } {
+  let limit = 20
+  let offset = 0
+  let noLimit = false
   for (let i = 0; i < args.length; i++) {
     if ((args[i] === '-n' || args[i] === '--limit') && args[i + 1]) {
       const n = parseInt(args[i + 1], 10)
-      if (!isNaN(n) && n > 0) return n
+      if (!isNaN(n) && n > 0) limit = n
     }
+    if (args[i] === '--offset' && args[i + 1]) {
+      const n = parseInt(args[i + 1], 10)
+      if (!isNaN(n) && n >= 0) offset = n
+    }
+    if (args[i] === '--all') noLimit = true
   }
-  return 20
+  return { limit, offset, noLimit }
 }
 
-function lsAll(projectRoot: string, limit: number): void {
+function lsAll(projectRoot: string, limit: number, offset: number): void {
   const dbPath = boothPath(projectRoot, DB_FILE)
   if (!existsSync(dbPath)) {
     console.log('No booth database found.')
@@ -71,10 +79,19 @@ function lsAll(projectRoot: string, limit: number): void {
     `).get() as { total: number }
     const total = totalRow.total
 
-    const rows = db.prepare(`
+    let sql = `
       SELECT name, role, status, mode, prompt, created_at, updated_at
-      FROM sessions ORDER BY CASE WHEN role = 'dj' THEN 0 ELSE 1 END, updated_at DESC LIMIT ?
-    `).all(limit) as LsRow[]
+      FROM sessions ORDER BY CASE WHEN role = 'dj' THEN 0 ELSE 1 END, updated_at DESC`
+    const params: number[] = []
+    if (limit > 0) {
+      sql += ` LIMIT ?`
+      params.push(limit)
+      if (offset > 0) {
+        sql += ` OFFSET ?`
+        params.push(offset)
+      }
+    }
+    const rows = db.prepare(sql).all(...params) as LsRow[]
 
     if (rows.length === 0) {
       console.log('No sessions (including historical).')
@@ -98,8 +115,8 @@ function lsAll(projectRoot: string, limit: number): void {
       console.log(`${line}${promptHint}`)
     }
 
-    if (rows.length < total) {
-      console.log(`\n  (showing ${rows.length} of ${total} — use -n to see more)`)
+    if (limit > 0 && rows.length < total) {
+      console.log(`\n  (showing ${rows.length} of ${total} — use --all to see all, or -n / --offset to paginate)`)
     }
   } finally {
     db.close()
@@ -108,11 +125,11 @@ function lsAll(projectRoot: string, limit: number): void {
 
 export async function lsCommand(args: string[]): Promise<void> {
   const projectRoot = findProjectRoot()
-  const showAll = args.includes('-a') || args.includes('--all')
+  const showArchived = args.includes('-a')
 
-  if (showAll) {
-    const limit = parseLimit(args)
-    lsAll(projectRoot, limit)
+  if (showArchived) {
+    const { limit, offset, noLimit } = parseLsArgs(args)
+    lsAll(projectRoot, noLimit ? 0 : limit, offset)
     return
   }
 

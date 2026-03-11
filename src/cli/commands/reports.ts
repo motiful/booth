@@ -51,6 +51,41 @@ async function getReportContent(projectRoot: string, name: string): Promise<stri
   return null
 }
 
+function parseReportsArgs(args: string[]): { limit: number; offset: number; showAll: boolean } {
+  let limit = 20
+  let offset = 0
+  let showAll = false
+  for (let i = 0; i < args.length; i++) {
+    if ((args[i] === '-n' || args[i] === '--limit') && args[i + 1]) {
+      const n = parseInt(args[i + 1], 10)
+      if (!isNaN(n) && n > 0) limit = n
+    }
+    if (args[i] === '--offset' && args[i + 1]) {
+      const n = parseInt(args[i + 1], 10)
+      if (!isNaN(n) && n >= 0) offset = n
+    }
+    if (args[i] === '--all') showAll = true
+  }
+  return { limit, offset, showAll }
+}
+
+function isFlag(arg: string): boolean {
+  return arg.startsWith('-')
+}
+
+function findPositionalName(args: string[]): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    if (isFlag(arg)) {
+      // Skip flag value
+      if ((arg === '-n' || arg === '--limit' || arg === '--offset') && args[i + 1]) i++
+      continue
+    }
+    return arg
+  }
+  return undefined
+}
+
 export async function reportsCommand(args: string[]): Promise<void> {
   const projectRoot = findProjectRoot()
 
@@ -100,22 +135,30 @@ export async function reportsCommand(args: string[]): Promise<void> {
     return
   }
 
-  // booth reports <name> — print content
-  if (args[0] && args[0] !== 'open' && args[0] !== 'mark-read') {
-    const name = args[0]
-    validateName(name)
-    const content = await getReportContent(projectRoot, name)
+  // booth reports <name> — print content (positional arg that isn't a subcommand or flag)
+  const positionalName = (args[0] && args[0] !== 'open' && args[0] !== 'mark-read' && !isFlag(args[0]))
+    ? args[0] : undefined
+  if (positionalName) {
+    validateName(positionalName)
+    const content = await getReportContent(projectRoot, positionalName)
     if (!content) {
-      console.error(`[booth] report "${name}" not found`)
+      console.error(`[booth] report "${positionalName}" not found`)
       process.exit(1)
     }
     console.log(content)
     return
   }
 
-  // booth reports — list all (prefer SQLite via IPC, fallback to filesystem)
+  // booth reports [--all] [-n N] [--offset N] — list reports with pagination
+  const { limit, offset, showAll } = parseReportsArgs(args)
+
   if (await isDaemonRunning(projectRoot)) {
-    const res = await ipcRequest(projectRoot, { cmd: 'list-reports' }) as { ok: boolean; reports: ReportInfo[] }
+    const ipcMsg: Record<string, unknown> = { cmd: 'list-reports' }
+    if (!showAll) {
+      ipcMsg.limit = limit
+      if (offset > 0) ipcMsg.offset = offset
+    }
+    const res = await ipcRequest(projectRoot, ipcMsg) as { ok: boolean; reports: ReportInfo[]; total: number }
     if (res.ok && res.reports) {
       if (res.reports.length === 0) {
         console.log('No reports.')
@@ -131,6 +174,9 @@ export async function reportsCommand(args: string[]): Promise<void> {
         const rounds = r.rounds ? `r${r.rounds}` : ''
         const flags = formatFlags(r)
         console.log(`  ${readIcon} ${name}  ${status}  ${rounds.padEnd(4)} ${time}${flags}`)
+      }
+      if (!showAll && res.reports.length < res.total) {
+        console.log(`\n  (showing ${res.reports.length} of ${res.total} — use --all to see all, or -n / --offset to paginate)`)
       }
       return
     }
@@ -153,13 +199,18 @@ export async function reportsCommand(args: string[]): Promise<void> {
     return
   }
 
-  const entries = files.map(f => {
+  let entries = files.map(f => {
     const fullPath = join(dir, f)
     const name = basename(f, '.md')
     const status = readReportStatus(fullPath)
     const mtime = statSync(fullPath).mtimeMs
     return { name, status, mtime }
   }).sort((a, b) => b.mtime - a.mtime)
+
+  const total = entries.length
+  if (!showAll) {
+    entries = entries.slice(offset, offset + limit)
+  }
 
   const maxName = Math.max(...entries.map(r => r.name.length))
   console.log('Reports:')
@@ -168,5 +219,8 @@ export async function reportsCommand(args: string[]): Promise<void> {
     const status = (r.status ?? 'UNKNOWN').padEnd(10)
     const time = relativeTime(Date.now() - r.mtime)
     console.log(`  ${name}  ${status}  ${time}`)
+  }
+  if (!showAll && entries.length < total) {
+    console.log(`\n  (showing ${entries.length} of ${total} — use --all to see all, or -n / --offset to paginate)`)
   }
 }

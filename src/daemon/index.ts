@@ -470,12 +470,15 @@ export class Daemon {
         return { ok: true }
       }
       case 'list-reports': {
-        const filter: { deckName?: string; status?: string; readStatus?: string } = {}
+        const filter: { deckName?: string; status?: string; readStatus?: string; limit?: number; offset?: number } = {}
         if (typeof msg.deckName === 'string') filter.deckName = msg.deckName
         if (typeof msg.status === 'string') filter.status = msg.status
         if (typeof msg.readStatus === 'string') filter.readStatus = msg.readStatus
+        if (typeof msg.limit === 'number' && msg.limit > 0) filter.limit = msg.limit
+        if (typeof msg.offset === 'number' && msg.offset > 0) filter.offset = msg.offset
+        const total = this.state.countReports(filter)
         const reports = this.state.getReports(filter)
-        return { ok: true, reports }
+        return { ok: true, reports, total }
       }
       case 'get-report': {
         const id = typeof msg.id === 'string' && msg.id ? msg.id : null

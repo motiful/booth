@@ -263,7 +263,7 @@ export class BoothState extends EventEmitter {
     )
   }
 
-  getReports(filter?: { deckName?: string; status?: string; readStatus?: string }): ReportInfo[] {
+  getReports(filter?: { deckName?: string; status?: string; readStatus?: string; limit?: number; offset?: number }): ReportInfo[] {
     const cols = `id, deck_name, status, created_at, read_status, read_at, reviewed_by, review_note, rounds, has_human_review, has_dj_action`
     let sql = `SELECT ${cols} FROM reports WHERE 1=1`
     const params: unknown[] = []
@@ -271,9 +271,21 @@ export class BoothState extends EventEmitter {
     if (filter?.status) { sql += ` AND status = ?`; params.push(filter.status) }
     if (filter?.readStatus) { sql += ` AND read_status = ?`; params.push(filter.readStatus) }
     sql += ` ORDER BY created_at DESC`
+    if (filter?.limit && filter.limit > 0) { sql += ` LIMIT ?`; params.push(filter.limit) }
+    if (filter?.offset && filter.offset > 0) { sql += ` OFFSET ?`; params.push(filter.offset) }
 
     const rows = this.db.prepare(sql).all(...params) as ReportListingRow[]
     return rows.map(rowToReportListing)
+  }
+
+  countReports(filter?: { deckName?: string; status?: string; readStatus?: string }): number {
+    let sql = `SELECT COUNT(*) as total FROM reports WHERE 1=1`
+    const params: unknown[] = []
+    if (filter?.deckName) { sql += ` AND deck_name = ?`; params.push(filter.deckName) }
+    if (filter?.status) { sql += ` AND status = ?`; params.push(filter.status) }
+    if (filter?.readStatus) { sql += ` AND read_status = ?`; params.push(filter.readStatus) }
+    const row = this.db.prepare(sql).get(...params) as { total: number }
+    return row.total
   }
 
   getReport(idOrDeckName: string): ReportInfo | undefined {
