@@ -73,18 +73,6 @@ function isFlag(arg: string): boolean {
   return arg.startsWith('-')
 }
 
-function findPositionalName(args: string[]): string | undefined {
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]
-    if (isFlag(arg)) {
-      // Skip flag value
-      if ((arg === '-n' || arg === '--limit' || arg === '--offset') && args[i + 1]) i++
-      continue
-    }
-    return arg
-  }
-  return undefined
-}
 
 export async function reportsCommand(args: string[]): Promise<void> {
   const projectRoot = findProjectRoot()

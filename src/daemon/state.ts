@@ -271,8 +271,10 @@ export class BoothState extends EventEmitter {
     if (filter?.status) { sql += ` AND status = ?`; params.push(filter.status) }
     if (filter?.readStatus) { sql += ` AND read_status = ?`; params.push(filter.readStatus) }
     sql += ` ORDER BY created_at DESC`
-    if (filter?.limit && filter.limit > 0) { sql += ` LIMIT ?`; params.push(filter.limit) }
-    if (filter?.offset && filter.offset > 0) { sql += ` OFFSET ?`; params.push(filter.offset) }
+    if (filter?.limit && filter.limit > 0) {
+      sql += ` LIMIT ?`; params.push(filter.limit)
+      if (filter?.offset && filter.offset > 0) { sql += ` OFFSET ?`; params.push(filter.offset) }
+    }
 
     const rows = this.db.prepare(sql).all(...params) as ReportListingRow[]
     return rows.map(rowToReportListing)
