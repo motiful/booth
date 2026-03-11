@@ -195,7 +195,6 @@ booth kill <name>
 booth resume                     # resume all non-exited decks
 booth resume <name>              # resume a specific deck
 booth resume <name> --hold       # resume and switch to hold mode
-booth resume --list              # list resumable decks
 
 # Stop everything (decks stay working/idle in DB for resume)
 booth stop
@@ -382,7 +381,7 @@ After `/compact`, session resume, or ANY interruption:
 1. Read `.booth/plan.md` to restore current execution plan and task states
 2. Run `booth ls` to see current deck states
 3. Check `.booth/reports/` for any unprocessed reports
-4. Run `booth resume --list` to check for resumable decks
+4. Run `booth ls -a` to check deck history
 5. Resume management from current state
 
 ### Deck Resume

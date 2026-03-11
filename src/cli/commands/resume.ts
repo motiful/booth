@@ -83,20 +83,6 @@ export function readDeckForResume(projectRoot: string, name: string): (Resumable
   }
 }
 
-/** Read all decks — any status, for listing purposes */
-export function readAllDecks(projectRoot: string): (ResumableDeck & { status: string })[] {
-  const db = openDb(projectRoot)
-  if (!db) return []
-  try {
-    const rows = db.prepare(`
-      SELECT * FROM sessions WHERE role = 'deck' ORDER BY updated_at DESC
-    `).all() as SessionRow[]
-    return rows.map(r => ({ ...rowToResumable(r), status: r.status }))
-  } finally {
-    db.close()
-  }
-}
-
 export function readDjSessionIdFromState(projectRoot: string): string | undefined {
   const db = openDb(projectRoot)
   if (!db) return undefined
@@ -115,29 +101,8 @@ export function readDjSessionIdFromState(projectRoot: string): string | undefine
 export async function resumeCommand(args: string[]): Promise<void> {
   const projectRoot = findProjectRoot()
 
-  const listFlag = args.includes('--list')
   const isHold = args.includes('--hold')
   const name = args.find(a => !a.startsWith('--'))
-
-  // --list: show all decks (any status) for resume selection
-  if (listFlag) {
-    const entries = readAllDecks(projectRoot)
-    const filtered = name ? entries.filter(e => e.name === name) : entries
-    if (filtered.length === 0) {
-      console.log(name ? `No decks matching "${name}"` : 'No decks found')
-      return
-    }
-    console.log('Decks:')
-    for (let i = 0; i < filtered.length; i++) {
-      const e = filtered[i]
-      const mode = e.mode[0].toUpperCase()
-      const sid = e.sessionId ? e.sessionId.slice(0, 8) + '...' : '(none)'
-      const missing = !existsSync(e.jsonlPath) ? '  (JSONL missing!)' : ''
-      const statusTag = e.status === 'exited' ? ' [exited]' : ''
-      console.log(`  [${i + 1}] ${e.name.padEnd(12)} [${mode}] session: ${sid}${statusTag}${missing}`)
-    }
-    return
-  }
 
   if (!(await isDaemonRunning(projectRoot))) {
     console.log('[booth] daemon not running — starting automatically...')

@@ -35,7 +35,6 @@ Usage:
   booth kill <name>    Kill a deck
   booth resume         Resume decks (auto-starts daemon if needed)
   booth resume <name>  Resume a specific deck
-  booth resume --list  List all resumable decks
   booth stop           Stop booth (daemon + all decks)
   booth restart        Restart booth (stop + start + resume all)
   booth restart --clean  Restart booth clean (stop + start, no deck recovery)

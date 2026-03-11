@@ -15,7 +15,6 @@
 | `booth kill <name>` | Kill a deck (marks exited, row preserved in DB) |
 | `booth resume` | Resume all non-exited decks (auto-starts daemon if needed) |
 | `booth resume <name>` | Resume a specific deck by name — unconditional, any status |
-| `booth resume --list` | List all decks (any status) for resume selection |
 | `booth stop` | Stop booth entirely (daemon + all decks + tmux session) |
 | `booth restart` | Restart booth (stop + start + resume all non-exited decks) |
 | `booth restart --clean` | Restart booth clean (stop + start, no deck recovery) |
@@ -48,12 +47,11 @@ Without `--prompt`, the deck starts as a bare CC session (useful with `--live`).
 ## resume Options
 
 ```
-booth resume [<name>] [--list] [--hold] [--id <session-id>] [--pick <n>]
+booth resume [<name>] [--hold] [--id <session-id>] [--pick <n>]
 ```
 
 | Flag | Effect |
 |------|--------|
-| `--list` | List all decks (any status) without resuming |
 | `--hold` | Resume in hold mode regardless of original mode |
 | `--id <session-id>` | Resume by CC session ID |
 | `--pick <n>` | When multiple archives share a name, pick the nth (default: 1) |
