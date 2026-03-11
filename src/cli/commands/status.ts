@@ -1,7 +1,6 @@
 import { findProjectRoot } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
-import { readReportStatus, findLatestReport } from '../../daemon/report.js'
-import type { DeckInfo, DeckMode } from '../../types.js'
+import type { DeckInfo, DeckMode, ReportInfo } from '../../types.js'
 
 const modeLabel: Record<DeckMode, string> = {
   auto: 'auto',
@@ -50,12 +49,9 @@ export async function statusCommand(args: string[]): Promise<void> {
     console.log(`  Check:     in-flight (${checkAge}s ago)`)
   }
 
-  // Show report status if exists
-  const rPath = findLatestReport(projectRoot, deck.name)
-  if (rPath) {
-    const reportStatus = readReportStatus(rPath)
-    if (reportStatus) {
-      console.log(`  Report:    ${reportStatus} (${rPath})`)
-    }
+  // Show report status from SQLite
+  const reportRes = await ipcRequest(projectRoot, { cmd: 'get-report', id: deck.name }) as { ok?: boolean; report?: ReportInfo }
+  if (reportRes.ok && reportRes.report) {
+    console.log(`  Report:    ${reportRes.report.status}`)
   }
 }

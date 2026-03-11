@@ -2,8 +2,8 @@ import { existsSync } from 'node:fs'
 import Database from 'better-sqlite3'
 import { findProjectRoot, boothPath, DB_FILE } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
-import { readReportStatus, isTerminalStatus, findLatestReport } from '../../daemon/report.js'
-import type { DeckInfo, DjInfo, DeckMode } from '../../types.js'
+import { isTerminalStatus } from '../../daemon/report.js'
+import type { DeckInfo, DjInfo, DeckMode, ReportInfo } from '../../types.js'
 
 const modeIcon: Record<DeckMode, string> = {
   auto: 'A',
@@ -11,17 +11,15 @@ const modeIcon: Record<DeckMode, string> = {
   live: 'L',
 }
 
-function deckSuffix(d: DeckInfo, projectRoot: string): string {
+function deckSuffix(d: DeckInfo, reportMap: Map<string, ReportInfo>): string {
   // Show "checking..." when check is in-flight
   if (d.checkSentAt) return 'checking...'
 
   // For hold mode, show holding status if check is complete
   if (d.mode === 'hold' && d.status === 'idle') {
-    const rPath = findLatestReport(projectRoot, d.name)
-    if (!rPath) return ''
-    const status = readReportStatus(rPath)
-    if (status && isTerminalStatus(status)) {
-      return `holding (${status})`
+    const report = reportMap.get(d.name)
+    if (report && isTerminalStatus(report.status)) {
+      return `holding (${report.status})`
     }
   }
 
@@ -133,6 +131,15 @@ export async function lsCommand(args: string[]): Promise<void> {
     return
   }
 
+  // Fetch reports for suffix display (hold mode status)
+  const reportMap = new Map<string, ReportInfo>()
+  const reportRes = await ipcRequest(projectRoot, { cmd: 'list-reports' }) as { ok: boolean; reports: ReportInfo[] }
+  if (reportRes.ok && reportRes.reports) {
+    for (const r of reportRes.reports) {
+      if (!reportMap.has(r.deckName)) reportMap.set(r.deckName, r)
+    }
+  }
+
   if (hasDj) {
     printDjLine(res.dj!.status, res.dj!.createdAt)
   }
@@ -142,7 +149,7 @@ export async function lsCommand(args: string[]): Promise<void> {
     for (const d of res.decks) {
       const icon = modeIcon[d.mode] ?? 'A'
       const age = formatAge(d.createdAt)
-      const suffix = deckSuffix(d, projectRoot)
+      const suffix = deckSuffix(d, reportMap)
       const promptHint = d.prompt ? `  "${d.prompt.slice(0, 60)}${d.prompt.length > 60 ? '...' : ''}"` : ''
       const line = `  [${icon}] ${d.name.padEnd(20)} ${d.status.padEnd(16)} ${age}`
       console.log(suffix ? `${line}   ${suffix}` : `${line}${promptHint}`)

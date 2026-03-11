@@ -326,7 +326,6 @@ export class Daemon {
         if (!deckId) return { error: 'deckId string required' }
         const deckName = typeof msg.deckName === 'string' ? msg.deckName : deckId
         const reason = typeof msg.reason === 'string' ? msg.reason : 'unknown'
-        const rPath = typeof msg.reportPath === 'string' ? msg.reportPath : '(no report)'
 
         const deck = this.state.getDeck(deckId)
         if (!deck) return { ok: true }
@@ -343,7 +342,7 @@ export class Daemon {
         this.reactor.clearDeckTimers(deckId)
         this.state.exitDeck(deckId)
 
-        this.reactor.notifyDj(`Deck "${deckName}" session exited (${reason}). Report: ${rPath}`)
+        this.reactor.notifyDj(`Deck "${deckName}" session exited (${reason}).`)
         logger.info(`[booth-daemon] deck "${deckName}" session-end: ${reason}, pane killed`)
         return { ok: true }
       }
@@ -477,6 +476,13 @@ export class Daemon {
         if (typeof msg.readStatus === 'string') filter.readStatus = msg.readStatus
         const reports = this.state.getReports(filter)
         return { ok: true, reports }
+      }
+      case 'get-report': {
+        const id = typeof msg.id === 'string' && msg.id ? msg.id : null
+        if (!id) return { error: 'id (report id or deck name) required' }
+        const report = this.state.getReport(id)
+        if (!report) return { ok: false, error: `report not found: ${id}` }
+        return { ok: true, report }
       }
       case 'mark-report-read': {
         const id = typeof msg.id === 'string' && msg.id ? msg.id : null

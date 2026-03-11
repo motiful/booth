@@ -264,15 +264,16 @@ export class BoothState extends EventEmitter {
   }
 
   getReports(filter?: { deckName?: string; status?: string; readStatus?: string }): ReportInfo[] {
-    let sql = `SELECT * FROM reports WHERE 1=1`
+    const cols = `id, deck_name, status, created_at, read_status, read_at, reviewed_by, review_note, rounds, has_human_review, has_dj_action`
+    let sql = `SELECT ${cols} FROM reports WHERE 1=1`
     const params: unknown[] = []
     if (filter?.deckName) { sql += ` AND deck_name = ?`; params.push(filter.deckName) }
     if (filter?.status) { sql += ` AND status = ?`; params.push(filter.status) }
     if (filter?.readStatus) { sql += ` AND read_status = ?`; params.push(filter.readStatus) }
     sql += ` ORDER BY created_at DESC`
 
-    const rows = this.db.prepare(sql).all(...params) as ReportRow[]
-    return rows.map(rowToReportInfo)
+    const rows = this.db.prepare(sql).all(...params) as ReportListingRow[]
+    return rows.map(rowToReportListing)
   }
 
   getReport(idOrDeckName: string): ReportInfo | undefined {
@@ -654,6 +655,38 @@ function rowToReportInfo(row: ReportRow): ReportInfo {
     deckName: row.deck_name,
     status: row.status,
     content: row.content,
+    createdAt: row.created_at,
+    readStatus: row.read_status === 'read' ? 'read' : 'unread',
+    readAt: row.read_at ?? undefined,
+    reviewedBy: row.reviewed_by ?? undefined,
+    reviewNote: row.review_note ?? undefined,
+    rounds: row.rounds ?? undefined,
+    hasHumanReview: row.has_human_review === 1,
+    hasDjAction: row.has_dj_action === 1,
+  }
+}
+
+// Listing row — same as ReportRow but without content (for list queries)
+interface ReportListingRow {
+  id: string
+  deck_name: string
+  status: string
+  created_at: number
+  read_status: string
+  read_at: number | null
+  reviewed_by: string | null
+  review_note: string | null
+  rounds: number | null
+  has_human_review: number
+  has_dj_action: number
+}
+
+function rowToReportListing(row: ReportListingRow): ReportInfo {
+  return {
+    id: row.id,
+    deckName: row.deck_name,
+    status: row.status,
+    content: '',
     createdAt: row.created_at,
     readStatus: row.read_status === 'read' ? 'read' : 'unread',
     readAt: row.read_at ?? undefined,

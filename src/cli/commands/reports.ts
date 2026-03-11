@@ -1,6 +1,7 @@
-import { readFileSync, existsSync } from 'node:fs'
-import { basename } from 'node:path'
+import { readFileSync, existsSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
 import { findProjectRoot } from '../../constants.js'
 import { findLatestReport } from '../../daemon/report.js'
 import { readConfig } from '../../config.js'
@@ -32,6 +33,24 @@ function formatFlags(r: ReportInfo): string {
   return parts.length > 0 ? `  [${parts.join(', ')}]` : ''
 }
 
+async function getReportContent(projectRoot: string, name: string): Promise<string | null> {
+  // Try IPC (SQLite) first
+  if (await isDaemonRunning(projectRoot)) {
+    const res = await ipcRequest(projectRoot, { cmd: 'get-report', id: name }) as { ok?: boolean; report?: ReportInfo; error?: string }
+    if (res.ok && res.report?.content) {
+      return res.report.content
+    }
+  }
+
+  // Fallback: read from filesystem (old reports without content in DB)
+  const rPath = findLatestReport(projectRoot, name)
+  if (rPath) {
+    return readFileSync(rPath, 'utf-8')
+  }
+
+  return null
+}
+
 export async function reportsCommand(args: string[]): Promise<void> {
   const projectRoot = findProjectRoot()
 
@@ -43,14 +62,16 @@ export async function reportsCommand(args: string[]): Promise<void> {
       process.exit(1)
     }
     validateName(name)
-    const rPath = findLatestReport(projectRoot, name)
-    if (!rPath) {
+    const content = await getReportContent(projectRoot, name)
+    if (!content) {
       console.error(`[booth] report "${name}" not found`)
       process.exit(1)
     }
+    const tmpPath = join(tmpdir(), `booth-report-${name}.md`)
+    writeFileSync(tmpPath, content)
     const config = readConfig(projectRoot)
     const editor = typeof config.editor === 'string' ? config.editor : (process.env.EDITOR || 'code')
-    execFileSync(editor, [rPath], { stdio: 'inherit' })
+    execFileSync(editor, [tmpPath], { stdio: 'inherit' })
     return
   }
 
@@ -83,12 +104,11 @@ export async function reportsCommand(args: string[]): Promise<void> {
   if (args[0] && args[0] !== 'open' && args[0] !== 'mark-read') {
     const name = args[0]
     validateName(name)
-    const rPath = findLatestReport(projectRoot, name)
-    if (!rPath) {
+    const content = await getReportContent(projectRoot, name)
+    if (!content) {
       console.error(`[booth] report "${name}" not found`)
       process.exit(1)
     }
-    const content = readFileSync(rPath, 'utf-8')
     console.log(content)
     return
   }
@@ -119,7 +139,6 @@ export async function reportsCommand(args: string[]): Promise<void> {
   // Fallback: filesystem scan (daemon not running or IPC failed)
   const { reportsDir } = await import('../../constants.js')
   const { readdirSync, statSync } = await import('node:fs')
-  const { join } = await import('node:path')
   const { readReportStatus } = await import('../../daemon/report.js')
 
   const dir = reportsDir(projectRoot)

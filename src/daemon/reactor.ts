@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, statSync, renameSync, mkdirSync } from 'node:fs'
+import { existsSync, statSync, renameSync, mkdirSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { BoothState } from './state.js'
 import { sendMessage } from './send-message.js'
@@ -191,13 +191,13 @@ export class Reactor {
       this.ingestReport(rPath!, deck.name, round)
 
       if (deck.mode === 'hold') {
-        const msg = `Deck "${deck.name}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Deck is holding. Report: ${rPath}`
+        const msg = `Deck "${deck.name}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Deck is holding. Use "booth reports ${deck.name}" to read.`
         this.notifyDj(msg)
         this.holdingNotified.add(deck.id)
         this.systemNotify(`Booth: ${deck.name} → ${status} (holding)`)
         logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status} (holding, round ${round})`)
       } else {
-        const msg = `Deck "${deck.name}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Report: ${rPath}`
+        const msg = `Deck "${deck.name}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Use "booth reports ${deck.name}" to read.`
         this.notifyDj(msg)
         this.systemNotify(`Booth: ${deck.name} → ${status}`)
         logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status} (round ${round})`)
@@ -322,7 +322,7 @@ export class Reactor {
       checkingNormal.length ? `  Checking: ${checkingNormal.join(', ')}` : '',
       checkingStale.length ? `  ⚠ STALE CHECK: ${checkingStale.join(', ')} — may be stuck` : '',
       idle.length ? `  Idle: ${idle.join(', ')}` : '',
-      existsSync(beatPath) ? `  Read ${beatPath} for your checklist.` : `  Check .booth/reports/ for completed deck reports.`,
+      existsSync(beatPath) ? `  Read ${beatPath} for your checklist.` : `  Use "booth reports" to view completed deck reports.`,
     ].filter(Boolean).join('\n')
 
     sendMessage(this.projectRoot, this.state, 'dj', summary).then(result => {
@@ -468,6 +468,14 @@ export class Reactor {
         hasDjAction: parsed.hasDjAction,
       })
       logger.info(`[booth-reactor] report ingested: "${id}" (${parsed.status})`)
+
+      // Delete .md file — content is now in SQLite
+      try {
+        unlinkSync(reportPath)
+        logger.debug(`[booth-reactor] deleted report file: ${reportPath}`)
+      } catch (unlinkErr) {
+        logger.warn(`[booth-reactor] failed to delete report file: ${unlinkErr}`)
+      }
     } catch (err) {
       logger.error(`[booth-reactor] report ingestion threw: ${err}`)
     }
