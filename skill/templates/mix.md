@@ -425,7 +425,7 @@ The user should never have to piece together what happened across decks. DJ cons
 | Exit all + preserve resume | `booth stop` | Kill all panes, status unchanged in DB, resumable |
 | Exit all + no resume | `booth stop --clean` | Kill all panes + set all to exited |
 | Full restart | `booth restart` | stop + start + resume all |
-| Clean restart | `booth restart --clean` | stop --clean + fresh start |
+| Clean restart | `booth restart --clean` | stop --clean + clean start |
 
 ### Stop Principles
 

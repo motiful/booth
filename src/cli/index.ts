@@ -1,6 +1,6 @@
 import { createInterface } from 'node:readline'
 import { findProjectRoot, deriveSocket } from '../constants.js'
-import { isDaemonRunning } from '../ipc.js'
+import { isDaemonRunning, ipcRequest } from '../ipc.js'
 import { startCommand, ensureDaemonAndSession, launchDJ, attachSession } from './commands/start.js'
 import { spinCommand } from './commands/spin.js'
 import { lsCommand } from './commands/ls.js'
@@ -24,7 +24,7 @@ const HELP = `
 booth — AI project manager for Claude Code
 
 Usage:
-  booth                Start booth (interactive: resume / start fresh / show status)
+  booth                Start booth (interactive: resume / clean start / show status)
   booth init           First-time setup (register skills, can re-run for recovery)
   booth spin <name>    Create a new deck (parallel CC instance)
   booth ls             List all active deck states
@@ -76,7 +76,7 @@ async function bareBoothCommand(): Promise<void> {
   const resumable = readResumableDecks(projectRoot)
   const hasDj = !!readDjSessionIdFromState(projectRoot)
   if (resumable.length === 0 && !hasDj) {
-    // Nothing resumable → start fresh
+    // Nothing resumable → start directly
     await startCommand([])
     return
   }
@@ -94,14 +94,14 @@ async function bareBoothCommand(): Promise<void> {
   console.log()
 
   const choice = await askChoice(
-    'Start fresh or resume previous decks? [r]esume / [f]resh (default: resume): ',
-    ['r', 'f', 'resume', 'fresh', '']
+    'Resume previous decks or clean start? [r]esume / [c]lean (default: resume): ',
+    ['r', 'c', 'resume', 'clean', '']
   )
 
   // Setup daemon + tmux session
   await ensureDaemonAndSession(projectRoot)
 
-  if (choice !== 'f' && choice !== 'fresh') {
+  if (choice !== 'c' && choice !== 'clean') {
     // Resume decks + DJ (DJ uses --resume <sessionId>)
     console.log('[booth] resuming decks...')
     const socket = deriveSocket(projectRoot)
@@ -110,6 +110,8 @@ async function bareBoothCommand(): Promise<void> {
       await launchDJ(projectRoot)
     }
   } else {
+    // Clean: exit old DJ + decks (preserves rows as exited), then start new DJ
+    await ipcRequest(projectRoot, { cmd: 'exit-all' }).catch(() => {})
     await launchDJ(projectRoot)
   }
 

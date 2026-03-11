@@ -88,7 +88,7 @@ export async function launchDJ(projectRoot: string, resumeSessionId?: string): P
   if (!check.ok || !check.output.trim()) {
     // If resume failed, fallback to new session
     if (resumeSessionId) {
-      console.warn('[booth] DJ resume failed — starting fresh session')
+      console.warn('[booth] DJ resume failed — starting new session')
       return launchDJ(projectRoot)
     }
     console.error('[booth] DJ pane failed to start. Check tmux session manually.')

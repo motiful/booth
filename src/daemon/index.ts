@@ -499,6 +499,24 @@ export class Daemon {
         const updated = this.state.markReportRead(id, reviewedBy, reviewNote)
         return updated ? { ok: true } : { error: `report not found: ${id}` }
       }
+      case 'exit-all': {
+        // Exit all decks + DJ in DB (status='exited'), kill deck panes, clear caches/watchers.
+        // Does NOT shut down daemon or kill tmux session — used by CLI "clean start".
+        for (const deck of this.state.getAllDecks()) {
+          if (deck.paneId) tmuxSafe(this.socket, 'kill-pane', '-t', deck.paneId)
+          this.stopWaiter(deck.id)
+          this.signal.unwatch(deck.id)
+          this.reactor.clearDeckTimers(deck.id)
+        }
+        this.state.exitAllDecks()
+
+        this.stopWaiter('dj')
+        this.signal.unwatch('dj')
+        this.state.exitDj()
+
+        logger.info('[booth-daemon] exit-all: all sessions marked exited')
+        return { ok: true }
+      }
       case 'reload':
         if (this.reloading) return { error: 'reload already in progress' }
         this.reloading = true

@@ -4,7 +4,7 @@
 
 | Command | Description |
 |---------|-------------|
-| `booth` | Start booth (interactive: resume / start fresh / show status) |
+| `booth` | Start booth (interactive: resume / clean start / show status) |
 | `booth init` | Register booth skill and check recommended skills (re-runnable) |
 | `booth spin <name>` | Create a new deck (parallel CC session) |
 | `booth ls` | List DJ + all active decks with status, mode, and age |
@@ -86,13 +86,13 @@ Default: 50 lines. Useful for debugging — shows the raw terminal output.
 ### 1. Start booth
 
 ```bash
-booth              # interactive: shows status / prompts resume or fresh start
+booth              # interactive: shows status / prompts resume or clean start
 ```
 
 Bare `booth` behavior depends on state:
 - **Daemon running** → shows `booth ls` then attaches tmux session
-- **Daemon not running, has archived decks** → prompts: resume previous decks or start fresh?
-- **Daemon not running, no archives** → starts fresh (daemon + DJ)
+- **Daemon not running, has resumable decks** → prompts: resume previous decks or clean start?
+- **Daemon not running, no resumable decks** → starts directly (daemon + DJ)
 
 ### 2. Spin decks
 
@@ -156,14 +156,14 @@ Mode switches take effect on the next state transition. If a check is already in
 
 | | `booth reload` | `booth restart` | `booth restart --clean` | `booth stop` | `booth stop --clean` |
 |--|----------------|-----------------|------------------------|--------------|---------------------|
-| **What it does** | Hot-restart daemon only | Stop + start + resume non-exited decks | Stop clean + start fresh | Kill daemon + all decks, preserve status | Kill daemon + all decks, mark all exited |
+| **What it does** | Hot-restart daemon only | Stop + start + resume non-exited decks | Stop clean + clean start | Kill daemon + all decks, preserve status | Kill daemon + all decks, mark all exited |
 | **Deck status** | Unchanged | Preserved → resumed to working | All → exited | Unchanged (working/idle in DB) | All → exited |
 | **Auto-resume?** | N/A | Yes (non-exited decks) | No | On next `booth` start | No (but `booth resume <name>` works) |
 | **When to use** | After updating booth code | Full reset while preserving progress | Full reset, discard old context | Shutting down, plan to resume later | Shutting down, clean slate |
 | **DJ context** | Preserved (same session) | New DJ — immediate beat | New DJ — clean start | Gone | Gone |
 | **Records** | Preserved | Preserved | Preserved (rows stay, status=exited) | Preserved | Preserved (rows stay, status=exited) |
 
-**Rule of thumb:** Use `reload` when only the daemon needs a restart. Use `restart` for a clean slate with deck recovery. Use `restart --clean` when you want a fresh start without old decks. Use `stop` to shut down and resume later. Use `stop --clean` for a clean shutdown. **No operation deletes DB rows** — `booth ls -a` always shows the full history.
+**Rule of thumb:** Use `reload` when only the daemon needs a restart. Use `restart` for a clean slate with deck recovery. Use `restart --clean` when you want a clean start without old decks. Use `stop` to shut down and resume later. Use `stop --clean` for a clean shutdown. **No operation deletes DB rows** — `booth ls -a` always shows the full history.
 
 ### DJ wake-up on restart
 

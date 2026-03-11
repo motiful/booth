@@ -168,7 +168,7 @@ export async function resumeCommand(args: string[]): Promise<void> {
 
 /**
  * Resume all non-exited decks + DJ.
- * Returns whether DJ was successfully resumed (caller should launch fresh DJ if not).
+ * Returns whether DJ was successfully resumed (caller should launch new DJ if not).
  */
 export async function resumeAllDecks(projectRoot: string, socket: string): Promise<{ djResumed: boolean }> {
   const entries = readResumableDecks(projectRoot)
