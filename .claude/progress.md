@@ -4,6 +4,8 @@
 
 ## Current Phase: Wave F — Backlog 清零
 
+- [cli-pagination] CLI 分页：`booth reports` / `booth ls -a` 默认 20 条，支持 `-n`/`--offset`/`--all`。State 层 `getReports()` 支持 LIMIT/OFFSET，新增 `countReports()`。Report ID 语义已清晰（exact ID match → deck_name fallback 取最新）。
+
 ---
 
 ## Archived Phases
@@ -37,7 +39,7 @@ CLI Layer:
 Daemon Layer:
   Signal    → JSONL tail per deck + DJ JSONL tracking
   State     → SQLite (better-sqlite3) + in-memory cache
-  Reactor   → idle → check flow + beat timer + notifyDj + auto-open report + plan-mode auto-approve
+  Reactor   → idle → check flow + beat timer + notifyDj + plan-mode auto-approve
   IPC       → ping, ls, status, register/remove/kill-deck, send-message, shutdown, deck-exited, resume-deck
   Health    → 30s pane liveness check
 
@@ -61,7 +63,7 @@ Signal Delivery (single channel):
   daemon.sock                          — daemon IPC
   logs/daemon-YYYY-MM-DD.log           — Winston daily rotate (7d retention)
   logs/daemon-stderr.log               — uncaught errors fallback
-  reports/<deck>.md                    — check reports
+  reports/                             — transient report files (ingested to SQLite then deleted)
   config.json                         — user config (editor, etc.)
   check.md, mix.md, beat.md           — rigid entry points (copied from templates, user-customizable, future: skill routers)
 ```
@@ -87,10 +89,19 @@ Signal Delivery (single channel):
 - [x] restore 后 status 刷新 — reconcileStaleStatus() JSONL tail scan + session-changed 300ms debounce（88882a3, E2E verified）
 - [x] /resume 触发 SessionStart 验证 — 确认双触发 + debounce 修复，JSONL switched 2→0（88882a3, E2E verified）
 - [x] `--no-loop` 判断标准 + E2E hard rule — runtime-impact 硬边界（ecafe04, 164d0b2, 6c1bc33）
-- [x] **Report 元数据改造** — SQLite ingestion pipeline complete（4bbf74e, 6cbff9d）
+- [x] **Report 元数据改造** — SQLite ingestion pipeline complete（4bbf74e, 6cbff9d, cd686a3）
   - [x] DJ Review/Delivery 协议升级 — mix.md 四处强化回扣原始需求（f71f459）
   - [x] Report SQLite ingestion — reactor auto-ingest + state CRUD + IPC endpoints + CLI upgrade（4bbf74e）
   - [x] ON CONFLICT 修复 — re-ingest 保留 read metadata（6cbff9d）
+  - [x] Goal 注入 check 流程 — reactor 发 check 消息携带原始 goal + check.md 模板加 Original Goal section（66f86d2）
+  - [x] Report 正文存入 SQLite — ingest 后删 .md 文件，CLI 从 DB 读 content，ls/status 从 SQLite 查 report 状态（cd686a3）
+  - [x] 历史 .md 批量迁移 — 165 个文件入库 SQLite + 删除原文件，reports 目录清空
+
+### UX 改善
+
+- [x] 移除 report auto-open — report 是 deck↔DJ 通信，不再弹编辑器打扰用户（f67d7ee）
+- [x] spin/resume 不抢焦点 — tmux new-window 加 `-d` flag，新 deck 在后台创建（f730b11, E2E verified）
+- [x] protectedSendToCC 卡输入框修复 — 固定 300ms 延迟替换为 action-file 轮询 + Enter 重试（20a5028, E2E verified）
 
 ### Wave G — CC Compaction 防护
 
