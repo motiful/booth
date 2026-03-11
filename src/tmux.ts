@@ -74,6 +74,19 @@ export function isVimMode(): boolean {
 
 // --- Ctrl+G Protected Send (input protection for all CC sessions) ---
 
+// Poll until a file no longer exists (async, non-blocking)
+function waitForFileGone(filePath: string, timeoutMs: number, intervalMs = 50): Promise<boolean> {
+  return new Promise(resolve => {
+    const start = Date.now()
+    const check = () => {
+      if (!existsSync(filePath)) { resolve(true); return }
+      if (Date.now() - start >= timeoutMs) { resolve(false); return }
+      setTimeout(check, intervalMs)
+    }
+    check()
+  })
+}
+
 // Per-pane state directory to avoid conflicts between DJ and decks.
 // Pane ID like "%26" → ~/.booth/editor-state/%26/
 const EDITOR_STATE_ROOT = join(homedir(), '.booth', 'editor-state')
@@ -197,13 +210,33 @@ async function protectedSendToCCImpl(socket: string, target: string, text: strin
 
     // 4. Ctrl+G → proxy saves user input + writes injected message
     tmux(socket, 'send-keys', '-t', target, 'C-g')
-    await delay(300)
+
+    // 4a. Wait for editor-proxy to consume the action file.
+    // A fixed delay is unreliable — if CC's event loop is busy, Ctrl+G processing
+    // is delayed and the old 300ms window expires before editor-proxy runs.
+    // Polling the action file gives us positive confirmation.
+    const actionFile = join(sd, 'action')
+    if (!await waitForFileGone(actionFile, 5_000, 50)) {
+      throw new Error('Editor proxy did not execute within 5s — Ctrl+G may not have reached CC')
+    }
+
+    // 4b. Action file consumed = editor-proxy ran inside CC's execSync.
+    // CC still needs to: read temp file → update state → re-render input.
+    // 500ms is generous for this synchronous post-execSync work.
+    await delay(500)
 
     // 5. Submit the injected message
     tmux(socket, 'send-keys', '-t', target, 'Enter')
 
-    // 6. Wait for CC to process and show new prompt
-    if (!await waitForPrompt(socket, target)) {
+    // 6. Wait for CC to process and show new prompt.
+    //    Use a shorter first timeout — if Enter didn't submit, retry once.
+    let prompted = await waitForPrompt(socket, target, 8_000)
+    if (!prompted) {
+      logger.warn('[booth-tmux] no prompt after 8s — retrying Enter')
+      tmux(socket, 'send-keys', '-t', target, 'Enter')
+      prompted = await waitForPrompt(socket, target, 22_000)
+    }
+    if (!prompted) {
       logger.warn('[booth-tmux] timeout waiting for prompt after injection')
       return  // finally block still runs cleanup
     }
@@ -216,7 +249,9 @@ async function protectedSendToCCImpl(socket: string, target: string, text: strin
         mkdirSync(sd, { recursive: true })
         writeFileSync(join(sd, 'action'), 'restore')
         writeFileSync(join(sd, 'restore-path'), savedInputPath)
+        const restoreActionFile = join(sd, 'action')
         tmux(socket, 'send-keys', '-t', target, 'C-g')
+        await waitForFileGone(restoreActionFile, 5_000, 50)
         await delay(200)
         restored = true
         logger.debug('[booth-tmux] user input restored')
