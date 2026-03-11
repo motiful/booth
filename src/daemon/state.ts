@@ -250,6 +250,7 @@ export class BoothState extends EventEmitter {
   insertReport(data: {
     id: string
     deckName: string
+    sessionId?: string
     status: string
     content: string
     rounds?: number
@@ -257,26 +258,28 @@ export class BoothState extends EventEmitter {
     hasDjAction?: boolean
   }): void {
     this.db.prepare(`
-      INSERT INTO reports (id, deck_name, status, content, created_at, rounds, has_human_review, has_dj_action)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO reports (id, deck_name, session_id, status, content, created_at, rounds, has_human_review, has_dj_action)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         status = excluded.status,
         content = excluded.content,
+        session_id = excluded.session_id,
         rounds = excluded.rounds,
         has_human_review = excluded.has_human_review,
         has_dj_action = excluded.has_dj_action
     `).run(
-      data.id, data.deckName, data.status, data.content,
+      data.id, data.deckName, data.sessionId ?? null, data.status, data.content,
       Date.now(), data.rounds ?? null,
       data.hasHumanReview ? 1 : 0, data.hasDjAction ? 1 : 0
     )
   }
 
-  getReports(filter?: { deckName?: string; status?: string; readStatus?: string; limit?: number; offset?: number }): ReportInfo[] {
-    const cols = `id, deck_name, status, created_at, read_status, read_at, reviewed_by, review_note, rounds, has_human_review, has_dj_action`
+  getReports(filter?: { deckName?: string; sessionId?: string; status?: string; readStatus?: string; limit?: number; offset?: number }): ReportInfo[] {
+    const cols = `id, deck_name, session_id, status, created_at, read_status, read_at, reviewed_by, review_note, rounds, has_human_review, has_dj_action`
     let sql = `SELECT ${cols} FROM reports WHERE 1=1`
     const params: unknown[] = []
     if (filter?.deckName) { sql += ` AND deck_name = ?`; params.push(filter.deckName) }
+    if (filter?.sessionId) { sql += ` AND session_id = ?`; params.push(filter.sessionId) }
     if (filter?.status) { sql += ` AND status = ?`; params.push(filter.status) }
     if (filter?.readStatus) { sql += ` AND read_status = ?`; params.push(filter.readStatus) }
     sql += ` ORDER BY created_at DESC`
@@ -289,10 +292,11 @@ export class BoothState extends EventEmitter {
     return rows.map(rowToReportListing)
   }
 
-  countReports(filter?: { deckName?: string; status?: string; readStatus?: string }): number {
+  countReports(filter?: { deckName?: string; sessionId?: string; status?: string; readStatus?: string }): number {
     let sql = `SELECT COUNT(*) as total FROM reports WHERE 1=1`
     const params: unknown[] = []
     if (filter?.deckName) { sql += ` AND deck_name = ?`; params.push(filter.deckName) }
+    if (filter?.sessionId) { sql += ` AND session_id = ?`; params.push(filter.sessionId) }
     if (filter?.status) { sql += ` AND status = ?`; params.push(filter.status) }
     if (filter?.readStatus) { sql += ` AND read_status = ?`; params.push(filter.readStatus) }
     const row = this.db.prepare(sql).get(...params) as { total: number }
@@ -679,6 +683,7 @@ function rowToDeckInfo(row: SessionRow): DeckInfo {
 interface ReportRow {
   id: string
   deck_name: string
+  session_id: string | null
   status: string
   content: string
   created_at: number
@@ -695,6 +700,7 @@ function rowToReportInfo(row: ReportRow): ReportInfo {
   return {
     id: row.id,
     deckName: row.deck_name,
+    sessionId: row.session_id ?? undefined,
     status: row.status,
     content: row.content,
     createdAt: row.created_at,
@@ -712,6 +718,7 @@ function rowToReportInfo(row: ReportRow): ReportInfo {
 interface ReportListingRow {
   id: string
   deck_name: string
+  session_id: string | null
   status: string
   created_at: number
   read_status: string
@@ -727,6 +734,7 @@ function rowToReportListing(row: ReportListingRow): ReportInfo {
   return {
     id: row.id,
     deckName: row.deck_name,
+    sessionId: row.session_id ?? undefined,
     status: row.status,
     content: '',
     createdAt: row.created_at,

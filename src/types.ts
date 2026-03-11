@@ -38,6 +38,7 @@ export interface DeckStateChange {
 export interface ReportInfo {
   id: string
   deckName: string
+  sessionId?: string
   status: string
   content: string
   createdAt: number

@@ -190,7 +190,7 @@ export class Reactor {
       }
 
       // Ingest report into SQLite
-      this.ingestReport(rPath!, deck.name, round)
+      this.ingestReport(rPath!, deck.name, round, deck.sessionId)
 
       if (deck.mode === 'hold') {
         const msg = `Deck "${deck.name}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Deck is holding. Use "booth reports ${deck.name}" to read.`
@@ -450,7 +450,7 @@ export class Reactor {
   }
 
 
-  private ingestReport(reportPath: string, deckName: string, round: number): void {
+  private ingestReport(reportPath: string, deckName: string, round: number, sessionId?: string): void {
     try {
       const parsed = parseReport(reportPath)
       if (!parsed) {
@@ -462,6 +462,7 @@ export class Reactor {
       this.state.insertReport({
         id,
         deckName,
+        sessionId,
         status: parsed.status,
         content: parsed.content,
         rounds: parsed.rounds ?? round,
