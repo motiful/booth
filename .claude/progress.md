@@ -372,6 +372,32 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 
 ---
 
+### Identity Refactor（进行中）
+
+> 方向：方案 B — name 做 CLI 快捷方式，session_id 做内部唯一 identity。双重寻址。
+
+**已完成**:
+- [x] 全局审计：`.booth/reports/identity-audit.md` — Schema 实况、Identity 真相、DJ 交替流程、Socket/Pane 寻址、文档不一致清单（8 处）
+- [x] 影响分析 + 执行计划：`.booth/reports/identity-refactor-plan.md` — 60+ 处 name-as-identity 定位、7 步重构计划
+- [x] P0 文档修复 (ba709e4)：mix.md kill 描述矛盾、child-protocol.md 过时状态、cli.md 未实现 flag
+- [x] MEMORY.md 清理：删除 5+ 条过时信息（archives 表、meta KV DJ、resume 读 state.json 等）
+
+**执行计划（7 步）**:
+- Step 0: Schema 迁移准备 — 加 session_id 唯一索引 + reports.session_id 列（低风险）
+- Step 1: 新建 `src/resolve.ts` 解析层 — resolveIdentifier(input) 支持 name/UUID/前缀（低风险）
+- Step 2-4: **原子块**（高风险）— state.ts Map key 改 sessionId + IPC 合约改 sessionId + CLI 层接入 resolve
+- Step 5: 环境变量 + hook 适配（中风险）
+- Step 6: reports 表加 session_id 双列关联（低风险）
+- Step 7: 文档同步
+
+**关键设计决策**:
+- name 在活跃行中仍保持唯一（partial unique index 保留）
+- resolve 逻辑：完整 UUID → session_id 精确匹配；hex 前缀 → name 优先再试 session_id；其他 → name
+- reports 表加 session_id 列但保留 deck_name（双列，不破坏旧查询）
+- DJ 方法不改（DJ 始终一个活跃行，name='DJ' 足够）
+
+---
+
 ## Phase Status
 
 | Phase | Status | Description |
