@@ -102,6 +102,10 @@ Signal Delivery (single channel):
 - [x] 移除 report auto-open — report 是 deck↔DJ 通信，不再弹编辑器打扰用户（f67d7ee）
 - [x] spin/resume 不抢焦点 — tmux new-window 加 `-d` flag，新 deck 在后台创建（f730b11, E2E verified）
 - [x] protectedSendToCC 卡输入框修复 — 固定 300ms 延迟替换为 action-file 轮询 + Enter 重试（20a5028, E2E verified）
+- [x] protectedSendToCC vim INSERT 模式提交失败 — Ctrl+G 返回后 CC 可能处于 INSERT 模式，Enter=换行。修复：vim 模式下先发 Escape 退出 INSERT 再 Enter 提交（09bfb00）
+- [x] protectedSendToCC 无条件 Escape — 移除 isVimMode() 条件判断，无条件发 Escape→Enter。Escape 在非 vim 模式下是 no-op，更 robust（83b150d）
+- [x] ~~专用 ctrl+] 提交键~~ — 方案不可行：CC 不识别 ctrl+]（0x1D），且自定义 keybinding 在 editor proxy 注入后不生效。已回退（306b90e）
+- [x] waitForPrompt 误报修复 — regex `/[❯>]/` 匹配注入文本中的 ❯ 字符导致 1s 假阳性。改为 `/^\s*[❯>]\s*$/m` 仅匹配空提示行 + Enter 重试逻辑（306b90e, E2E verified）
 
 ### Wave G — CC Compaction 防护
 
