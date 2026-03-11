@@ -99,7 +99,7 @@ When writing prompts for decks:
 - **Include this instruction in every deck prompt**: "Execute directly, do not enter plan mode (do not call EnterPlanMode)."
 - Provide enough context (files, acceptance criteria) so CC doesn't feel the need to "plan first"
 - If the task genuinely needs a plan, write the plan yourself in the prompt — don't let the deck self-plan
-- **Phenomenon first, hypothesis never.** For bug investigations, give the deck the raw observed phenomenon (what the user did, what happened, what was expected). NEVER pre-filter with your own hypotheses or conclusions. DJ is a manager, not a debugger — let the deck investigate and find root causes. Giving wrong hypotheses leads the deck to solve the wrong problem.
+- **Phenomenon first, hypothesis never, solution direction never.** For bug investigations, give the deck the raw observed phenomenon (what the user did, what happened, what was expected). NEVER pre-filter with your own hypotheses or conclusions. NEVER suggest a solution direction — even phrasing like "this might be a vim mode issue" or "try adding an Escape before Enter" steers the deck away from independent root cause analysis. If DJ has a hypothesis, explicitly label it: "DJ hypothesis (unverified): ..." so the deck knows to validate rather than blindly implement. The deck's job is to diagnose, not to execute DJ's guesses.
 - **Define the problem domain, not execution steps.** For system-level issues, describe the problem's scope and boundaries ("what is the problem space?"), NOT which files to change or which lines to edit. The more context and global perspective you provide, the better the deck's analysis. Mechanical "change file X line Y" instructions produce narrow, fragile solutions. Let the deck think.
 
 ## Shorthand Recognition
@@ -325,10 +325,15 @@ When DJ receives a check-complete alert, **review before kill**:
 
 1. **Goal alignment** — MUST run `booth status <deck-name>` to retrieve the original Goal before reading the report. The Goal is the spin prompt DJ wrote — it is the proxy for the user's original request. Compare every sub-task and acceptance criterion in the Goal against the report's Summary. Each sub-task MUST have a corresponding completion evidence in the report. If any sub-task is missing from the report, the report is incomplete — return the deck for rework. Scope drift is acceptable only if it also covers all original sub-tasks.
 2. **Value delivery** — does the report solve the problem stated in the spin prompt?
-3. **User flow completeness** — trace the FULL user flow from trigger action to final outcome. Every link in the chain must be covered by the change. A function fix that users can't reach is not a fix. Ask: "Starting from the user's entry point, can you trace a path all the way to the changed code?"
-4. **Completeness check** — for runtime behavior changes, compilation alone is insufficient; requires E2E verification (`booth reload` + live test). Pure doc/template changes are exempt.
-5. **Conflict check** — do the changed files conflict with other active decks? (check Files Changed section)
-6. **Design consistency** — are changes consistent with CLAUDE.md design principles?
+3. **Approach validation (root cause review)** — is the fix eliminating the root cause, or patching over a symptom?
+   - If the change is a workaround/hack (e.g., adding escape sequences, retry loops, timing delays), the deck MUST explain why the root cause cannot be fixed directly. No explanation = insufficient.
+   - For intermittent issues, be extra skeptical — patches easily "appear to work" while the root cause persists.
+   - Check whether DJ's own prompt pre-loaded a hypothesis or solution direction. If the deck merely implemented DJ's assumption without independently verifying the root cause, treat the report as insufficient — the deck must show its own diagnosis trail.
+   - Ask: "If we removed this patch in 6 months, would the underlying problem still exist?" If yes, the fix is a band-aid.
+4. **User flow completeness** — trace the FULL user flow from trigger action to final outcome. Every link in the chain must be covered by the change. A function fix that users can't reach is not a fix. Ask: "Starting from the user's entry point, can you trace a path all the way to the changed code?"
+5. **Completeness check** — for runtime behavior changes, compilation alone is insufficient; requires E2E verification (`booth reload` + live test). Pure doc/template changes are exempt.
+6. **Conflict check** — do the changed files conflict with other active decks? (check Files Changed section)
+7. **Design consistency** — are changes consistent with CLAUDE.md design principles?
 
 **Review failed** → `booth send <deck> --prompt "..."` to return for rework, or spin a review deck.
 **Review passed** → `booth kill <deck>` + update `.booth/plan.md` status.
