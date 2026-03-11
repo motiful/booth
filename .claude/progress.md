@@ -2,9 +2,9 @@
 
 > Current execution state. Read this first when starting a session.
 
-## Current Phase: Wave F — Backlog 清零
+## Current Phase: Phase A — 生存质量
 
-- [cli-pagination] CLI 分页：`booth reports` / `booth ls -a` 默认 20 条，支持 `-n`/`--offset`/`--all`。State 层 `getReports()` 支持 LIMIT/OFFSET，新增 `countReports()`。Report ID 语义已清晰（exact ID match → deck_name fallback 取最新）。
+> Compaction 防护 → Worktree isolation → Guardian 调研。详见下方路线图。
 
 ---
 
@@ -82,67 +82,23 @@ Signal Delivery (single channel):
 
 ---
 
-## Pending Items — Execution Order
+## Pending Items — Phase A–F 路线图
 
-### Wave F — Backlog 清零
+### Phase A: 生存质量 — DJ 不失忆、deck 不打架
 
-- [x] restore 后 status 刷新 — reconcileStaleStatus() JSONL tail scan + session-changed 300ms debounce（88882a3, E2E verified）
-- [x] /resume 触发 SessionStart 验证 — 确认双触发 + debounce 修复，JSONL switched 2→0（88882a3, E2E verified）
-- [x] `--no-loop` 判断标准 + E2E hard rule — runtime-impact 硬边界（ecafe04, 164d0b2, 6c1bc33）
-- [x] **Report 元数据改造** — SQLite ingestion pipeline complete（4bbf74e, 6cbff9d, cd686a3）
-  - [x] DJ Review/Delivery 协议升级 — mix.md 四处强化回扣原始需求（f71f459）
-  - [x] Report SQLite ingestion — reactor auto-ingest + state CRUD + IPC endpoints + CLI upgrade（4bbf74e）
-  - [x] ON CONFLICT 修复 — re-ingest 保留 read metadata（6cbff9d）
-  - [x] Goal 注入 check 流程 — reactor 发 check 消息携带原始 goal + check.md 模板加 Original Goal section（66f86d2）
-  - [x] Report 正文存入 SQLite — ingest 后删 .md 文件，CLI 从 DB 读 content，ls/status 从 SQLite 查 report 状态（cd686a3）
-  - [x] 历史 .md 批量迁移 — 165 个文件入库 SQLite + 删除原文件，reports 目录清空
+> 目标：booth 在长时间运行中保持可靠。
 
-### UX 改善
-
-- [x] 移除 report auto-open — report 是 deck↔DJ 通信，不再弹编辑器打扰用户（f67d7ee）
-- [x] spin/resume 不抢焦点 — tmux new-window 加 `-d` flag，新 deck 在后台创建（f730b11, E2E verified）
-- [x] protectedSendToCC 卡输入框修复 — 固定 300ms 延迟替换为 action-file 轮询 + Enter 重试（20a5028, E2E verified）
-- [x] protectedSendToCC vim INSERT 模式提交失败 — Ctrl+G 返回后 CC 可能处于 INSERT 模式，Enter=换行。修复：vim 模式下先发 Escape 退出 INSERT 再 Enter 提交（09bfb00）
-- [x] protectedSendToCC 无条件 Escape — 移除 isVimMode() 条件判断，无条件发 Escape→Enter。Escape 在非 vim 模式下是 no-op，更 robust（83b150d）
-- [x] ~~专用 ctrl+] 提交键~~ — 方案不可行：CC 不识别 ctrl+]（0x1D），chat:submit 不响应自定义 keybinding（CC bug #24914）。已回退（306b90e）
-- [x] waitForPrompt 假阳性修复 — regex `/[❯>]/` 匹配注入文本中的 ❯ 字符导致过早返回。改为 `/^\s*[❯>]\s*$/m` 仅匹配空 prompt 行（306b90e, regex 验证通过 9/9 边界用例）
-- [x] protectedSendToCC 简化 — 移除 Escape（Enter 在所有 vim mode 下触发 chat:submit）+ 移除 retry（有打断 CC 生成的风险，假阳性修复后不再需要）（ed9b5c5）
-- [x] ~~INSERT mode restoration~~ — 伪需求：用户亲测 Ctrl+G 不改变 vim mode。已清理 step 9 代码（c195ac2）
-
-### Bug — tmux socket 不一致（已修复）
-
-- [x] **`booth send DJ` 消息丢失** — Daemon 内部 `sendMessage()` 每次重新 `deriveSocket()`，DJ pane 查找依赖 tmux session name `dj:0` 而非 state 中注册的 paneId。修复：Daemon 构造函数计算一次 socket 并传递到 Reactor 和 sendMessage；DJ pane 查找改用 `state.getDj().paneId`（与 deck 一致）。额外修复：plan-mode auto-approve 空 paneId guard + update-dj-jsonl pane 解析失败时 fail-fast。（1aa933a, E2E verified: reload → send → protectedSend done）
-
-### Deck 权限隔离（完成）
-
-- [x] **Deck 禁止执行 kill/stop/restart** — deck 环境注入 `BOOTH_ROLE=deck` + `BOOTH_DECK_NAME`，CLI kill/stop/restart 检查 env 硬拒绝（983a963, E2E verified）
-- [x] **Deck 身份注入** — spin.ts + resume.ts 注入 `BOOTH_ROLE=deck` + `BOOTH_DECK_NAME`，DJ 已有 `BOOTH_ROLE=dj`（start.ts:81）
-
-### Wave G — CC Compaction 防护
+**A1. Compaction 防护**（重中之重）
 
 > 调研文档：`../booth-backstage/research/cc-compaction-2026.md`（25+ 来源引用）
 
 - [ ] PreCompact hook 防护（DJ compaction 期间保护关键上下文）
-- [ ] CLAUDE.md Compact Instructions（compaction 后恢复指引）
-- [ ] 信号安全策略（compaction 前后信号连续性）
+- [ ] CLAUDE.md Compact Instructions（compaction 后恢复指引，零代码）
+- [ ] 信号安全策略（compaction 前后信号连续性——需调研是否已被 SQLite 隐性解决）
+- [ ] StatusLine hook 调研（是否需要、是否可用）
+- [ ] DJ Context 审计（确认 compaction 防护是否完全覆盖 DJ 的需求，而非单独处理）
 
-### Wave H — npm 发布 + booth upgrade
-
-**前置条件**：booth 发布到 npm (`@motiful/booth`)。
-
-**设计**（已确定）：
-- 仅在 bare `booth`（无参数）时触发版本检查
-- 检查 npm registry 最新版本 vs 本地版本
-- 如有新版本，打印提示（不自动安装）
-
-**hook 点已就位**：`src/cli/index.ts` 的 `case undefined:` 分支
-
-- [ ] npm publish 准备（package.json 审查、README、LICENSE、prepublishOnly script）
-- [ ] `src/version.ts` — getCurrentVersion() + checkForUpdates()
-- [ ] bare `booth` 版本检查（npm registry fetch，5s timeout，失败静默跳过）
-- [ ] 提示格式：`[booth] New version available: 0.2.0 → npm update -g @motiful/booth`
-
-### Phase 2.9 — Worktree Isolation
+**A2. Worktree Isolation**（必做）
 
 - [ ] 每个 deck 工作在独立 git worktree 中
 - [ ] 确认 CC 在 worktree 中正常工作（CLAUDE.md、report 路径等）
@@ -150,17 +106,114 @@ Signal Delivery (single channel):
 - [ ] deck kill 时自动清理 worktree
 - [ ] 冲突处理机制（deck 尝试 → 失败报告 DJ）
 
-### Phase 3 — 远期
+**A3. Guardian 进程自愈**（需调研后再决定是否实现）
 
-- [ ] DJ context management (StatusLine hook + auto compact) — 调研完成，见 cc-compaction-2026.md
-- [ ] Guardian (进程自愈, 3-strike rule)
-- [ ] User takeover/handback
-- [ ] Archive system (完成的 deck 归档)
-- [ ] Check timeout protection (deck 卡在 check loop 里的兜底)
-- [ ] Attention management / work statistics
-- [ ] Mix 策略化 — .booth/ 文件作为刚性入口 + 路由器，可指向 domain-specific skills
-- [ ] 产品命名重新评估（Booth 语音输入易误识别为 Boost）
-- [ ] Reports follow-up 自动 routing（report 中 dj-action 条目自动转 task）
+调研要点：
+- 必须轻量——不费 token、不占系统资源
+- pane ID 准确性——pane 与 deck 的对应关系必须永远正确（pane ID 漂移问题）
+- 检测方式——同步还是异步？成本是什么？
+- SQLite 存储模型下，现有 health check 是否已覆盖大部分场景
+
+现象：CC session 崩溃（OOM/网络/CC bug）→ pane 死了 → health check 检测到 → deck-exited alert → DJ 手动 re-spin
+
+- [ ] Guardian 调研报告（轻量性、检测方式、与现有 health check 的关系）
+- [ ] Guardian 实现（如调研结论为值得）：检测崩溃 → 自动 resume → 3 次失败后放弃通知 DJ
+
+---
+
+### Phase B: Skills 整改 — 加载策略健康化
+
+> 目标：Mix 和所有 skill 的加载/管理策略理顺。优先级最高（Phase A 之后）。
+
+**B1. Mix 策略化**
+
+- [ ] 调研当前 Mix 加载策略具体问题
+- [ ] .booth/ 文件作为刚性入口 + 路由器，可指向 domain-specific skills
+- [ ] skill 依赖链理顺
+
+---
+
+### Phase C: 产品打磨 — 用户体验可交付
+
+> 目标：UIUX 达到可交付标准。
+
+**C1. UIUX 打磨**
+
+- [ ] booth 指令交互打磨（参考老 booth 取精华去糟粕，推陈出新）
+- [ ] Report 系统展示优化（可能有细分需求，需调研）
+- [ ] 整体用户流程优化
+
+**C2. Token 统计**（精简版 Attention Management）
+
+- [ ] 在 kill / session end 时记录每个 deck 的 token 用量
+- [ ] CC 接口查询 session token 消耗（调研可行性）
+- [ ] 不用于自动 kill 决策，用于分析和可视化
+- [ ] 参考 Codex 的类似功能
+
+**C3. 产品命名重新评估**
+
+- [ ] Booth 语音输入易误识别为 Boost，评估替代名称
+- [ ] 重要但不阻塞技术开发
+
+---
+
+### Phase D: 市场定位 — 知道自己是谁
+
+> 目标：明确 booth 在市场中的位置。
+
+**D1. 竞品分析**（Phase A 完成后最高优先级）
+
+- [ ] 2026 新竞品调研（最近冒出的竞品）
+- [ ] 与老 booth signal 思想对比，声明 novelty
+
+**D2. README / 定位**
+
+- [ ] 仓库 README 决定市场认知
+- [ ] 必须在竞品分析后确定定位
+
+---
+
+### Phase E: 发布 — npm + 宣发
+
+> 目标：正式上线。可在 Phase B 完成后先发一版（不宣传）。
+
+**E1. npm publish**
+
+hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
+
+- [ ] npm publish 准备（package.json 审查、README、LICENSE、prepublishOnly script）
+- [ ] `src/version.ts` — getCurrentVersion() + checkForUpdates()
+- [ ] bare `booth` 版本检查（npm registry fetch，5s timeout，失败静默跳过）
+- [ ] 提示格式：`[booth] New version available: 0.2.0 → npm update -g @motiful/booth`
+
+**E2. 博客 / 宣发**
+
+- [ ] 发博客造势
+- [ ] signal 思想等沉淀内容与竞品 PK
+- [ ] 在 Phase D 定位确认后执行
+
+---
+
+### Phase F: 平台化 — 给 agent 用
+
+> 目标：booth 不只是给人用，主要是给 agent 用。人也可以用，但不是主要服务对象。
+
+- [ ] Agent-as-consumer API — 其他 agent 如何调用 booth
+- [ ] Codex 支持 — 探索 Codex 集成（竞品调研后）
+- [ ] 跨工具集成 — 其他 CC/OpenClaw 直接调用 booth
+- [ ] 移动端探索 — 手机端调用（远期）
+
+---
+
+### 已关闭项
+
+| 项目 | 理由 |
+|------|------|
+| Archive system | SQLite 迁移后 session records persist forever，booth kill 只设 exited 不删记录 |
+| User takeover/handback | live mode + booth auto/hold/live 切换已完全实现 |
+| Reports follow-up auto routing | DJ 手动读 report 做决策运转良好，自动化收益不大 |
+| DJ Context Management（单独项） | 被 Phase A Compaction 防护完全吸收 |
+| Check timeout protection | 5 rounds 硬上限已足够，用户确认 |
 
 ---
 
@@ -168,19 +221,15 @@ Signal Delivery (single channel):
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| 1 | Done | Foundation — daemon + state monitoring |
-| 2 | Done | Core loop — check + alert + kill/stop |
-| 2.5 | Done | Init hardening + self-review skill |
-| 2.6 | Done | Deck modes + error recovery + reload |
-| 2.7 | Done | Pre-Phase 3 — reports CLI, sendKeysToCC, signal fix, check 八维度 |
-| 2.8 | Done | Input protection + signal simplification — protectedSendToCC, alert 移除 |
-| Wave C-E | Done | SQLite migration + lifecycle simplification + stop→resume E2E |
+| 1–2.8 | Done | Foundation → Core loop → Init → Modes → Input protection → Signal simplification |
+| Wave C–E | Done | SQLite migration → Lifecycle simplification → Stop→Resume E2E |
 | Wave F | Done | Backlog 清零 + socket fix + deck perm isolation |
-| Wave G | Queued | CC Compaction 防护 — PreCompact hook、Compact Instructions、信号安全 |
-| Wave H | Queued | npm 发布 + booth upgrade — 发布到 npm + 自动更新检查 |
-| 2.9 | Queued | Worktree isolation |
-| 3 | Outlined | Self-management — booth manages its own dev |
-| 4 | Outlined | Evolution — future features |
+| Phase A | **Next** | 生存质量 — Compaction 防护、Worktree isolation、Guardian 调研 |
+| Phase B | Queued | Skills 整改 — Mix 策略化、skill 依赖链 |
+| Phase C | Queued | 产品打磨 — UIUX、Token 统计、产品命名 |
+| Phase D | Queued | 市场定位 — 竞品分析、README/定位 |
+| Phase E | Queued | 发布 — npm publish + 博客宣发 |
+| Phase F | Outlined | 平台化 — Agent API、Codex、跨工具集成 |
 
 ## File Map
 
