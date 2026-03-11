@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 import { BoothState } from './state.js'
 import { sendMessage } from './send-message.js'
 import { readReportStatus, isTerminalStatus, findLatestReport, parseReport } from './report.js'
-import { timestampedReportPath, boothPath, deriveSocket } from '../constants.js'
+import { timestampedReportPath, boothPath } from '../constants.js'
 import { tmuxSafe } from '../tmux.js'
 import { logger } from './logger.js'
 import type { DeckInfo, DeckStateChange } from '../types.js'
@@ -20,6 +20,7 @@ const CHECK_STALE_THRESHOLD = 10 * 60_000
 export class Reactor {
   private state: BoothState
   private projectRoot: string
+  private socket: string
 
   // Beat state
   private beatTimer?: ReturnType<typeof setTimeout>
@@ -40,9 +41,10 @@ export class Reactor {
   private checkRounds = new Map<string, number>()
   private checkSnapshot = new Map<string, string>()
 
-  constructor(projectRoot: string, state: BoothState) {
+  constructor(projectRoot: string, state: BoothState, socket: string) {
     this.projectRoot = projectRoot
     this.state = state
+    this.socket = socket
   }
 
   start(): void {
@@ -136,7 +138,7 @@ export class Reactor {
       this.state.updateDeck(deck.id, { checkSentAt: Date.now() })
       this.startCheckPoll(deck.id)
 
-      sendMessage(this.projectRoot, this.state, deck.id, msg).then(result => {
+      sendMessage(this.socket, this.state, deck.id, msg).then(result => {
         if (!result.ok) {
           logger.error(`[booth-reactor] check send failed for "${deck.name}": ${result.error}`)
         } else {
@@ -325,7 +327,7 @@ export class Reactor {
       existsSync(beatPath) ? `  Read ${beatPath} for your checklist.` : `  Use "booth reports" to view completed deck reports.`,
     ].filter(Boolean).join('\n')
 
-    sendMessage(this.projectRoot, this.state, 'dj', summary).then(result => {
+    sendMessage(this.socket, this.state, 'dj', summary).then(result => {
       if (result.ok) {
         logger.info('[booth-reactor] beat sent to DJ')
         this.lastBeatAt = Date.now()
@@ -373,10 +375,9 @@ export class Reactor {
     this.clearPlanModeTimer(deckId)
     const timer = setTimeout(() => {
       this.planModeTimers.delete(deckId)
-      const socket = deriveSocket(this.projectRoot)
       const d = this.state.getDeck(deckId)
-      if (!d) return
-      tmuxSafe(socket, 'send-keys', '-t', d.paneId, 'Enter')
+      if (!d || !d.paneId) return
+      tmuxSafe(this.socket, 'send-keys', '-t', d.paneId, 'Enter')
       logger.info(`[booth-reactor] auto-approved plan mode for "${d.name}"`)
     }, PLAN_APPROVE_DELAY)
     this.planModeTimers.set(deckId, timer)
@@ -427,7 +428,7 @@ export class Reactor {
 
   notifyDj(message: string): void {
     const formatted = `[booth-alert] ${message}`
-    sendMessage(this.projectRoot, this.state, 'dj', formatted).then(result => {
+    sendMessage(this.socket, this.state, 'dj', formatted).then(result => {
       if (result.ok) {
         logger.info(`[booth-reactor] notified DJ: ${message.slice(0, 80)}`)
       } else {

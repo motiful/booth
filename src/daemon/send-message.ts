@@ -1,4 +1,3 @@
-import { deriveSocket } from '../constants.js'
 import { tmuxSafe, protectedSendToCC } from '../tmux.js'
 import { BoothState } from './state.js'
 import { logger } from './logger.js'
@@ -9,23 +8,23 @@ export interface SendResult {
 }
 
 export async function sendMessage(
-  projectRoot: string,
+  socket: string,
   state: BoothState,
   targetId: string,
   message: string
 ): Promise<SendResult> {
-  const socket = deriveSocket(projectRoot)
-
   // Resolve pane
   let paneId: string
   const isDj = targetId === 'dj'
   if (isDj) {
-    // DJ is always the first pane in the session — no status guard for DJ
-    const check = tmuxSafe(socket, 'display-message', '-t', 'dj:0', '-p', '#{pane_id}')
-    if (!check.ok || !check.output.trim()) {
-      return { ok: false, error: 'DJ pane not found' }
+    // Use registered DJ pane ID from state — consistent with deck path.
+    // Previously resolved from 'dj:0' tmux session name, which could find
+    // a stale pane on the wrong socket if DJ migrated or session was recreated.
+    const dj = state.getDj()
+    if (!dj?.paneId) {
+      return { ok: false, error: 'DJ not registered or no pane' }
     }
-    paneId = check.output.trim()
+    paneId = dj.paneId
   } else {
     const deck = state.getDeck(targetId)
     if (!deck) return { ok: false, error: `Deck "${targetId}" not found` }

@@ -21,6 +21,7 @@ const JSONL_WAIT_MAX_ATTEMPTS = 60
 
 export class Daemon {
   private projectRoot: string
+  private socket: string
   private signal: SignalCollector
   private state: BoothState
   private reactor: Reactor
@@ -34,9 +35,10 @@ export class Daemon {
 
   constructor(opts: DaemonOptions) {
     this.projectRoot = opts.projectRoot
+    this.socket = deriveSocket(opts.projectRoot)
     this.signal = new SignalCollector()
     this.state = new BoothState(this.projectRoot)
-    this.reactor = new Reactor(this.projectRoot, this.state)
+    this.reactor = new Reactor(this.projectRoot, this.state, this.socket)
   }
 
   async start(): Promise<void> {
@@ -111,7 +113,7 @@ export class Daemon {
   }
 
   private pruneStaleDecks(): void {
-    const socket = deriveSocket(this.projectRoot)
+    const socket = this.socket
     let cleared = 0
 
     for (const deck of this.state.getAllDecks()) {
@@ -310,7 +312,7 @@ export class Daemon {
       case 'kill-deck': {
         const deckId = typeof msg.deckId === 'string' && msg.deckId ? msg.deckId : null
         if (!deckId) return { error: 'deckId string required' }
-        const socket = deriveSocket(this.projectRoot)
+        const socket = this.socket
         const deck = this.state.getDeck(deckId)
         if (deck?.paneId) {
           tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
@@ -331,7 +333,7 @@ export class Daemon {
         if (!deck) return { ok: true }
 
         // Kill tmux pane — CC exited so shell is idle
-        const socket = deriveSocket(this.projectRoot)
+        const socket = this.socket
         if (deck.paneId) {
           tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
         }
@@ -366,7 +368,7 @@ export class Daemon {
         const message = typeof msg.message === 'string' && msg.message ? msg.message : null
         if (!targetId || !message) return { error: 'targetId and message strings required' }
         sendMessage(
-          this.projectRoot, this.state, targetId, message
+          this.socket, this.state, targetId, message
         ).then(result => {
           if (!result.ok) {
             logger.warn(`[booth-daemon] background send failed: ${result.error}`)
@@ -452,10 +454,12 @@ export class Daemon {
         if (!jsonlPath) return { error: 'jsonlPath required' }
         const djSessionId = typeof msg.djSessionId === 'string' ? msg.djSessionId : undefined
 
-        // Resolve DJ pane ID from tmux
-        const socket = deriveSocket(this.projectRoot)
-        const paneResult = tmuxSafe(socket, 'display-message', '-t', `${SESSION}:0`, '-p', '#{pane_id}')
-        const paneId = paneResult.ok ? paneResult.output.trim() : `${SESSION}:0`
+        // Resolve DJ pane ID from tmux — must be a %N pane ID, not a session:window target
+        const paneResult = tmuxSafe(this.socket, 'display-message', '-t', `${SESSION}:0`, '-p', '#{pane_id}')
+        if (!paneResult.ok || !paneResult.output.trim()) {
+          return { error: 'DJ pane not found on booth tmux socket' }
+        }
+        const paneId = paneResult.output.trim()
 
         // Register or update DJ in sessions table
         const existingDj = this.state.getDj()
@@ -515,7 +519,7 @@ export class Daemon {
 
   private startHealthCheck(): void {
     this.healthTimer = setInterval(() => {
-      const socket = deriveSocket(this.projectRoot)
+      const socket = this.socket
 
       // Check deck panes — log loss but don't change status
       for (const deck of this.state.getAllDecks()) {
@@ -576,7 +580,7 @@ export class Daemon {
 
   private shutdownClean(): void {
     logger.info('[booth-daemon] clean shutdown — marking all sessions exited')
-    const socket = deriveSocket(this.projectRoot)
+    const socket = this.socket
 
     // Kill deck panes before clearing cache (shutdown won't see them after exitAll)
     for (const deck of this.state.getAllDecks()) {
@@ -592,7 +596,7 @@ export class Daemon {
   private shutdown(): void {
     logger.info('[booth-daemon] shutting down...')
 
-    const socket = deriveSocket(this.projectRoot)
+    const socket = this.socket
 
     // Collect pane IDs before any cleanup
     const deckPanes = this.state.getAllDecks().map(d => ({ id: d.id, paneId: d.paneId }))
