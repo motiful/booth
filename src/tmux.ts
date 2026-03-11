@@ -4,7 +4,6 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { logger } from './daemon/logger.js'
-import { BOOTH_SUBMIT_TMUX_KEY } from './keybindings.js'
 
 export interface TmuxResult {
   ok: boolean
@@ -114,7 +113,9 @@ export function waitForPrompt(socket: string, target: string, timeoutMs = 30_000
     const start = Date.now()
     const check = () => {
       const screen = tmuxSafe(socket, 'capture-pane', '-t', target, '-p', '-S', '-5')
-      if (screen.ok && /[❯>]/.test(screen.output)) { resolve(true); return }
+      // Match an EMPTY prompt: ❯ or > alone on a line (with optional whitespace).
+      // This avoids false positives from text in the input box like "❯ [booth-check]..."
+      if (screen.ok && /^\s*[❯>]\s*$/m.test(screen.output)) { resolve(true); return }
       if (Date.now() - start >= timeoutMs) { resolve(false); return }
       setTimeout(check, 1_000)
     }
@@ -217,12 +218,24 @@ async function protectedSendToCCImpl(socket: string, target: string, text: strin
     // 500ms is generous for this synchronous post-execSync work.
     await delay(500)
 
-    // 5. Submit the injected message via dedicated keybinding (ctrl+]).
-    //    This bypasses vim mode entirely — no Escape hack needed.
-    tmux(socket, 'send-keys', '-t', target, BOOTH_SUBMIT_TMUX_KEY)
+    // 5. Submit the injected message.
+    //    Escape first — exits INSERT/vim mode if active, no-op otherwise.
+    //    NOTE: Custom keybindings (e.g. ctrl+k → chat:submit) don't work
+    //    reliably after editor proxy injection. Escape+Enter is the proven path.
+    tmux(socket, 'send-keys', '-t', target, 'Escape')
+    await delay(100)
+    tmux(socket, 'send-keys', '-t', target, 'Enter')
 
     // 6. Wait for CC to process and show new prompt.
-    const prompted = await waitForPrompt(socket, target, 30_000)
+    //    Use a shorter first timeout — if Enter didn't submit, retry once.
+    let prompted = await waitForPrompt(socket, target, 8_000)
+    if (!prompted) {
+      logger.warn('[booth-tmux] no prompt after 8s — retrying Enter')
+      tmux(socket, 'send-keys', '-t', target, 'Escape')
+      await delay(100)
+      tmux(socket, 'send-keys', '-t', target, 'Enter')
+      prompted = await waitForPrompt(socket, target, 22_000)
+    }
     if (!prompted) {
       logger.warn('[booth-tmux] timeout waiting for prompt after injection')
       return  // finally block still runs cleanup
