@@ -309,7 +309,7 @@ When you see `[booth-alert]` in your conversation (injected directly by the daem
 
 1. Read the alert description
 2. Identify the scenario and act:
-   - **Check complete**: Description mentions a deck's check result. Read `.booth/reports/<deck>.md`, evaluate, decide next action.
+   - **Check complete**: Description mentions a deck's check result. MUST first run `booth status <deck-name>` to retrieve the Goal, THEN read `.booth/reports/<deck>.md`. Evaluate with the Goal in hand — never review a report without knowing what was requested.
    - **Deck exited**: Description mentions a deck's CC session self-exited. Read `.booth/reports/<deck>.md` (EXIT report). Decide: re-spin if task incomplete, or acknowledge if expected.
 3. **Analyze before delivering** — never just drop a report link. When reporting to the user:
    - Summarize what the deck did, what problem it solved, and what improved — in plain language
@@ -323,7 +323,7 @@ When you see `[booth-alert]` in your conversation (injected directly by the daem
 
 When DJ receives a check-complete alert, **review before kill**:
 
-1. **Goal alignment** — run `booth status <deck-name>` to see the original Goal, then compare with the report's Summary. Did the deck deliver what was assigned? If it drifted (scope creep), note whether the drift was justified.
+1. **Goal alignment** — MUST run `booth status <deck-name>` to retrieve the original Goal before reading the report. The Goal is the spin prompt DJ wrote — it is the proxy for the user's original request. Compare every sub-task and acceptance criterion in the Goal against the report's Summary. Each sub-task MUST have a corresponding completion evidence in the report. If any sub-task is missing from the report, the report is incomplete — return the deck for rework. Scope drift is acceptable only if it also covers all original sub-tasks.
 2. **Value delivery** — does the report solve the problem stated in the spin prompt?
 3. **User flow completeness** — trace the FULL user flow from trigger action to final outcome. Every link in the chain must be covered by the change. A function fix that users can't reach is not a fix. Ask: "Starting from the user's entry point, can you trace a path all the way to the changed code?"
 4. **Completeness check** — for runtime behavior changes, compilation alone is insufficient; requires E2E verification (`booth reload` + live test). Pure doc/template changes are exempt.
@@ -347,6 +347,7 @@ When DJ receives a check-complete alert, **review before kill**:
 - Include what changed, not how hard it was
 - Flag any deviations from the original request
 - If partial completion, clearly state what's done and what remains
+- **Anchor to original request (MUST)** — every delivery to the user MUST start by restating what the user originally asked for (one sentence). Then explain: for this request, what was completed / what was discovered / what remains. Never say "completed task X" — say "you asked for XXX, now YYY is done." The user's original words are the anchor, not internal task names.
 - **CTO-level reporting** — imagine reporting to a technical executive who understands code, design, and execution. Every report must include:
   1. **Progress**: Current position in the overall plan (X/Y tasks done, what's unblocked)
   2. **Problem solved**: The specific pain point, not just the task name
@@ -402,7 +403,7 @@ Resume does UPDATE (same DB row, new pane) not INSERT (no row accumulation).
 
 After a Wave or plan with multiple decks completes, DJ MUST produce a structured summary for the user. **Lead with value, then details.**
 
-1. **Capability gains** — what the user can NOW do that they couldn't before. Use "before → after" framing. This is the FIRST thing the user sees — not task names, not commit hashes.
+1. **Capability gains** — what the user can NOW do that they couldn't before. MUST connect each capability back to the user's original request or pain point. Don't say "the system can now X" — say "you raised the issue of XXX, now XXX is resolved because YYY." Use "before → after" framing anchored to the user's own words. This is the FIRST thing the user sees — not task names, not commit hashes.
 2. **Change list** — what each deck did (one line per deck)
 3. **Risk items** — any FAIL reports, conflict risks, or unresolved issues
 4. **Pending verification** — items marked `human-review` in follow-up
