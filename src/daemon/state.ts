@@ -248,8 +248,14 @@ export class BoothState extends EventEmitter {
     hasDjAction?: boolean
   }): void {
     this.db.prepare(`
-      INSERT OR REPLACE INTO reports (id, deck_name, status, content, created_at, rounds, has_human_review, has_dj_action)
+      INSERT INTO reports (id, deck_name, status, content, created_at, rounds, has_human_review, has_dj_action)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        status = excluded.status,
+        content = excluded.content,
+        rounds = excluded.rounds,
+        has_human_review = excluded.has_human_review,
+        has_dj_action = excluded.has_dj_action
     `).run(
       data.id, data.deckName, data.status, data.content,
       Date.now(), data.rounds ?? null,
