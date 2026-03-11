@@ -264,7 +264,7 @@ Mode indicators: `[A]` auto, `[H]` hold, `[L]` live.
    - Default (auto + looper) for most tasks
    - `--hold` for tasks requiring iteration or follow-up
    - `--live` for human-driven exploration
-   - `--no-loop` for simple, low-risk tasks
+   - `--no-loop` for tasks that don't change runtime behavior (pure doc/config/skill changes)
 4. Run `booth spin <name> --prompt "<prompt>"` (with flags as needed)
 5. Deck starts working automatically — daemon monitors via JSONL
 
