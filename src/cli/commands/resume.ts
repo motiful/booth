@@ -204,9 +204,10 @@ async function resumeOne(
     return
   }
 
-  // Check no active deck with same name in daemon
+  // Check no active deck with same name AND a live pane in daemon
+  // (Daemon loads pane-less decks from DB on startup — those are ghosts, not active)
   const res = await ipcRequest(projectRoot, { cmd: 'ls' }) as { decks: DeckInfo[] }
-  if (res.decks?.some(d => d.name === entry.name)) {
+  if (res.decks?.some(d => d.name === entry.name && d.paneId)) {
     console.error(`[booth] deck "${entry.name}" is already active`)
     return
   }
