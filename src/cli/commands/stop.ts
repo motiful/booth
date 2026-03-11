@@ -4,6 +4,11 @@ import { killSession, hasSession } from '../../tmux.js'
 import { removeSessionEndHook, removeSessionStartHook } from '../../hooks.js'
 
 export async function stopCommand(args: string[]): Promise<void> {
+  if (process.env.BOOTH_ROLE === 'deck') {
+    console.error(`[booth] error: deck "${process.env.BOOTH_DECK_NAME ?? 'unknown'}" cannot execute "booth stop". Only DJ can stop booth.`)
+    process.exit(1)
+  }
+
   const projectRoot = findProjectRoot()
   const socket = deriveSocket(projectRoot)
   const clean = args.includes('--clean')

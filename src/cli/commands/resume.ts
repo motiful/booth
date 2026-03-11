@@ -231,7 +231,7 @@ async function resumeOne(
   const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
 
   const deckId = `deck-${entry.name}`
-  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${deckId}"`
+  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${deckId}" && export BOOTH_ROLE=deck && export BOOTH_DECK_NAME="${entry.name}"`
 
   sleepMs(500)
   tmux(socket, 'send-keys', '-t', paneId,

@@ -74,7 +74,7 @@ export async function spinCommand(args: string[]): Promise<void> {
   // Launch CC with prompt as CLI argument via temp file.
   // The shell command reads the file, deletes it, then launches CC.
   // This guarantees the file is read before cleanup — no timing dependency.
-  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${deckId}"`
+  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${deckId}" && export BOOTH_ROLE=deck && export BOOTH_DECK_NAME="${name}"`
 
   sleepMs(500)
   if (prompt) {

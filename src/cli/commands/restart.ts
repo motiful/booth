@@ -6,6 +6,11 @@ import { ensureDaemonAndSession, launchDJ, attachSession } from './start.js'
 import { resumeAllDecks } from './resume.js'
 
 export async function restartCommand(args: string[]): Promise<void> {
+  if (process.env.BOOTH_ROLE === 'deck') {
+    console.error(`[booth] error: deck "${process.env.BOOTH_DECK_NAME ?? 'unknown'}" cannot execute "booth restart". Only DJ can restart booth.`)
+    process.exit(1)
+  }
+
   const projectRoot = findProjectRoot()
   const socket = deriveSocket(projectRoot)
   const clean = args.includes('--clean')
