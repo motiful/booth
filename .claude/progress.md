@@ -390,10 +390,10 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 **执行计划（7 步）**:
 - Step 0: ✅ Schema 迁移准备 — 加 session_id 唯一索引 + reports.session_id 列（6ba5d3e）
 - Step 1: ✅ 新建 `src/resolve.ts` 解析层 — resolveIdentifier(input) 支持 name/UUID/前缀（30ac644, e419e22）
-- Step 2-4: **原子块**（高风险）— state.ts Map key 改 sessionId + IPC 合约改 sessionId + CLI 层接入 resolve
-- Step 5: 环境变量 + hook 适配（中风险）
-- Step 6: reports 表加 session_id 双列关联（低风险）
-- Step 7: 文档同步
+- Step 2-4: ✅ 原子块 — state.ts Map key 改 sessionId + IPC 合约改 sessionId + CLI 层接入 resolve + hook 适配（af433b1）
+- Step 5: ✅ 环境变量 + hook 已在 Step 2-4 中一并完成
+- Step 6: ✅ reports 表加 session_id 双列关联 — insertReport 写入 sessionId, getReports/countReports 支持 sessionId 过滤 (dc84635)
+- Step 7: ✅ 文档同步 — cli.md Identifier Resolution, child-protocol.md Deck Environment, check.md/mix.md state.json→booth.db (6c2346c, 3c9534b)
 
 **关键设计决策**:
 - name 在活跃行中仍保持唯一（partial unique index 保留）
