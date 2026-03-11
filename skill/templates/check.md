@@ -57,20 +57,16 @@ When a deck is spun with `--no-loop`, the sub-agent review loop is skipped entir
 
 ### When to use --no-loop vs default loop
 
-The deciding question: **你的产出有下游消费者吗？有 → loop（默认）。没有 → 可以 no-loop。**
+**判断标准：会不会改变运行时行为？**
 
-**Loop (default)** — output becomes an artifact others depend on:
-- Templates, design specs, configurations that get inherited
-- Code that changes runtime behavior
-- Research documents used as implementation input
-- Any file that downstream work will build upon
+| 改变运行时行为？ | 决定 | 例子 |
+|-----------------|------|------|
+| 是 | **必须 loop（默认）** | daemon 逻辑、CLI 命令、hook、state 管理、tmux 交互 |
+| 否 | **可以 no-loop** | 纯文档、调查分析、配置模板、进度更新 |
 
-**No-loop** — output is a one-off consumable:
-- Status queries, simple file operations
-- Exploratory first drafts (explicitly planned for further iteration)
-- One-off investigations where findings are verbal, not persisted
+这是硬边界，不是 judgment call。改了 `src/` 下任何 `.ts` 文件 → loop。只改了 `.md`/`.json`/`skill/` → 可以 no-loop。
 
-Task **impact** (not type) determines loop/no-loop. A one-line code change may need loop (if it's on a critical path). A long document may skip loop (if it's just a draft). Don't assume "docs = no-loop, code = loop" — the criterion is **downstream impact**: will someone build on, inherit, or be broken by your output?
+The deciding factor is **runtime impact**, not task size. A one-line daemon fix needs loop. A 500-line doc doesn't.
 
 ## Round Info
 
@@ -137,6 +133,8 @@ After the review loop completes (or immediately after self-assessment in no-loop
   - If you see conflicts or unexpected modifications to files you didn't touch, do NOT overwrite them
 
 ### 2. Test Verification
+
+> **HARD RULE: 改了运行时代码 = 必须 E2E 验证。没有 E2E 证据的 runtime 改动 report 会被 DJ 退回。**
 
 Run tests **before** committing. Testing is mandatory, not optional.
 

@@ -228,9 +228,18 @@ Common mode-switching patterns:
 
 ### --no-loop Flag
 
-By default, the check phase runs a sub-agent review loop (up to 5 rounds). Pass `--no-loop` to skip the review — the deck writes its report directly without sub-agent verification. Use for simple tasks where full review is overkill (typo fixes, analysis, straightforward changes). Only relevant for auto/hold modes (live has no auto check).
+By default, the check phase runs a sub-agent review loop (up to 5 rounds). Pass `--no-loop` to skip the sub-agent review — the deck still writes a report, but without independent verification.
 
-The looper decision depends on **task complexity**, not task type. A complex config change deserves review; a trivial code fix may not.
+**--no-loop 的判断标准：会不会改变运行时行为？**
+
+| 改变运行时行为？ | 决定 | 例子 |
+|-----------------|------|------|
+| 是 | **必须 loop（默认）** | daemon 逻辑、CLI 命令、hook、state 管理、tmux 交互 |
+| 否 | **可以 no-loop** | 纯文档、调查分析、配置模板、进度更新 |
+
+这是硬边界，不是 judgment call。改了 `src/` 下任何 `.ts` 文件 → loop。只改了 `.md`/`.json`/`skill/` → 可以 no-loop。
+
+The deciding factor is **runtime impact**, not task size. A one-line daemon fix needs loop. A 500-line doc doesn't.
 
 ### `booth ls` Display
 
