@@ -1,6 +1,6 @@
 import { createServer, Server } from 'node:net'
-import { existsSync, unlinkSync } from 'node:fs'
-import { SignalCollector } from './signal.js'
+import { existsSync, unlinkSync, openSync, fstatSync, readSync, closeSync } from 'node:fs'
+import { SignalCollector, parseEventState } from './signal.js'
 import type { SignalEvent, PlanModeEvent } from './signal.js'
 import { BoothState } from './state.js'
 import { Reactor } from './reactor.js'
@@ -8,7 +8,7 @@ import { initBoothDir, ipcSocketPath, deriveSocket, logsDir, boothPath, SESSION 
 import { killSession, hasSession, tmuxSafe } from '../tmux.js'
 import { sendMessage } from './send-message.js'
 import { initLogger, logger } from './logger.js'
-import type { DeckInfo, DeckMode } from '../types.js'
+import type { DeckInfo, DeckMode, DeckStatus } from '../types.js'
 
 const VALID_MODES: DeckMode[] = ['auto', 'hold', 'live']
 
@@ -27,6 +27,7 @@ export class Daemon {
   private ipcServer?: Server
   private healthTimer?: ReturnType<typeof setInterval>
   private jsonlWaiters = new Map<string, ReturnType<typeof setInterval>>()
+  private sessionChangeTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private paneLost = new Set<string>()
   private reloading = false
   private shuttingDown = false
@@ -69,6 +70,7 @@ export class Daemon {
     // replayLines=0: state is already in DB, no need to replay JSONL history
     // (replaying causes stale idle/working signals to re-trigger handlers)
     this.pruneStaleDecks()
+    this.reconcileStaleStatus()
     for (const deck of this.state.getAllDecks()) {
       if (deck.jsonlPath) {
         this.watchOrWait(deck.id, deck.jsonlPath, 0)
@@ -125,6 +127,55 @@ export class Daemon {
 
     if (cleared) {
       logger.info(`[booth-daemon] cleared pane_id on ${cleared} deck(s) from previous session`)
+    }
+  }
+
+  /**
+   * One-time tail scan after restart: read last lines of each deck's JSONL
+   * to reconcile DB status with reality. Uses updateDeck() (not updateDeckStatus)
+   * to silently correct without triggering reactor events.
+   */
+  private reconcileStaleStatus(): void {
+    let reconciled = 0
+    for (const deck of this.state.getAllDecks()) {
+      if (!deck.jsonlPath || !existsSync(deck.jsonlPath)) continue
+      const realStatus = this.tailScanStatus(deck.jsonlPath)
+      if (realStatus && realStatus !== deck.status) {
+        logger.info(`[booth-daemon] reconcile: deck "${deck.name}" ${deck.status} → ${realStatus}`)
+        this.state.updateDeck(deck.id, { status: realStatus })
+        reconciled++
+      }
+    }
+    if (reconciled) {
+      logger.info(`[booth-daemon] reconciled status on ${reconciled} deck(s)`)
+    }
+  }
+
+  private tailScanStatus(jsonlPath: string): DeckStatus | null {
+    const TAIL_BYTES = 8192
+    let fd: number
+    try {
+      fd = openSync(jsonlPath, 'r')
+    } catch {
+      return null
+    }
+    try {
+      const size = fstatSync(fd).size
+      if (size === 0) return null
+      const readSize = Math.min(TAIL_BYTES, size)
+      const buf = Buffer.alloc(readSize)
+      readSync(fd, buf, 0, readSize, size - readSize)
+      const lines = buf.toString('utf-8').split('\n').filter(l => l.trim())
+      // Walk backwards — first non-null status is the most recent
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const status = parseEventState(lines[i])
+        if (status) return status
+      }
+      return null
+    } catch {
+      return null
+    } finally {
+      closeSync(fd)
     }
   }
 
@@ -370,25 +421,32 @@ export class Daemon {
         const dId = typeof msg.deckId === 'string' ? msg.deckId : null
         const sessionId = typeof msg.sessionId === 'string' ? msg.sessionId : undefined
 
-        // DJ session change
-        if (role === 'dj') {
-          if (sessionId) this.state.updateDj({ sessionId })
-          this.updateDjJsonl(transcriptPath)
-          return { ok: true, target: 'dj' }
-        }
+        // Determine debounce key
+        const target = role === 'dj' ? 'dj' : dId
+        if (!target) return { ok: true, skipped: 'not a booth session' }
 
-        // Deck session change
-        if (dId) {
-          const deck = this.state.getDeck(dId)
-          if (deck) {
-            if (sessionId) this.state.updateDeck(dId, { sessionId })
-            this.updateDeckJsonl(dId, transcriptPath)
-            return { ok: true, target: dId }
+        // Debounce: CC --resume fires SessionStart twice in rapid succession.
+        // First is a temporary new session (noise), second is the real resumed session.
+        // Coalesce within 300ms — only the last event is applied.
+        const pending = this.sessionChangeTimers.get(target)
+        if (pending) clearTimeout(pending)
+
+        this.sessionChangeTimers.set(target, setTimeout(() => {
+          this.sessionChangeTimers.delete(target)
+
+          if (role === 'dj') {
+            if (sessionId) this.state.updateDj({ sessionId })
+            this.updateDjJsonl(transcriptPath)
+          } else if (dId) {
+            const deck = this.state.getDeck(dId)
+            if (deck) {
+              if (sessionId) this.state.updateDeck(dId, { sessionId })
+              this.updateDeckJsonl(dId, transcriptPath)
+            }
           }
-          return { ok: true, skipped: 'deck not registered yet' }
-        }
+        }, 300))
 
-        return { ok: true, skipped: 'not a booth session' }
+        return { ok: true, target, debounced: true }
       }
       case 'update-dj-jsonl': {
         const jsonlPath = typeof msg.jsonlPath === 'string' && msg.jsonlPath ? msg.jsonlPath : null
@@ -468,8 +526,10 @@ export class Daemon {
   private gracefulReload(): void {
     logger.info('[booth-daemon] graceful reload — preserving tmux sessions...')
 
-    // Stop all JSONL waiters and watchers
+    // Stop all JSONL waiters, watchers, and pending session-change timers
     for (const [id] of this.jsonlWaiters) this.stopWaiter(id)
+    for (const [, timer] of this.sessionChangeTimers) clearTimeout(timer)
+    this.sessionChangeTimers.clear()
     this.signal.unwatchAll()
 
     // Force persist state so new daemon can recover
