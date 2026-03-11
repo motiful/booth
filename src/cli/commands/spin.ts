@@ -30,8 +30,6 @@ export async function spinCommand(args: string[]): Promise<void> {
     process.exit(1)
   }
 
-  const deckId = `deck-${name}`
-
   // Reject if an active deck with the same name already exists
   const status = await ipcRequest(projectRoot, { cmd: 'status' }) as { decks?: DeckInfo[] }
   if (status.decks?.some(d => d.name === name)) {
@@ -49,7 +47,7 @@ export async function spinCommand(args: string[]): Promise<void> {
     '-P', '-F', '#{pane_id}')
 
   const deck: DeckInfo = {
-    id: deckId,
+    id: sessionId,
     name,
     status: 'working',
     mode,
@@ -74,7 +72,7 @@ export async function spinCommand(args: string[]): Promise<void> {
   // Launch CC with prompt as CLI argument via temp file.
   // The shell command reads the file, deletes it, then launches CC.
   // This guarantees the file is read before cleanup — no timing dependency.
-  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${deckId}" && export BOOTH_ROLE=deck && export BOOTH_DECK_NAME="${name}"`
+  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${sessionId}" && export BOOTH_ROLE=deck && export BOOTH_DECK_NAME="${name}"`
 
   sleepMs(500)
   if (prompt) {

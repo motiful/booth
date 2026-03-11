@@ -10,7 +10,7 @@ export interface ResolvedDeck {
 }
 
 interface SessionRow {
-  session_id: string
+  session_id: string | null
   name: string
 }
 
@@ -30,7 +30,8 @@ function resolve(db: Database.Database, input: string): ResolvedDeck {
     const row = db.prepare(
       `SELECT session_id, name FROM sessions WHERE session_id = ? AND role = 'deck' LIMIT 1`
     ).get(input) as SessionRow | undefined
-    if (row) return { sessionId: row.session_id, name: row.name }
+    // WHERE session_id = ? guarantees non-null
+    if (row) return { sessionId: row.session_id!, name: row.name }
     throw new Error(`No deck with session ID "${input}"`)
   }
 
@@ -40,21 +41,21 @@ function resolve(db: Database.Database, input: string): ResolvedDeck {
     const byName = findActiveByName(db, input)
     if (byName) return byName
 
-    // Try session_id prefix among active decks
+    // Try session_id prefix among active decks (LIKE guarantees non-null)
     const activePrefix = db.prepare(
       `SELECT session_id, name FROM sessions WHERE session_id LIKE ? AND role = 'deck' AND status != 'exited'`
     ).all(`${input}%`) as SessionRow[]
-    if (activePrefix.length === 1) return { sessionId: activePrefix[0].session_id, name: activePrefix[0].name }
+    if (activePrefix.length === 1) return { sessionId: activePrefix[0].session_id!, name: activePrefix[0].name }
     if (activePrefix.length > 1) {
-      const list = activePrefix.map(r => `  ${r.session_id.slice(0, 8)} ${r.name}`).join('\n')
+      const list = activePrefix.map(r => `  ${r.session_id!.slice(0, 8)} ${r.name}`).join('\n')
       throw new Error(`Ambiguous session ID prefix "${input}" — matches ${activePrefix.length} decks:\n${list}`)
     }
 
-    // Fallback: any remaining rows (active already excluded above) by session_id prefix
+    // Fallback: any remaining rows by session_id prefix (LIKE guarantees non-null)
     const historyPrefix = db.prepare(
       `SELECT session_id, name FROM sessions WHERE session_id LIKE ? AND role = 'deck' ORDER BY updated_at DESC LIMIT 1`
     ).get(`${input}%`) as SessionRow | undefined
-    if (historyPrefix) return { sessionId: historyPrefix.session_id, name: historyPrefix.name }
+    if (historyPrefix) return { sessionId: historyPrefix.session_id!, name: historyPrefix.name }
 
     // Fallback: exited rows by name
     const historyName = findHistoricalByName(db, input)
@@ -78,7 +79,10 @@ function findActiveByName(db: Database.Database, name: string): ResolvedDeck | n
   const rows = db.prepare(
     `SELECT session_id, name FROM sessions WHERE name = ? AND role = 'deck' AND status != 'exited'`
   ).all(name) as SessionRow[]
-  if (rows.length === 1 && rows[0].session_id) return { sessionId: rows[0].session_id, name: rows[0].name }
+  if (rows.length === 1) {
+    // Fallback to deck-${name} for legacy rows with null session_id
+    return { sessionId: rows[0].session_id ?? `deck-${rows[0].name}`, name: rows[0].name }
+  }
   if (rows.length > 1) throw new Error(`Ambiguous: ${rows.length} active decks named "${name}"`)
   return null
 }
@@ -87,6 +91,9 @@ function findHistoricalByName(db: Database.Database, name: string): ResolvedDeck
   const row = db.prepare(
     `SELECT session_id, name FROM sessions WHERE name = ? AND role = 'deck' ORDER BY updated_at DESC LIMIT 1`
   ).get(name) as SessionRow | undefined
-  if (row?.session_id) return { sessionId: row.session_id, name: row.name }
+  if (row) {
+    // Fallback to deck-${name} for legacy rows with null session_id
+    return { sessionId: row.session_id ?? `deck-${row.name}`, name: row.name }
+  }
   return null
 }

@@ -195,8 +195,7 @@ async function resumeOne(
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
   const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
 
-  const deckId = `deck-${entry.name}`
-  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${deckId}" && export BOOTH_ROLE=deck && export BOOTH_DECK_NAME="${entry.name}"`
+  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${entry.sessionId}" && export BOOTH_ROLE=deck && export BOOTH_DECK_NAME="${entry.name}"`
 
   sleepMs(500)
   tmux(socket, 'send-keys', '-t', paneId,
@@ -204,7 +203,7 @@ async function resumeOne(
 
   // If mode override, update via IPC
   if (modeOverride && modeOverride !== entry.mode) {
-    await ipcRequest(projectRoot, { cmd: 'set-mode', deckId, mode: modeOverride })
+    await ipcRequest(projectRoot, { cmd: 'set-mode', sessionId: entry.sessionId, mode: modeOverride })
   }
 
   const modeLabel = mode !== entry.mode ? ` [${mode}<-${entry.mode}]` : ` [${mode}]`

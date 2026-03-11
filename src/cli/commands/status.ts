@@ -1,5 +1,6 @@
 import { findProjectRoot } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
+import { resolveIdentifier } from '../../resolve.js'
 import type { DeckInfo, DeckMode, ReportInfo } from '../../types.js'
 
 const modeLabel: Record<DeckMode, string> = {
@@ -22,14 +23,16 @@ export async function statusCommand(args: string[]): Promise<void> {
     process.exit(1)
   }
 
-  const res = await ipcRequest(projectRoot, { cmd: 'status', deckId: `deck-${name}` }) as {
+  const resolved = resolveIdentifier(projectRoot, name)
+
+  const res = await ipcRequest(projectRoot, { cmd: 'status' }) as {
     ok: boolean
     decks: DeckInfo[]
   }
 
-  const deck = res.decks?.find(d => d.name === name)
+  const deck = res.decks?.find(d => d.name === resolved.name)
   if (!deck) {
-    console.error(`[booth] deck "${name}" not found`)
+    console.error(`[booth] deck "${resolved.name}" not found`)
     process.exit(1)
   }
 

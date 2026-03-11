@@ -15,6 +15,7 @@ interface SessionEndInput {
 interface SessionMatch {
   name: string
   role: string
+  sessionId?: string
 }
 
 function readStdin(): string {
@@ -80,7 +81,7 @@ function findSessionByJsonlPath(projectRoot: string, jsonlPath: string): Session
   try {
     const db = new Database(dbPath, { readonly: true })
     try {
-      const row = db.prepare(`SELECT name, role FROM sessions WHERE jsonl_path = ? AND status != 'exited' LIMIT 1`).get(jsonlPath) as SessionMatch | undefined
+      const row = db.prepare(`SELECT name, role, session_id as sessionId FROM sessions WHERE jsonl_path = ? AND status != 'exited' LIMIT 1`).get(jsonlPath) as SessionMatch | undefined
       return row ?? undefined
     } finally {
       db.close()
@@ -129,7 +130,7 @@ async function main(): Promise<void> {
   }
 
   // Deck exit — write report and notify daemon
-  const deckId = `deck-${match.name}`
+  const sessionId = match.sessionId ?? `deck-${match.name}`
   const deckName = match.name
 
   const existingReport = findLatestReport(projectRoot, deckName)
@@ -177,7 +178,7 @@ async function main(): Promise<void> {
   try {
     await ipcRequest(projectRoot, {
       cmd: 'deck-exited',
-      deckId,
+      sessionId,
       deckName,
       reason,
       reportPath: finalReportPath,

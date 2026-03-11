@@ -1,5 +1,6 @@
 import { findProjectRoot } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
+import { resolveIdentifier } from '../../resolve.js'
 
 export async function sendCommand(args: string[]): Promise<void> {
   const name = args[0]
@@ -18,9 +19,12 @@ export async function sendCommand(args: string[]): Promise<void> {
     process.exit(1)
   }
 
+  // DJ is special — no resolution needed
+  const targetId = name === 'dj' ? 'dj' : resolveIdentifier(projectRoot, name).sessionId
+
   const res = await ipcRequest(projectRoot, {
     cmd: 'send-message',
-    targetId: name === 'dj' ? 'dj' : `deck-${name}`,
+    targetId,
     message: prompt,
   }) as { ok?: boolean; error?: string }
 

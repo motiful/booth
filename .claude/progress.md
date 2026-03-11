@@ -109,6 +109,11 @@ Signal Delivery (single channel):
 - compact 期间 CC 是 working 状态，不接受交互输入，Ctrl+G editor proxy 可能 hang
 - beat 是天然安全的兜底——compact 期间丢失的 notifyDj 信号会在下一个 beat 周期被发现
 
+**已观察到的 Bug（2026-03-12）**：
+
+- **Compaction 打断 alert 链路**：hold 模式 deck 被 compact 后，完成工作但 DJ 没收到 alert。Compaction 压缩了 deck 的对话上下文，deck 不知道自己还有待完成的汇报流程。DJ 端也没有机制检测到"deck 完成了但没通知我"。这个问题同时影响 DJ 和 deck——任何一方被 compact 都可能丢失工作状态。
+- **影响范围**：不止是通知——compact 后 deck 可能丢失当前任务上下文、遗忘验收标准、重复已完成的工作。DJ compact 后可能丢失 pending alert、plan 进度、当前决策上下文。
+
 **未知/困惑**：
 
 - Ctrl+G 在 compact 期间的**确切行为**未经验证——调研文档中的分析基于机制推断，需要实际测试
@@ -383,8 +388,8 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 - [x] MEMORY.md 清理：删除 5+ 条过时信息（archives 表、meta KV DJ、resume 读 state.json 等）
 
 **执行计划（7 步）**:
-- Step 0: Schema 迁移准备 — 加 session_id 唯一索引 + reports.session_id 列（低风险）
-- Step 1: 新建 `src/resolve.ts` 解析层 — resolveIdentifier(input) 支持 name/UUID/前缀（低风险）
+- Step 0: ✅ Schema 迁移准备 — 加 session_id 唯一索引 + reports.session_id 列（6ba5d3e）
+- Step 1: ✅ 新建 `src/resolve.ts` 解析层 — resolveIdentifier(input) 支持 name/UUID/前缀（30ac644, e419e22）
 - Step 2-4: **原子块**（高风险）— state.ts Map key 改 sessionId + IPC 合约改 sessionId + CLI 层接入 resolve
 - Step 5: 环境变量 + hook 适配（中风险）
 - Step 6: reports 表加 session_id 双列关联（低风险）

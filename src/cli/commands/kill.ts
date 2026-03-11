@@ -1,5 +1,6 @@
 import { findProjectRoot } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
+import { resolveIdentifier } from '../../resolve.js'
 
 export async function killCommand(args: string[]): Promise<void> {
   if (process.env.BOOTH_ROLE === 'deck') {
@@ -20,10 +21,10 @@ export async function killCommand(args: string[]): Promise<void> {
     process.exit(1)
   }
 
-  const deckId = `deck-${name}`
+  const resolved = resolveIdentifier(projectRoot, name)
 
   // Daemon handles tmux kill + state cleanup in one atomic operation
-  await ipcRequest(projectRoot, { cmd: 'kill-deck', deckId, name })
+  await ipcRequest(projectRoot, { cmd: 'kill-deck', sessionId: resolved.sessionId, name: resolved.name })
 
-  console.log(`[booth] deck "${name}" killed`)
+  console.log(`[booth] deck "${resolved.name}" killed`)
 }

@@ -297,39 +297,39 @@ export class Daemon {
         }
       case 'register-deck': {
         const deck = msg.deck as DeckInfo | undefined
-        if (!deck || typeof deck !== 'object' || typeof deck.id !== 'string' || typeof deck.name !== 'string') {
-          return { error: 'valid deck object required (id, name)' }
+        if (!deck || typeof deck !== 'object' || typeof deck.name !== 'string' || typeof deck.sessionId !== 'string') {
+          return { error: 'valid deck object required (name, sessionId)' }
         }
         this.registerDeck(deck)
         return { ok: true }
       }
       case 'remove-deck': {
-        const deckId = typeof msg.deckId === 'string' && msg.deckId ? msg.deckId : null
-        if (!deckId) return { error: 'deckId string required' }
-        this.removeDeck(deckId)
+        const sessionId = typeof msg.sessionId === 'string' && msg.sessionId ? msg.sessionId : null
+        if (!sessionId) return { error: 'sessionId string required' }
+        this.removeDeck(sessionId)
         return { ok: true }
       }
       case 'kill-deck': {
-        const deckId = typeof msg.deckId === 'string' && msg.deckId ? msg.deckId : null
-        if (!deckId) return { error: 'deckId string required' }
+        const sessionId = typeof msg.sessionId === 'string' && msg.sessionId ? msg.sessionId : null
+        if (!sessionId) return { error: 'sessionId string required' }
         const socket = this.socket
-        const deck = this.state.getDeck(deckId)
+        const deck = this.state.getDeck(sessionId)
         if (deck?.paneId) {
           tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
         }
-        this.removeDeck(deckId)
+        this.removeDeck(sessionId)
         return { ok: true }
       }
       case 'deck-exited': {
         // During shutdown, ignore exit hooks to preserve resumability
         if (this.shuttingDown) return { ok: true, skipped: 'shutting-down' }
 
-        const deckId = typeof msg.deckId === 'string' && msg.deckId ? msg.deckId : null
-        if (!deckId) return { error: 'deckId string required' }
-        const deckName = typeof msg.deckName === 'string' ? msg.deckName : deckId
+        const sessionId = typeof msg.sessionId === 'string' && msg.sessionId ? msg.sessionId : null
+        if (!sessionId) return { error: 'sessionId string required' }
+        const deckName = typeof msg.deckName === 'string' ? msg.deckName : sessionId
         const reason = typeof msg.reason === 'string' ? msg.reason : 'unknown'
 
-        const deck = this.state.getDeck(deckId)
+        const deck = this.state.getDeck(sessionId)
         if (!deck) return { ok: true }
 
         // Kill tmux pane — CC exited so shell is idle
@@ -339,10 +339,10 @@ export class Daemon {
         }
 
         // Cleanup — exit (single atomic step)
-        this.stopWaiter(deckId)
-        this.signal.unwatch(deckId)
-        this.reactor.clearDeckTimers(deckId)
-        this.state.exitDeck(deckId)
+        this.stopWaiter(sessionId)
+        this.signal.unwatch(sessionId)
+        this.reactor.clearDeckTimers(sessionId)
+        this.state.exitDeck(sessionId)
 
         this.reactor.notifyDj(`Deck "${deckName}" session exited (${reason}).`)
         logger.info(`[booth-daemon] deck "${deckName}" session-end: ${reason}, pane killed`)
@@ -377,20 +377,20 @@ export class Daemon {
         return { ok: true, queued: true }
       }
       case 'set-mode': {
-        const deckId = typeof msg.deckId === 'string' && msg.deckId ? msg.deckId : null
-        if (!deckId) return { error: 'deckId string required' }
+        const sessionId = typeof msg.sessionId === 'string' && msg.sessionId ? msg.sessionId : null
+        if (!sessionId) return { error: 'sessionId string required' }
         const mode = msg.mode as DeckMode
         if (!VALID_MODES.includes(mode)) {
           return { error: `invalid mode: ${mode}` }
         }
-        const deck = this.state.getDeck(deckId)
+        const deck = this.state.getDeck(sessionId)
         if (!deck) {
-          return { error: `deck not found: ${deckId}` }
+          return { error: `deck not found: ${sessionId}` }
         }
-        this.state.updateDeck(deckId, { mode })
+        this.state.updateDeck(sessionId, { mode })
         logger.info(`[booth-daemon] deck "${deck.name}" mode → ${mode}`)
         if ((mode === 'auto' || mode === 'hold') && deck.status === 'idle') {
-          const updated = this.state.getDeck(deckId)!
+          const updated = this.state.getDeck(sessionId)!
           this.reactor.triggerCheck(updated)
         }
         return { ok: true }
@@ -403,15 +403,16 @@ export class Daemon {
           return { error: 'name and paneId strings required' }
         }
         this.state.resumeDeck(name, paneId)
-        // Clear paneLost if previously marked
-        this.paneLost.delete(`deck-${name}`)
-        // Start watching JSONL if available
-        const deck = this.state.getDeck(`deck-${name}`)
-        if (deck?.jsonlPath) {
-          this.watchOrWait(deck.id, deck.jsonlPath)
-        } else if (jsonlPath) {
-          this.state.updateDeck(`deck-${name}`, { jsonlPath })
-          this.watchOrWait(`deck-${name}`, jsonlPath)
+        // Find the just-resumed deck in cache to get its sessionId (Map key)
+        const deck = this.state.getAllDecks().find(d => d.name === name)
+        if (deck) {
+          this.paneLost.delete(deck.id)
+          if (deck.jsonlPath) {
+            this.watchOrWait(deck.id, deck.jsonlPath)
+          } else if (jsonlPath) {
+            this.state.updateDeck(deck.id, { jsonlPath })
+            this.watchOrWait(deck.id, jsonlPath)
+          }
         }
         return { ok: true }
       }
@@ -419,11 +420,11 @@ export class Daemon {
         const transcriptPath = typeof msg.transcriptPath === 'string' && msg.transcriptPath ? msg.transcriptPath : null
         if (!transcriptPath) return { error: 'transcriptPath required' }
         const role = typeof msg.role === 'string' ? msg.role : null
-        const dId = typeof msg.deckId === 'string' ? msg.deckId : null
-        const sessionId = typeof msg.sessionId === 'string' ? msg.sessionId : undefined
+        const sid = typeof msg.sessionId === 'string' ? msg.sessionId : null
+        const ccSessionId = typeof msg.ccSessionId === 'string' ? msg.ccSessionId : undefined
 
         // Determine debounce key
-        const target = role === 'dj' ? 'dj' : dId
+        const target = role === 'dj' ? 'dj' : sid
         if (!target) return { ok: true, skipped: 'not a booth session' }
 
         // Debounce: CC --resume fires SessionStart twice in rapid succession.
@@ -436,13 +437,13 @@ export class Daemon {
           this.sessionChangeTimers.delete(target)
 
           if (role === 'dj') {
-            if (sessionId) this.state.updateDj({ sessionId })
+            if (ccSessionId) this.state.updateDj({ sessionId: ccSessionId })
             this.updateDjJsonl(transcriptPath)
-          } else if (dId) {
-            const deck = this.state.getDeck(dId)
+          } else if (sid) {
+            const deck = this.state.getDeck(sid)
             if (deck) {
-              if (sessionId) this.state.updateDeck(dId, { sessionId })
-              this.updateDeckJsonl(dId, transcriptPath)
+              // Only update JSONL path — sessionId is stable identity, not updated on CC session change
+              this.updateDeckJsonl(sid, transcriptPath)
             }
           }
         }, 300))

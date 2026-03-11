@@ -9,7 +9,7 @@ export class BoothState extends EventEmitter {
   private db!: Database.Database
   private projectRoot: string
 
-  // In-memory cache for hot-path reads (active decks only, keyed by deckId)
+  // In-memory cache for hot-path reads (active decks only, keyed by sessionId)
   private decks = new Map<string, DeckInfo>()
   private djCache: DjInfo | undefined
 
@@ -57,18 +57,21 @@ export class BoothState extends EventEmitter {
 
     const updated = { ...deck, ...patch, updatedAt: Date.now() }
 
+    // Use pre-patch sessionId for WHERE (identity before any change)
+    const whereCol = deck.sessionId ? 'session_id' : 'name'
+    const whereVal = deck.sessionId ?? deck.name
     this.db.prepare(`
       UPDATE sessions SET
         status = ?, mode = ?, dir = ?, pane_id = ?, session_id = ?,
         jsonl_path = ?, prompt = ?, no_loop = ?, check_sent_at = ?,
         updated_at = ?
-      WHERE name = ? AND role = 'deck' AND status != 'exited'
+      WHERE ${whereCol} = ? AND role = 'deck' AND status != 'exited'
     `).run(
       updated.status, updated.mode, updated.dir, updated.paneId,
       updated.sessionId ?? null, updated.jsonlPath ?? null,
       updated.prompt ?? null, updated.noLoop ? 1 : 0,
       updated.checkSentAt ?? null, updated.updatedAt,
-      deck.name
+      whereVal
     )
 
     Object.assign(deck, patch)
@@ -82,10 +85,12 @@ export class BoothState extends EventEmitter {
     const deck = this.decks.get(deckId)
     if (!deck) return
     const now = Date.now()
+    const whereCol = deck.sessionId ? 'session_id' : 'name'
+    const whereVal = deck.sessionId ?? deck.name
     this.db.prepare(`
       UPDATE sessions SET status = 'exited', updated_at = ?
-      WHERE name = ? AND role = 'deck' AND status != 'exited'
-    `).run(now, deck.name)
+      WHERE ${whereCol} = ? AND role = 'deck' AND status != 'exited'
+    `).run(now, whereVal)
     this.decks.delete(deckId)
     this.emit('deck:removed', deck)
   }
@@ -132,10 +137,12 @@ export class BoothState extends EventEmitter {
     const deck = this.decks.get(deckId)
     if (!deck) return
     const now = Date.now()
+    const whereCol = deck.sessionId ? 'session_id' : 'name'
+    const whereVal = deck.sessionId ?? deck.name
     this.db.prepare(`
       UPDATE sessions SET pane_id = NULL, updated_at = ?
-      WHERE name = ? AND role = 'deck' AND status != 'exited'
-    `).run(now, deck.name)
+      WHERE ${whereCol} = ? AND role = 'deck' AND status != 'exited'
+    `).run(now, whereVal)
     deck.paneId = ''
     deck.updatedAt = now
   }
@@ -147,10 +154,12 @@ export class BoothState extends EventEmitter {
     const prev = deck.status
     const now = Date.now()
 
+    const whereCol = deck.sessionId ? 'session_id' : 'name'
+    const whereVal = deck.sessionId ?? deck.name
     this.db.prepare(`
       UPDATE sessions SET status = ?, updated_at = ?
-      WHERE name = ? AND role = 'deck' AND status != 'exited'
-    `).run(status, now, deck.name)
+      WHERE ${whereCol} = ? AND role = 'deck' AND status != 'exited'
+    `).run(status, now, whereVal)
 
     deck.status = status
     deck.updatedAt = now
@@ -651,7 +660,7 @@ interface OldArchiveRow {
 
 function rowToDeckInfo(row: SessionRow): DeckInfo {
   return {
-    id: `deck-${row.name}`,
+    id: row.session_id ?? `deck-${row.name}`,
     name: row.name,
     status: row.status as DeckStatus,
     mode: (row.mode ?? 'auto') as DeckMode,

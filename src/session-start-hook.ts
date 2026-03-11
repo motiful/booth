@@ -34,11 +34,11 @@ async function main(): Promise<void> {
   if (!sessionId || !transcriptPath) return
 
   // Check booth identity from environment
-  const deckId = process.env.BOOTH_DECK_ID
+  const boothSessionId = process.env.BOOTH_DECK_ID
   const role = process.env.BOOTH_ROLE
 
   // Not a booth-managed session — skip
-  if (!deckId && !role) return
+  if (!boothSessionId && !role) return
 
   let projectRoot: string
   try {
@@ -55,9 +55,9 @@ async function main(): Promise<void> {
   try {
     await ipcRequest(projectRoot, {
       cmd: 'session-changed',
-      deckId: deckId || undefined,
+      sessionId: boothSessionId || undefined,
       role: role || undefined,
-      sessionId,
+      ccSessionId: sessionId,
       transcriptPath,
     })
   } catch {
