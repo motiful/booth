@@ -1,7 +1,7 @@
 import { findProjectRoot, deriveSocket, SESSION } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { killSession, hasSession } from '../../tmux.js'
-import { removeSessionEndHook, removeSessionStartHook } from '../../hooks.js'
+import { removeSessionEndHook, removeSessionStartHook, removePreCompactHook } from '../../hooks.js'
 
 export async function stopCommand(args: string[]): Promise<void> {
   if (process.env.BOOTH_ROLE === 'deck') {
@@ -33,5 +33,6 @@ export async function stopCommand(args: string[]): Promise<void> {
 
   removeSessionStartHook(projectRoot)
   removeSessionEndHook(projectRoot)
+  removePreCompactHook(projectRoot)
   console.log('[booth] stopped')
 }

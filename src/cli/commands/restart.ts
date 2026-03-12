@@ -1,7 +1,7 @@
 import { findProjectRoot, deriveSocket, SESSION } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { killSession, hasSession } from '../../tmux.js'
-import { removeSessionEndHook, removeSessionStartHook } from '../../hooks.js'
+import { removeSessionEndHook, removeSessionStartHook, removePreCompactHook } from '../../hooks.js'
 import { ensureDaemonAndSession, launchDJ, attachSession } from './start.js'
 import { resumeAllDecks } from './resume.js'
 
@@ -36,6 +36,7 @@ export async function restartCommand(args: string[]): Promise<void> {
 
   removeSessionStartHook(projectRoot)
   removeSessionEndHook(projectRoot)
+  removePreCompactHook(projectRoot)
 
   // Phase 2: Setup daemon + tmux
   await ensureDaemonAndSession(projectRoot)

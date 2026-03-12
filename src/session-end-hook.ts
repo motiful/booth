@@ -4,6 +4,7 @@ import Database from 'better-sqlite3'
 import { findProjectRoot, boothPath, timestampedReportPath, reportsDir, DB_FILE } from './constants.js'
 import { findLatestReport, readReportStatus } from './daemon/report.js'
 import { ipcRequest } from './ipc.js'
+import { extractTextContent } from './transcript-utils.js'
 
 interface SessionEndInput {
   session_id?: string
@@ -24,18 +25,6 @@ function readStdin(): string {
   } catch {
     return ''
   }
-}
-
-function extractTextContent(message: { content?: string | Array<{ type: string; text?: string }> }): string {
-  if (!message?.content) return ''
-  // User messages: content is a plain string
-  if (typeof message.content === 'string') return message.content
-  // Assistant messages: content is an array of blocks
-  if (!Array.isArray(message.content)) return ''
-  return message.content
-    .filter(block => block.type === 'text' && block.text)
-    .map(block => block.text!)
-    .join('\n')
 }
 
 function parseJsonlTail(jsonlPath: string): { userText: string; assistantText: string } {
