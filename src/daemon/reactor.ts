@@ -298,6 +298,14 @@ export class Reactor {
     const working = decks.filter(d => d.status === 'working').map(d => d.name)
     const idle = decks.filter(d => d.status === 'idle' && !this.holdingNotified.has(d.id)).map(d => d.name)
 
+    // Mark idle hold decks as notified — they appear in THIS beat but not future ones.
+    // Cleared on deck working transition (onDeckWorking), so re-idle triggers a fresh beat.
+    for (const d of decks) {
+      if (d.status === 'idle' && d.mode === 'hold' && !this.holdingNotified.has(d.id)) {
+        this.holdingNotified.add(d.id)
+      }
+    }
+
     const checkingNormal: string[] = []
     const checkingStale: string[] = []
     for (const d of decks) {
