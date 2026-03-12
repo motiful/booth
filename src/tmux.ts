@@ -133,148 +133,207 @@ function cleanEditorState(target: string): void {
   } catch {}
 }
 
-// Per-pane promise queue — serializes protectedSendToCC calls to the same pane
-const paneQueues = new Map<string, Promise<void>>()
+// --- Per-pane batch queue ---
+// Batches multiple sends to the same pane: saves user input ONCE before the
+// first message, restores ONCE after the last. Eliminates the input-flicker
+// problem where N serialized sends caused N save/restore cycles.
 
-export function protectedSendToCC(socket: string, target: string, text: string): Promise<void> {
-  const prev = paneQueues.get(target) ?? Promise.resolve()
-  const next = prev.then(() => protectedSendToCCImpl(socket, target, text))
-    // Ensure queue continues even if this call fails
-    .catch(err => { logger.error(`[booth-tmux] protectedSend error: ${err}`); throw err })
-  // Always resolve the queue entry (don't let a rejection block subsequent sends)
-  paneQueues.set(target, next.catch(() => {}))
-  return next
+interface QueueEntry {
+  text: string
+  resolve: () => void
+  reject: (err: Error) => void
 }
 
-async function protectedSendToCCImpl(socket: string, target: string, text: string): Promise<void> {
-  const preview = text.slice(0, 50) + (text.length > 50 ? '...' : '')
-  logger.info(`[booth-tmux] protectedSend start target=${target} text="${preview}"`)
+interface PaneSendQueue {
+  entries: QueueEntry[]
+  draining: boolean
+}
 
-  // Clean any stale inject/restore state (preserves editor-pid)
-  cleanEditorState(target)
+const paneQueues = new Map<string, PaneSendQueue>()
 
-  // 1. If user has Ctrl+G editor open, wait for them to close it naturally.
-  //    CC is fully blocked during execSync — no point injecting until it resumes.
-  //    Async wait — daemon event loop stays responsive.
-  if (isInEditorMode(target)) {
-    if (!await waitForEditorClose(target)) {
-      throw new Error('Timeout waiting for user to close Ctrl+G editor')
+export function protectedSendToCC(socket: string, target: string, text: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let queue = paneQueues.get(target)
+    if (!queue) {
+      queue = { entries: [], draining: false }
+      paneQueues.set(target, queue)
     }
-    // CC resumes after execSync returns — wait for prompt
-    if (!await waitForPrompt(socket, target, 10_000)) {
-      logger.warn('[booth-tmux] CC did not show prompt after editor close')
+    queue.entries.push({ text, resolve, reject })
+    if (!queue.draining) {
+      drainPaneQueue(socket, target)
     }
-    await delay(300)
-  }
+  })
+}
 
-  // 2. Handle copy-mode
-  const wasCopyMode = isInCopyMode(socket, target)
+async function drainPaneQueue(socket: string, target: string): Promise<void> {
+  const queue = paneQueues.get(target)
+  if (!queue || queue.draining || queue.entries.length === 0) return
+  queue.draining = true
+
+  logger.info(`[booth-tmux] drain start target=${target} queued=${queue.entries.length}`)
+
+  const sd = stateDir(target)
+  const paneSlug = target.replace('%', 'p')
+  const savedInputPath = join(tmpdir(), `booth-saved-${Date.now()}-${paneSlug}.md`)
+  const cleanupPaths: string[] = []
+  let batchIndex = 0
+
+  // Copy-mode state (saved once, restored once)
+  let wasCopyMode = false
   let savedScrollPos = -1
   let savedHistorySize = -1
-  if (wasCopyMode) {
-    logger.debug('[booth-tmux] copy-mode detected, saving scroll state')
-    const info = tmuxSafe(socket, 'display-message', '-t', target,
-      '-p', '#{scroll_position}:#{history_size}')
-    if (info.ok) {
-      const [sp, hs] = info.output.split(':').map(s => parseInt(s, 10))
-      if (!Number.isNaN(sp) && !Number.isNaN(hs)) {
-        savedScrollPos = sp
-        savedHistorySize = hs
-      }
-    }
-    tmux(socket, 'send-keys', '-t', target, 'q')
-    await delay(150)
-  }
-
-  // 3-7: Inject + restore, wrapped in try/finally to guarantee cleanup
-  const savedInputPath = join(tmpdir(), `booth-saved-${Date.now()}.md`)
-  const injectPath = join(tmpdir(), `booth-inject-${Date.now()}.md`)
-  let restored = false
 
   try {
-    writeFileSync(injectPath, text)
+    // --- Pre-batch setup ---
+    cleanEditorState(target)
 
-    // 3. Write inject state for editor-proxy.sh
-    const sd = stateDir(target)
-    mkdirSync(sd, { recursive: true })
-    writeFileSync(join(sd, 'action'), 'inject')
-    writeFileSync(join(sd, 'save-path'), savedInputPath)
-    writeFileSync(join(sd, 'inject-file'), injectPath)
-
-    // 4. Ctrl+G → proxy saves user input + writes injected message
-    tmux(socket, 'send-keys', '-t', target, 'C-g')
-
-    // 4a. Wait for editor-proxy to consume the action file.
-    // A fixed delay is unreliable — if CC's event loop is busy, Ctrl+G processing
-    // is delayed and the old 300ms window expires before editor-proxy runs.
-    // Polling the action file gives us positive confirmation.
-    const actionFile = join(sd, 'action')
-    if (!await waitForFileGone(actionFile, 5_000, 50)) {
-      throw new Error('Editor proxy did not execute within 5s — Ctrl+G may not have reached CC')
+    // Wait for user's Ctrl+G editor to close before injecting
+    if (isInEditorMode(target)) {
+      if (!await waitForEditorClose(target)) {
+        throw new Error('Timeout waiting for user to close Ctrl+G editor')
+      }
+      if (!await waitForPrompt(socket, target, 10_000)) {
+        logger.warn('[booth-tmux] CC did not show prompt after editor close')
+      }
+      await delay(300)
     }
 
-    // 4b. Action file consumed = editor-proxy ran inside CC's execSync.
-    // CC still needs to: read temp file → update state → re-render input.
-    // 500ms is generous for this synchronous post-execSync work.
-    await delay(500)
-
-    // 5. Submit the injected message.
-    //    Enter triggers chat:submit at the component level, works in all
-    //    vim modes (INSERT/NORMAL). No Escape needed — CC keybindings doc:
-    //    "Vim mode handles input at the text input level;
-    //     Keybindings handle actions at the component level."
-    //    NOTE: chat:submit cannot be rebound to custom keys (CC bug #24914).
-    tmux(socket, 'send-keys', '-t', target, 'Enter')
-
-    // 6. Wait for CC to process and show new prompt.
-    const prompted = await waitForPrompt(socket, target, 30_000)
-    if (!prompted) {
-      logger.warn('[booth-tmux] timeout waiting for prompt after injection')
-      return  // finally block still runs cleanup
+    // Handle copy-mode
+    wasCopyMode = isInCopyMode(socket, target)
+    if (wasCopyMode) {
+      logger.debug('[booth-tmux] copy-mode detected, saving scroll state')
+      const info = tmuxSafe(socket, 'display-message', '-t', target,
+        '-p', '#{scroll_position}:#{history_size}')
+      if (info.ok) {
+        const [sp, hs] = info.output.split(':').map(s => parseInt(s, 10))
+        if (!Number.isNaN(sp) && !Number.isNaN(hs)) {
+          savedScrollPos = sp
+          savedHistorySize = hs
+        }
+      }
+      tmux(socket, 'send-keys', '-t', target, 'q')
+      await delay(150)
     }
-    await delay(300)
 
-    // 7. Restore user input if there was any
+    // --- Batch send loop ---
+    // First message saves real user input; subsequent messages use throwaway save paths.
+    while (queue.entries.length > 0) {
+      const entry = queue.entries.shift()!
+      const preview = entry.text.slice(0, 50) + (entry.text.length > 50 ? '...' : '')
+      logger.info(`[booth-tmux] drain[${batchIndex}] target=${target} text="${preview}"`)
+
+      const injectPath = join(tmpdir(), `booth-inject-${Date.now()}-${batchIndex}.md`)
+      cleanupPaths.push(injectPath)
+
+      try {
+        writeFileSync(injectPath, entry.text)
+        mkdirSync(sd, { recursive: true })
+        writeFileSync(join(sd, 'action'), 'inject')
+        writeFileSync(join(sd, 'inject-file'), injectPath)
+
+        if (batchIndex === 0) {
+          // First message: save real user input to the persistent path
+          writeFileSync(join(sd, 'save-path'), savedInputPath)
+        } else {
+          // Subsequent: editor-proxy requires save-path, but we discard the content
+          const throwaway = join(tmpdir(), `booth-discard-${Date.now()}-${batchIndex}.md`)
+          writeFileSync(join(sd, 'save-path'), throwaway)
+          cleanupPaths.push(throwaway)
+        }
+
+        // Ctrl+G → editor-proxy saves input + writes injected message
+        tmux(socket, 'send-keys', '-t', target, 'C-g')
+
+        // Wait for editor-proxy to consume the action file
+        if (!await waitForFileGone(join(sd, 'action'), 5_000, 50)) {
+          throw new Error('Editor proxy did not execute within 5s — Ctrl+G may not have reached CC')
+        }
+        // CC post-execSync: read temp file → update state → re-render
+        await delay(500)
+
+        // Submit the injected message
+        tmux(socket, 'send-keys', '-t', target, 'Enter')
+
+        // Wait for CC to process and show new prompt
+        const prompted = await waitForPrompt(socket, target, 30_000)
+        if (!prompted) {
+          logger.warn(`[booth-tmux] timeout waiting for prompt (drain[${batchIndex}])`)
+        }
+        await delay(300)
+
+        entry.resolve()
+        logger.info(`[booth-tmux] drain[${batchIndex}] sent`)
+      } catch (err) {
+        entry.reject(err as Error)
+        logger.error(`[booth-tmux] drain[${batchIndex}] failed: ${err}`)
+        // If pane is dead, reject remaining entries and stop
+        const paneCheck = tmuxSafe(socket, 'display-message', '-t', target, '-p', '#{pane_pid}')
+        if (!paneCheck.ok) {
+          const remaining = queue.entries.splice(0)
+          for (const e of remaining) e.reject(new Error(`Pane ${target} is dead`))
+          break
+        }
+      } finally {
+        cleanEditorState(target)
+      }
+
+      batchIndex++
+    }
+
+    // --- Post-batch: restore user input ONCE ---
     if (existsSync(savedInputPath)) {
       const saved = readFileSync(savedInputPath, 'utf-8')
       if (saved.length > 0) {
-        mkdirSync(sd, { recursive: true })
-        writeFileSync(join(sd, 'action'), 'restore')
-        writeFileSync(join(sd, 'restore-path'), savedInputPath)
-        const restoreActionFile = join(sd, 'action')
-        tmux(socket, 'send-keys', '-t', target, 'C-g')
-        await waitForFileGone(restoreActionFile, 5_000, 50)
-        await delay(200)
-        restored = true
-        logger.debug('[booth-tmux] user input restored')
+        try {
+          mkdirSync(sd, { recursive: true })
+          writeFileSync(join(sd, 'action'), 'restore')
+          writeFileSync(join(sd, 'restore-path'), savedInputPath)
+          tmux(socket, 'send-keys', '-t', target, 'C-g')
+          await waitForFileGone(join(sd, 'action'), 5_000, 50)
+          await delay(200)
+          logger.debug('[booth-tmux] user input restored (batch)')
+        } catch (err) {
+          logger.error(`[booth-tmux] batch restore failed: ${err}`)
+        }
       }
     }
+
+    // Restore copy-mode + scroll position
+    if (wasCopyMode) {
+      await delay(200)
+      tmuxSafe(socket, 'copy-mode', '-t', target)
+      if (savedScrollPos >= 0 && savedHistorySize >= 0) {
+        const newInfo = tmuxSafe(socket, 'display-message', '-t', target,
+          '-p', '#{history_size}')
+        const newHs = newInfo.ok ? parseInt(newInfo.output, 10) : NaN
+        const delta = !Number.isNaN(newHs) ? newHs - savedHistorySize : 0
+        const scrollLines = savedScrollPos + delta
+        if (scrollLines > 0) {
+          tmuxSafe(socket, 'send-keys', '-t', target,
+            '-X', '-N', String(scrollLines), 'scroll-up')
+        }
+      }
+      logger.debug('[booth-tmux] copy-mode restored')
+    }
+  } catch (err) {
+    // Batch-level error (e.g., setup failed) — reject all remaining entries
+    logger.error(`[booth-tmux] drain batch error: ${err}`)
+    const remaining = queue.entries.splice(0)
+    for (const e of remaining) e.reject(err as Error)
   } finally {
-    // ALWAYS clean up — prevents stale state poisoning future Ctrl+G
+    // Cleanup all temp files
     cleanEditorState(target)
-    try { unlinkSync(injectPath) } catch {}
-    if (!restored) {
-      try { unlinkSync(savedInputPath) } catch {}
+    for (const p of cleanupPaths) {
+      try { unlinkSync(p) } catch {}
+    }
+    try { unlinkSync(savedInputPath) } catch {}
+
+    logger.info(`[booth-tmux] drain done target=${target} processed=${batchIndex}`)
+    queue.draining = false
+
+    // If more items arrived during processing, start a new batch
+    if (queue.entries.length > 0) {
+      setTimeout(() => drainPaneQueue(socket, target), 0)
     }
   }
-
-  // 8. Restore copy-mode + scroll position
-  if (wasCopyMode) {
-    await delay(200)
-    tmuxSafe(socket, 'copy-mode', '-t', target)
-    if (savedScrollPos >= 0 && savedHistorySize >= 0) {
-      const newInfo = tmuxSafe(socket, 'display-message', '-t', target,
-        '-p', '#{history_size}')
-      const newHs = newInfo.ok ? parseInt(newInfo.output, 10) : NaN
-      const delta = !Number.isNaN(newHs) ? newHs - savedHistorySize : 0
-      const scrollLines = savedScrollPos + delta
-      if (scrollLines > 0) {
-        tmuxSafe(socket, 'send-keys', '-t', target,
-          '-X', '-N', String(scrollLines), 'scroll-up')
-      }
-    }
-    logger.debug('[booth-tmux] copy-mode restored')
-  }
-
-  logger.info(`[booth-tmux] protectedSend done target=${target} restored=${restored}`)
 }
