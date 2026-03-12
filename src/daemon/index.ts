@@ -26,6 +26,27 @@ const JSONL_WAIT_MAX_ATTEMPTS = 60
 const GUARDIAN_MAX_RETRIES = 3
 const SHELL_NAMES = new Set(['zsh', 'bash', 'sh', 'fish', 'dash', 'ksh', 'tcsh', 'csh'])
 
+function buildCompactRecoveryPrompt(
+  role: 'dj' | 'deck', name: string, mode?: string, filePath?: string
+): string {
+  const lines: string[] = []
+  if (role === 'dj') {
+    lines.push(`[booth-compact-recovery] You are booth's DJ (project manager). Context compaction just happened.`)
+  } else {
+    lines.push(`[booth-compact-recovery] You are booth deck "${name}" (mode: ${mode ?? 'auto'}). Context compaction just happened.`)
+  }
+  if (filePath) {
+    lines.push(`Read ${filePath} first — it contains the last 3 conversation turns before compaction. Delete the file after reading.`)
+    lines.push(`Prioritize understanding those turns to recover your working context.`)
+  }
+  if (role === 'dj') {
+    lines.push(`If unsure about the current plan, read .booth/plan.md. If unsure about deck status, run \`booth ls\`.`)
+  } else {
+    lines.push(`If unsure about your current task, run \`booth status ${name}\` to check your original goal.`)
+  }
+  return lines.join('\n')
+}
+
 export class Daemon {
   private projectRoot: string
   private socket: string
@@ -658,24 +679,8 @@ export class Daemon {
         if (!target) return { error: 'sessionId required for deck compact-prepare' }
 
         // Build recovery prompt
-        let prompt: string
-        if (role === 'dj') {
-          prompt = [
-            `[booth-compact-recovery] You are booth's DJ (project manager). Context compaction just happened.`,
-            `Read ${filePath} first — it contains the last 3 conversation turns before compaction. Delete the file after reading.`,
-            `Prioritize understanding those turns to recover your working context.`,
-            `If unsure about the current plan, read .booth/plan.md. If unsure about deck status, run \`booth ls\`.`,
-          ].join('\n')
-        } else {
-          const deck = this.state.getDeck(target)
-          const mode = deck?.mode ?? 'auto'
-          prompt = [
-            `[booth-compact-recovery] You are booth deck "${name}" (mode: ${mode}). Context compaction just happened.`,
-            `Read ${filePath} first — it contains the last 3 conversation turns before compaction. Delete the file after reading.`,
-            `Prioritize understanding those turns to recover your working context.`,
-            `If unsure about your current task, run \`booth status ${name}\` to check your original goal.`,
-          ].join('\n')
-        }
+        const deckForPrompt = role !== 'dj' ? this.state.getDeck(target) : undefined
+        const prompt = buildCompactRecoveryPrompt(role === 'dj' ? 'dj' : 'deck', name!, deckForPrompt?.mode, filePath!)
 
         // Fire-and-forget: sendMessage in background, reply IPC immediately.
         // This ensures the hook exits → CC starts compact → sendMessage's Ctrl+G
@@ -687,6 +692,41 @@ export class Daemon {
         }).catch(err => logger.error(`[booth-daemon] compact-prepare sendMessage threw: ${err}`))
 
         logger.info(`[booth-daemon] compact-prepare: ${target} → sendMessage (filePath: ${filePath})`)
+        return { ok: true }
+      }
+      case 'compact-recover': {
+        const name = typeof msg.name === 'string' && msg.name ? msg.name : null
+
+        let targetId: string
+        let deckMode: string | undefined
+        let targetName: string
+        if (!name || name === 'dj') {
+          // Target DJ
+          const dj = this.state.getDj()
+          if (!dj || dj.status === 'exited') return { error: 'DJ not active' }
+          targetId = 'dj'
+          targetName = 'DJ'
+        } else {
+          // Target deck by name — find in active decks
+          const allDecks = this.state.getAllDecks()
+          const deck = allDecks.find(d => d.name === name && d.status !== 'exited')
+          if (!deck) return { error: `No active deck named "${name}"` }
+          targetId = deck.id
+          targetName = deck.name
+          deckMode = deck.mode
+        }
+
+        const prompt = buildCompactRecoveryPrompt(
+          targetId === 'dj' ? 'dj' : 'deck', targetName, deckMode
+        )
+
+        sendMessage(this.socket, this.state, targetId, prompt).then(result => {
+          if (!result.ok) {
+            logger.warn(`[booth-daemon] compact-recover sendMessage failed: ${result.error}`)
+          }
+        }).catch(err => logger.error(`[booth-daemon] compact-recover sendMessage threw: ${err}`))
+
+        logger.info(`[booth-daemon] compact-recover: sent recovery to "${targetName}"`)
         return { ok: true }
       }
       case 'reload':

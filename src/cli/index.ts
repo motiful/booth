@@ -18,6 +18,7 @@ import { reportsCommand } from './commands/reports.js'
 import { resumeCommand, resumeAllDecks, readResumableDecks, readDjSessionIdFromState } from './commands/resume.js'
 import { restartCommand } from './commands/restart.js'
 import { initCommand } from './commands/init.js'
+import { compactRecoverCommand } from './commands/compact-recover.js'
 import { isInitialized } from '../skills.js'
 
 const HELP = `
@@ -46,6 +47,8 @@ Usage:
   booth reports <name> Print a report to stdout
   booth reports open <name>  Open a report in editor
   booth reports mark-read <name>  Mark a report as read
+  booth compact-recover        Send compact-recovery message to DJ
+  booth compact-recover <name> Send compact-recovery message to a deck
   booth config <cmd>   Manage config (set/get/list)
   booth --help         Show this help
 
@@ -200,6 +203,9 @@ export async function run(args: string[]): Promise<void> {
         break
       case 'reports':
         await reportsCommand(rest)
+        break
+      case 'compact-recover':
+        await compactRecoverCommand(rest)
         break
       case 'config':
         await configCommand(rest)
