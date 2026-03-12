@@ -39,12 +39,12 @@ export class BoothState extends EventEmitter {
   registerDeck(info: DeckInfo): void {
     const now = Date.now()
     this.db.prepare(`
-      INSERT INTO sessions (name, role, lifecycle, status, mode, dir, pane_id, session_id, jsonl_path, prompt, no_loop, check_sent_at, created_at, updated_at)
-      VALUES (?, 'deck', 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (name, role, lifecycle, status, mode, dir, pane_id, session_id, jsonl_path, prompt, no_loop, worktree_path, check_sent_at, created_at, updated_at)
+      VALUES (?, 'deck', 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       info.name, info.status, info.mode, info.dir, info.paneId,
       info.sessionId ?? null, info.jsonlPath ?? null, info.prompt ?? null,
-      info.noLoop ? 1 : 0, info.checkSentAt ?? null,
+      info.noLoop ? 1 : 0, info.worktreePath ?? null, info.checkSentAt ?? null,
       info.createdAt ?? now, info.updatedAt ?? now
     )
     this.decks.set(info.id, { ...info })
@@ -63,13 +63,14 @@ export class BoothState extends EventEmitter {
     this.db.prepare(`
       UPDATE sessions SET
         status = ?, mode = ?, dir = ?, pane_id = ?, session_id = ?,
-        jsonl_path = ?, prompt = ?, no_loop = ?, check_sent_at = ?,
-        updated_at = ?
+        jsonl_path = ?, prompt = ?, no_loop = ?, worktree_path = ?,
+        check_sent_at = ?, updated_at = ?
       WHERE ${whereCol} = ? AND role = 'deck' AND status != 'exited'
     `).run(
       updated.status, updated.mode, updated.dir, updated.paneId,
       updated.sessionId ?? null, updated.jsonlPath ?? null,
       updated.prompt ?? null, updated.noLoop ? 1 : 0,
+      updated.worktreePath ?? null,
       updated.checkSentAt ?? null, updated.updatedAt,
       whereVal
     )
@@ -379,6 +380,13 @@ export class BoothState extends EventEmitter {
       );
     `)
 
+    // Add worktree_path column (worktree isolation — Phase A2)
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN worktree_path TEXT`)
+    } catch {
+      // Column already exists — safe to ignore
+    }
+
     // Step 0: Identity refactor schema prep
     // Index session_id for future lookups (unique among active sessions)
     this.db.exec(`
@@ -414,6 +422,7 @@ export class BoothState extends EventEmitter {
         jsonl_path  TEXT,
         prompt      TEXT,
         no_loop     INTEGER DEFAULT 0,
+        worktree_path TEXT,
         check_sent_at INTEGER,
         report_status TEXT,
         created_at  INTEGER NOT NULL,
@@ -624,6 +633,7 @@ interface SessionRow {
   jsonl_path: string | null
   prompt: string | null
   no_loop: number
+  worktree_path: string | null
   check_sent_at: number | null
   report_status: string | null
   created_at: number
@@ -674,6 +684,7 @@ function rowToDeckInfo(row: SessionRow): DeckInfo {
     jsonlPath: row.jsonl_path ?? undefined,
     prompt: row.prompt ?? undefined,
     noLoop: row.no_loop === 1 ? true : undefined,
+    worktreePath: row.worktree_path ?? undefined,
     checkSentAt: row.check_sent_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

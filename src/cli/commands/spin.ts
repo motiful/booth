@@ -2,9 +2,10 @@ import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { findProjectRoot, deriveSocket, generateSessionId, jsonlPathForSession } from '../../constants.js'
+import { findProjectRoot, deriveSocket, generateSessionId, ccProjectsDir } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { tmux, sleepMs } from '../../tmux.js'
+import { createWorktree } from '../../worktree.js'
 import type { DeckInfo, DeckMode } from '../../types.js'
 
 export async function spinCommand(args: string[]): Promise<void> {
@@ -37,26 +38,33 @@ export async function spinCommand(args: string[]): Promise<void> {
     process.exit(1)
   }
 
-  // Pre-generate session ID — JSONL path is deterministic
-  const sessionId = generateSessionId()
-  const jsonlPath = jsonlPathForSession(projectRoot, sessionId)
+  // Create git worktree for isolation
+  const wtPath = createWorktree(projectRoot, name)
 
-  // Create shell window — CC needs a shell env (direct exec exits immediately).
+  // Pre-generate session ID — JSONL path is deterministic.
+  // CC runs in the worktree, so it will encode the worktree path for JSONL storage.
+  const sessionId = generateSessionId()
+  const wtProjectsDir = ccProjectsDir(wtPath)
+  const jsonlPath = join(wtProjectsDir, `${sessionId}.jsonl`)
+
+  // Create shell window in the worktree directory.
+  // -c sets the starting directory for the new window.
   // -P -F gets paneId atomically in one call.
   const paneId = tmux(socket, 'new-window', '-d', '-a', '-t', 'dj', '-n', name,
-    '-P', '-F', '#{pane_id}')
+    '-c', wtPath, '-P', '-F', '#{pane_id}')
 
   const deck: DeckInfo = {
     id: sessionId,
     name,
     status: 'working',
     mode,
-    dir: projectRoot,
+    dir: wtPath,
     paneId,
     sessionId,
     jsonlPath,
     prompt: prompt || undefined,
     noLoop: noLoop || undefined,
+    worktreePath: wtPath,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
@@ -69,10 +77,9 @@ export async function spinCommand(args: string[]): Promise<void> {
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
   const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
 
-  // Launch CC with prompt as CLI argument via temp file.
-  // The shell command reads the file, deletes it, then launches CC.
-  // This guarantees the file is read before cleanup — no timing dependency.
-  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${sessionId}" && export BOOTH_ROLE=deck && export BOOTH_DECK_NAME="${name}"`
+  // BOOTH_PROJECT_ROOT tells findProjectRoot() in hooks/CLI to use the main repo,
+  // not the worktree path. This ensures IPC, socket, and .booth/ paths resolve correctly.
+  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${sessionId}" && export BOOTH_ROLE=deck && export BOOTH_DECK_NAME="${name}" && export BOOTH_PROJECT_ROOT="${projectRoot}"`
 
   sleepMs(500)
   if (prompt) {
@@ -86,5 +93,5 @@ export async function spinCommand(args: string[]): Promise<void> {
 
   const modeLabel = mode === 'auto' ? '' : ` [${mode}]`
   const loopLabel = noLoop ? ' [no-loop]' : ''
-  console.log(`[booth] deck "${name}" spun up${modeLabel}${loopLabel} (pane: ${paneId})`)
+  console.log(`[booth] deck "${name}" spun up${modeLabel}${loopLabel} (pane: ${paneId}, worktree: ${wtPath})`)
 }

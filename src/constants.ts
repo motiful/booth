@@ -13,6 +13,12 @@ export const DB_FILE = 'booth.db'
 export const REPORTS_DIR = 'reports'
 
 export function findProjectRoot(from: string = process.cwd()): string {
+  // BOOTH_PROJECT_ROOT is set in worktree deck environments to point back
+  // to the main project root. This ensures all booth operations (IPC, paths,
+  // socket derivation) use the main project, not the worktree path.
+  const envRoot = process.env.BOOTH_PROJECT_ROOT
+  if (envRoot) return resolve(envRoot)
+
   let dir = resolve(from)
   while (true) {
     // .booth is the strongest anchor — this IS a booth project

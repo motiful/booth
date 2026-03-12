@@ -6,8 +6,11 @@ import { BoothState } from './state.js'
 import { Reactor } from './reactor.js'
 import { initBoothDir, ipcSocketPath, deriveSocket, logsDir, boothPath, SESSION } from '../constants.js'
 import { killSession, hasSession, tmuxSafe } from '../tmux.js'
+import { resolve, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { sendMessage } from './send-message.js'
 import { initLogger, logger } from './logger.js'
+import { removeWorktree } from '../worktree.js'
 import type { DeckInfo, DeckMode, DeckStatus } from '../types.js'
 
 const VALID_MODES: DeckMode[] = ['auto', 'hold', 'live']
@@ -18,6 +21,10 @@ export interface DaemonOptions {
 
 const JSONL_WAIT_INTERVAL = 1_000
 const JSONL_WAIT_MAX_ATTEMPTS = 60
+
+// Guardian constants
+const GUARDIAN_MAX_RETRIES = 3
+const SHELL_NAMES = new Set(['zsh', 'bash', 'sh', 'fish', 'dash', 'ksh', 'tcsh', 'csh'])
 
 export class Daemon {
   private projectRoot: string
@@ -30,6 +37,9 @@ export class Daemon {
   private jsonlWaiters = new Map<string, ReturnType<typeof setInterval>>()
   private sessionChangeTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private paneLost = new Set<string>()
+  private guardianRetries = new Map<string, number>()
+  private ccExitSuspected = new Map<string, number>()
+  private guardianInProgress = new Set<string>()
   private reloading = false
   private shuttingDown = false
 
@@ -118,6 +128,7 @@ export class Daemon {
     this.stopWaiter(deckId)
     this.signal.unwatch(deckId)
     this.reactor.clearDeckTimers(deckId)
+    this.guardianCleanup(deckId)
   }
 
   getState(): BoothState {
@@ -373,6 +384,19 @@ export class Daemon {
         if (deck.paneId) {
           tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
         }
+
+        // Clean up worktree if the deck was using one
+        if (deck.worktreePath) {
+          try {
+            const { hadUnmergedCommits } = removeWorktree(this.projectRoot, deck.name)
+            if (hadUnmergedCommits) {
+              logger.warn(`[booth-daemon] deck "${deck.name}" has unmerged commits on branch booth/${deck.name}`)
+            }
+          } catch (err) {
+            logger.error(`[booth-daemon] worktree cleanup failed for "${deck.name}": ${err}`)
+          }
+        }
+
         this.removeDeck(sessionId)
         logger.info(`[booth-daemon] deck "${deck.name}" killed${force ? ' (forced)' : ''}`)
         return { ok: true }
@@ -401,10 +425,23 @@ export class Daemon {
           this.reactor.ingestReport(reportPath, deckName, 0, deck.sessionId)
         }
 
+        // Clean up worktree if the deck was using one
+        if (deck.worktreePath) {
+          try {
+            const { hadUnmergedCommits } = removeWorktree(this.projectRoot, deckName)
+            if (hadUnmergedCommits) {
+              logger.warn(`[booth-daemon] deck "${deckName}" has unmerged commits on branch booth/${deckName}`)
+            }
+          } catch (err) {
+            logger.error(`[booth-daemon] worktree cleanup failed for "${deckName}": ${err}`)
+          }
+        }
+
         // Cleanup — exit (single atomic step)
         this.stopWaiter(sessionId)
         this.signal.unwatch(sessionId)
         this.reactor.clearDeckTimers(sessionId)
+        this.guardianCleanup(sessionId)
         this.state.exitDeck(sessionId)
 
         this.reactor.notifyDj(`Deck "${deckName}" session exited (${reason}).`)
@@ -587,8 +624,19 @@ export class Daemon {
           this.stopWaiter(deck.id)
           this.signal.unwatch(deck.id)
           this.reactor.clearDeckTimers(deck.id)
+          if (deck.worktreePath) {
+            try {
+              removeWorktree(this.projectRoot, deck.name)
+            } catch (err) {
+              logger.error(`[booth-daemon] worktree cleanup failed for "${deck.name}": ${err}`)
+            }
+          }
         }
         this.state.exitAllDecks()
+        this.guardianRetries.clear()
+        this.ccExitSuspected.clear()
+        this.guardianInProgress.clear()
+        this.paneLost.clear()
 
         this.stopWaiter('dj')
         this.signal.unwatch('dj')
@@ -663,25 +711,55 @@ export class Daemon {
     this.healthTimer = setInterval(() => {
       const socket = this.socket
 
-      // Check deck panes — log loss but don't change status
+      // --- Guardian: deck pane + CC process liveness ---
       for (const deck of this.state.getAllDecks()) {
         if (!deck.paneId) continue
+        if (this.guardianInProgress.has(deck.id)) continue
+
         const check = tmuxSafe(socket, 'display-message', '-t', deck.paneId, '-p', '#{pane_pid}')
         if (!check.ok || !check.output.trim()) {
+          // Pane is dead — immediate recovery
           if (!this.paneLost.has(deck.id)) {
-            logger.warn(`[booth-daemon] deck "${deck.name}" pane gone — awaiting resume`)
+            logger.warn(`[booth-guardian] deck "${deck.name}" pane dead`)
             this.signal.unwatch(deck.id)
             this.paneLost.add(deck.id)
           }
+          this.guardianRecover(deck)
+          continue
+        }
+
+        // Pane alive — check if CC process is still running.
+        // CC runs as `node` inside the shell. When CC exits, the shell (zsh/bash)
+        // becomes the foreground process. `pane_current_command` reveals this.
+        const cmdCheck = tmuxSafe(socket, 'display-message', '-t', deck.paneId, '-p', '#{pane_current_command}')
+        const currentCmd = cmdCheck.ok ? cmdCheck.output.trim() : ''
+
+        if (currentCmd && SHELL_NAMES.has(currentCmd)) {
+          // CC exited but pane alive — two-strike detection to avoid startup false positives.
+          // First strike: mark suspicious. Second strike (next health check, 30s later): confirmed.
+          if (!this.ccExitSuspected.has(deck.id)) {
+            this.ccExitSuspected.set(deck.id, Date.now())
+            logger.info(`[booth-guardian] deck "${deck.name}" CC may have exited (cmd=${currentCmd})`)
+          } else {
+            logger.warn(`[booth-guardian] deck "${deck.name}" CC confirmed exited`)
+            this.ccExitSuspected.delete(deck.id)
+            this.signal.unwatch(deck.id)
+            this.guardianRecover(deck)
+          }
         } else {
-          // Pane recovered (e.g., after resume)
+          // CC is running — clear any suspicion and retries
+          this.ccExitSuspected.delete(deck.id)
           if (this.paneLost.has(deck.id)) {
             this.paneLost.delete(deck.id)
+          }
+          if (this.guardianRetries.has(deck.id)) {
+            logger.info(`[booth-guardian] deck "${deck.name}" recovered — clearing retries`)
+            this.guardianRetries.delete(deck.id)
           }
         }
       }
 
-      // Check DJ pane — also detect pane ID drift (stale ID pointing to wrong pane)
+      // --- DJ pane drift detection (unchanged) ---
       const dj = this.state.getDj()
       if (dj) {
         const paneResult = tmuxSafe(socket, 'display-message', '-t', `${SESSION}:0`, '-p', '#{pane_id}')
@@ -697,6 +775,122 @@ export class Daemon {
         }
       }
     }, 30_000)
+  }
+
+  // --- Guardian: auto-resume crashed decks ---
+
+  private guardianRecover(deck: DeckInfo): void {
+    if (this.guardianInProgress.has(deck.id)) return
+    this.guardianInProgress.add(deck.id)
+
+    // Live mode: user-managed, notify only
+    if (deck.mode === 'live') {
+      logger.info(`[booth-guardian] deck "${deck.name}" (live) — notify only`)
+      this.cleanupCrashedDeck(deck)
+      this.state.exitDeck(deck.id)
+      this.guardianCleanup(deck.id)
+      this.reactor.notifyDj(`Deck "${deck.name}" CC exited (live mode). Resume manually: booth resume ${deck.name}`)
+      return
+    }
+
+    // Must have sessionId to resume
+    if (!deck.sessionId) {
+      logger.warn(`[booth-guardian] deck "${deck.name}" has no sessionId — cannot auto-resume`)
+      this.cleanupCrashedDeck(deck)
+      this.state.exitDeck(deck.id)
+      this.guardianCleanup(deck.id)
+      this.reactor.notifyDj(`Deck "${deck.name}" CC crashed but has no session ID. Manual: booth resume ${deck.name}`)
+      return
+    }
+
+    // Retry limit
+    const retries = (this.guardianRetries.get(deck.id) ?? 0) + 1
+    this.guardianRetries.set(deck.id, retries)
+
+    if (retries > GUARDIAN_MAX_RETRIES) {
+      logger.error(`[booth-guardian] deck "${deck.name}" exceeded ${GUARDIAN_MAX_RETRIES} retries — giving up`)
+      this.cleanupCrashedDeck(deck)
+      this.state.exitDeck(deck.id)
+      this.guardianCleanup(deck.id)
+      this.reactor.notifyDj(`Deck "${deck.name}" crashed ${GUARDIAN_MAX_RETRIES}+ times. Auto-resume gave up. Manual: booth resume ${deck.name}`)
+      return
+    }
+
+    logger.info(`[booth-guardian] resuming "${deck.name}" (attempt ${retries}/${GUARDIAN_MAX_RETRIES})`)
+
+    // Kill old pane (may still be alive with shell prompt)
+    if (deck.paneId) {
+      tmuxSafe(this.socket, 'kill-pane', '-t', deck.paneId)
+    }
+
+    // Clean watchers/timers
+    this.signal.unwatch(deck.id)
+    this.stopWaiter(deck.id)
+    this.reactor.clearDeckTimers(deck.id)
+
+    // Create new tmux window (use worktree dir if deck had one)
+    const startDir = deck.worktreePath || deck.dir || this.projectRoot
+    const paneResult = tmuxSafe(this.socket, 'new-window', '-d', '-a', '-t', SESSION, '-n', deck.name, '-c', startDir, '-P', '-F', '#{pane_id}')
+    if (!paneResult.ok) {
+      logger.error(`[booth-guardian] failed to create pane for "${deck.name}" — infrastructure failure, retry not counted`)
+      this.guardianRetries.set(deck.id, retries - 1)
+      this.guardianInProgress.delete(deck.id)
+      return
+    }
+    const newPaneId = paneResult.output.trim()
+
+    // Update state (resume = UPDATE existing DB row, set status=working)
+    this.state.resumeDeck(deck.name, newPaneId)
+    this.paneLost.delete(deck.id)
+    this.ccExitSuspected.delete(deck.id)
+
+    // Re-watch JSONL (getDeck by id — stable across resume since session_id doesn't change)
+    const resumed = this.state.getDeck(deck.id)
+    if (resumed?.jsonlPath) {
+      this.watchOrWait(resumed.id, resumed.jsonlPath, 0)
+    }
+
+    // Set up env + launch CC (after 500ms for tmux window to settle)
+    const sessionId = deck.sessionId
+    const deckName = deck.name
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
+    const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
+    const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
+    // Set BOOTH_PROJECT_ROOT for worktree decks (same as spin.ts/resume.ts)
+    const projectRootExport = deck.worktreePath ? ` && export BOOTH_PROJECT_ROOT="${this.projectRoot}"` : ''
+    const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${sessionId}" && export BOOTH_ROLE=deck && export BOOTH_DECK_NAME="${deckName}"${projectRootExport}`
+
+    setTimeout(() => {
+      // Verify deck is still active (guard against race with session-end-hook)
+      const current = this.state.getDeck(deck.id)
+      if (!current) {
+        tmuxSafe(this.socket, 'kill-pane', '-t', newPaneId)
+        logger.info(`[booth-guardian] deck "${deckName}" exited during recovery — aborted`)
+      } else {
+        tmuxSafe(this.socket, 'send-keys', '-t', newPaneId,
+          `${envSetup} && claude --dangerously-skip-permissions --resume "${sessionId}"; reset`, 'Enter')
+        logger.info(`[booth-guardian] deck "${deckName}" resumed (pane: ${newPaneId}, attempt ${retries}/${GUARDIAN_MAX_RETRIES})`)
+      }
+      this.guardianInProgress.delete(deck.id)
+    }, 500)
+
+    this.reactor.notifyDj(`Deck "${deckName}" CC crashed — auto-resuming (attempt ${retries}/${GUARDIAN_MAX_RETRIES}).`)
+  }
+
+  private cleanupCrashedDeck(deck: DeckInfo): void {
+    if (deck.paneId) {
+      tmuxSafe(this.socket, 'kill-pane', '-t', deck.paneId)
+    }
+    this.signal.unwatch(deck.id)
+    this.stopWaiter(deck.id)
+    this.reactor.clearDeckTimers(deck.id)
+  }
+
+  private guardianCleanup(deckId: string): void {
+    this.guardianRetries.delete(deckId)
+    this.ccExitSuspected.delete(deckId)
+    this.guardianInProgress.delete(deckId)
+    this.paneLost.delete(deckId)
   }
 
   private gracefulReload(): void {
@@ -729,10 +923,17 @@ export class Daemon {
     logger.info('[booth-daemon] clean shutdown — marking all sessions exited')
     const socket = this.socket
 
-    // Kill deck panes before clearing cache (shutdown won't see them after exitAll)
+    // Kill deck panes and clean up worktrees
     for (const deck of this.state.getAllDecks()) {
       if (deck.paneId) tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
       this.signal.unwatch(deck.id)
+      if (deck.worktreePath) {
+        try {
+          removeWorktree(this.projectRoot, deck.name)
+        } catch (err) {
+          logger.error(`[booth-daemon] worktree cleanup failed for "${deck.name}": ${err}`)
+        }
+      }
     }
 
     this.state.exitAllDecks()

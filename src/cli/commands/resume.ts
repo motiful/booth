@@ -6,6 +6,7 @@ import { findProjectRoot, deriveSocket, boothPath, DB_FILE, SESSION } from '../.
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { tmux, sleepMs } from '../../tmux.js'
 import { ensureDaemonAndSession, launchDJ, attachSession } from './start.js'
+import { ensureWorktree } from '../../worktree.js'
 import type { DeckInfo, DeckMode } from '../../types.js'
 
 interface ResumableDeck {
@@ -16,6 +17,7 @@ interface ResumableDeck {
   jsonlPath: string
   prompt?: string
   noLoop?: boolean
+  worktreePath?: string
   createdAt: number
 }
 
@@ -31,6 +33,7 @@ interface SessionRow {
   jsonl_path: string | null
   prompt: string | null
   no_loop: number
+  worktree_path: string | null
   created_at: number
   updated_at: number
 }
@@ -44,6 +47,7 @@ function rowToResumable(row: SessionRow): ResumableDeck {
     jsonlPath: row.jsonl_path ?? '',
     prompt: row.prompt ?? undefined,
     noLoop: row.no_loop === 1 ? true : undefined,
+    worktreePath: row.worktree_path ?? undefined,
     createdAt: row.created_at,
   }
 }
@@ -177,8 +181,21 @@ async function resumeOne(
     return
   }
 
+  // Ensure worktree exists for the deck (re-creates if removed during shutdown)
+  let wtPath = entry.worktreePath
+  if (wtPath) {
+    try {
+      wtPath = ensureWorktree(projectRoot, entry.name)
+    } catch (err) {
+      console.warn(`[booth] worktree restore failed for "${entry.name}": ${err}`)
+      wtPath = undefined
+    }
+  }
+
+  // Start tmux window in the worktree directory (or project root as fallback)
+  const startDir = wtPath || projectRoot
   const paneId = tmux(socket, 'new-window', '-d', '-a', '-t', SESSION, '-n', entry.name,
-    '-P', '-F', '#{pane_id}')
+    '-c', startDir, '-P', '-F', '#{pane_id}')
 
   const mode = modeOverride ?? entry.mode
 
@@ -195,7 +212,9 @@ async function resumeOne(
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
   const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
 
-  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${entry.sessionId}" && export BOOTH_ROLE=deck && export BOOTH_DECK_NAME="${entry.name}"`
+  // Set BOOTH_PROJECT_ROOT for worktree decks (same as spin.ts)
+  const projectRootExport = wtPath ? ` && export BOOTH_PROJECT_ROOT="${projectRoot}"` : ''
+  const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${entry.sessionId}" && export BOOTH_ROLE=deck && export BOOTH_DECK_NAME="${entry.name}"${projectRootExport}`
 
   sleepMs(500)
   tmux(socket, 'send-keys', '-t', paneId,

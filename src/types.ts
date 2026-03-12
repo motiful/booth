@@ -14,6 +14,7 @@ export interface DeckInfo {
   jsonlPath?: string
   prompt?: string
   noLoop?: boolean
+  worktreePath?: string
   checkSentAt?: number
   createdAt: number
   updatedAt: number

@@ -162,23 +162,13 @@ Signal Delivery (single channel):
 
 **成功标准**：DJ 被 compact 后能在 30 秒内恢复工作状态——知道当前有哪些 deck、各自状态、当前 plan 进度、未处理的 alert。
 
-- [x] **PreCompact hook 防护** (463d1c4)
-  - `PreCompact` hook 调用 `booth compact-prepare` CLI → IPC 获取 daemon 权威状态快照 → 写入 `.booth/compact-state.json`
-  - hook 返回 exit 0 不阻塞 compact
-- [x] **CLAUDE.md Compact Instructions**（零代码）
-  - 在项目 CLAUDE.md 中添加 `# Compact Instructions` section
-  - 指导 compact 后读 `.booth/compact-state.json` 恢复状态 → `booth ls` 验证 → 恢复 beat 周期
-- [ ] **信号安全策略**
-  - **SQLite 已持久化的状态**（compact 安全）：deck 列表、deck 状态（working/idle/checking/exited）、DJ 状态、pane ID、session ID、JSONL 路径、report 内容及审阅状态、所有历史记录
-  - **仍在 CC 内存中的状态**（compact 会丢）：DJ 当前正在处理的 alert 文本、DJ 对 report 的评审进展、用户最近的指令和 DJ 的决策上下文、plan.md 的最新修改（如果还没写到磁盘）
-  - **结论**：daemon 侧几乎所有状态已被 SQLite 持久化。风险集中在 DJ CC 对话上下文中的"软状态"——这些通过 CLAUDE.md Compact Instructions + compact-state.json 恢复。**不需要第三条信号路径**——beat 作为周期性兜底已足够，compact 典型持续时间（秒到分钟级）远小于 beat cooldown（5 分钟起）
-  - 需调研：compact hang 住的极端情况（GitHub #19567）——归入 Guardian 范畴
-- [x] **StatusLine hook 调研** — CC 已支持 StatusLine hook，可在 TUI 底部显示 booth 状态。self-review 确认可用，优先级低但已知可行
-- [ ] **DJ Context 审计**
-  - 列出 DJ 正常运作依赖的所有上下文信息
-  - 逐一确认每项信息在 compact 后的恢复路径（SQLite / compact-state.json / CLAUDE.md / plan.md）
-  - 确认没有遗漏的"隐性依赖"——例如 DJ 是否隐式依赖对话历史中某些工具调用的结果
-  - 最终产出：一张"compact 覆盖度"表格，标注每项信息的恢复来源和恢复置信度
+- [x] **PreCompact hook 防护** (463d1c4) — compact 前抢救状态到 compact-state.json
+- [x] **CLAUDE.md Compact Instructions**（零代码）— compact 后指导读 compact-state.json 恢复
+- [x] **StatusLine hook 调研** — CC 已支持，优先级低但已知可行
+- [x] **信号安全策略结论** — daemon 侧几乎所有状态已被 SQLite 持久化，CC 对话"软状态"通过 compact-state.json + beat 兜底恢复，不需要第三条信号路径
+- [ ] ~~SessionStart(compact) hook~~ — **deferred**，等 CC 上游支持 PostCompact hook（GitHub #14258）
+- [ ] ~~DJ compact-recover CLI~~ — **deferred**，依赖 SessionStart hook
+- [ ] ~~DJ Context 审计~~ — **deferred**，信号安全策略已得出结论，审计优先级降低
 
 **A2. Worktree Isolation**（必做）
 
@@ -210,13 +200,15 @@ Signal Delivery (single channel):
 
 **成功标准**：两个 deck 可以同时修改同一个文件（不同区域），各自编译通过，最终自动合并到 main 无冲突。
 
-- [ ] 每个 deck 工作在独立 git worktree 中（利用 CC 原生 worktree 支持）
-- [ ] 确认 CC 在 worktree 中正常工作（CLAUDE.md、`.booth/` report 路径等）
-- [ ] deck 完成后 rebase + fast-forward merge 到 main
-- [ ] deck kill 时自动清理 worktree
+- [x] 每个 deck 工作在独立 git worktree 中 — `booth spin` 自动创建 `.booth/worktrees/<name>/` + `booth/<name>` 分支
+- [x] 确认 CC 在 worktree 中正常工作 — `.booth/` symlink + `.claude/settings.json` symlink + `node_modules/` symlink + `BOOTH_PROJECT_ROOT` env var
+- [x] deck kill 时自动清理 worktree — `git worktree remove --force` + 已合并分支自动删除，未合并分支保留并警告
+- [x] `deriveSocket()` 路径适配 — `BOOTH_PROJECT_ROOT` 使 `findProjectRoot()` 返回主仓库路径
+- [x] E2E 验证 — 两个 deck 同时修改 README.md，各自 commit，main 不受影响
+- [ ] deck 完成后 rebase + fast-forward merge 到 main（DJ 手动 `git merge booth/<name>` 即可）
 - [ ] 冲突处理机制（deck 尝试 rebase → 冲突时报告 DJ → DJ 决策：手动解决/放弃/重新 spin）
 
-**A3. Guardian 进程自愈**（需调研后再决定是否实现）
+**A3. Guardian 进程自愈** — ✅ 已完成
 
 **问题/痛点**：CC session 可能崩溃（OOM、网络断开、CC bug、API 故障），pane 死了但 daemon 不知道。当前流程是：health check 30s 检测 → 发现 pane gone → 日志记录 → 等待 DJ 手动处理。没有自动恢复机制。
 
@@ -251,8 +243,8 @@ Signal Delivery (single channel):
 
 **成功标准**：deck CC 崩溃后 60 秒内自动恢复工作，无需 DJ 干预。连续崩溃 3 次自动停止并通知 DJ。
 
-- [ ] Guardian 调研报告（轻量性、检测方式、与现有 health check 的关系、成本收益分析）
-- [ ] Guardian 实现（如调研结论为值得）：检测崩溃 → 自动 resume → 3 次失败后放弃通知 DJ
+- [x] Guardian 调研报告：发现关键盲区（CC 崩溃后 pane 仍存活），结论为值得实现
+- [x] Guardian 实现：CC 进程检测（`pane_current_command`）+ two-strike 确认 + 自动 resume + 3 次失败放弃 + DJ 通知 + live 豁免 + 竞态保护
 
 ---
 
@@ -451,7 +443,7 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 | Wave F | Done | Backlog 清零 + socket fix + deck perm isolation + fresh→clean refactor + resume --list 移除 |
 | Identity Refactor | Done | 双重寻址 (name + session_id)，7 步重构 + report ingestion fix |
 | Quality Hardening | Done | 10 bug fixes: beat/report/input/kill/live/pane + 设计文档更新 |
-| Phase A | **In Progress** | 生存质量 — A1 大部分完成 (PreCompact hook + Compact Instructions)，A2/A3 待启动 |
+| Phase A | **In Progress** | 生存质量 — A1 完成, A3 Guardian 完成, A2 Worktree 进行中 |
 | Phase B | Queued | Skills 整改 — Mix 策略化、skill 依赖链 |
 | Phase C | Queued | 产品打磨 — UIUX、Token 统计、产品命名 |
 | Phase D | Queued | 市场定位 — 竞品分析、README/定位 |
