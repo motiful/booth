@@ -365,6 +365,10 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 
 ---
 
+### Bug Fixes（Phase A 期间）
+
+- [x] fix: beat 对 hold idle deck 重复触发 — fireBeat 层级直接标记 holdingNotified (8e2450d)
+
 ### 已关闭项
 
 | 项目 | 理由 |
