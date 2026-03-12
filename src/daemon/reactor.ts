@@ -415,6 +415,10 @@ export class Reactor {
     this.checkPollTimers.set(deckId, timer)
   }
 
+  stopCheckPoll(deckId: string): void {
+    this.clearCheckPollTimer(deckId)
+  }
+
   private clearCheckPollTimer(deckId: string): void {
     const timer = this.checkPollTimers.get(deckId)
     if (timer) {

@@ -431,7 +431,14 @@ export class Daemon {
         if (!deck) {
           return { error: `deck not found: ${sessionId}` }
         }
-        this.state.updateDeck(sessionId, { mode })
+        const updates: Partial<DeckInfo> = { mode }
+        // Clear stale check state when switching to live (live skips check flow)
+        if (mode === 'live' && deck.checkSentAt) {
+          updates.checkSentAt = undefined
+          this.reactor.stopCheckPoll(sessionId)
+          logger.info(`[booth-daemon] deck "${deck.name}" cleared checkSentAt on live switch`)
+        }
+        this.state.updateDeck(sessionId, updates)
         logger.info(`[booth-daemon] deck "${deck.name}" mode → ${mode}`)
         if ((mode === 'auto' || mode === 'hold') && deck.status === 'idle') {
           const updated = this.state.getDeck(sessionId)!
