@@ -29,8 +29,8 @@ export class Reactor {
   // Plan mode auto-approve state
   private planModeTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-  // DJ notification dedup cache — tracks which holding decks have already been
-  // reported to DJ, so beat doesn't re-notify about them.
+  // DJ notification dedup cache — tracks which idle decks (hold/live) have already
+  // been reported to DJ, so beat doesn't re-notify about them.
   private holdingNotified = new Set<string>()
 
   // Check poll timers — safety net for missed idle signals
@@ -299,10 +299,10 @@ export class Reactor {
     const working = decks.filter(d => d.status === 'working').map(d => d.name)
     const idle = decks.filter(d => d.status === 'idle' && !this.holdingNotified.has(d.id)).map(d => d.name)
 
-    // Mark idle hold decks as notified — they appear in THIS beat but not future ones.
+    // Mark idle hold/live decks as notified — they appear in THIS beat but not future ones.
     // Cleared on deck working transition (onDeckWorking), so re-idle triggers a fresh beat.
     for (const d of decks) {
-      if (d.status === 'idle' && d.mode === 'hold' && !this.holdingNotified.has(d.id)) {
+      if (d.status === 'idle' && (d.mode === 'hold' || d.mode === 'live') && !this.holdingNotified.has(d.id)) {
         this.holdingNotified.add(d.id)
       }
     }

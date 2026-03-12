@@ -86,6 +86,7 @@ Signal Delivery (single channel):
 
 - **protectedSendToCC batch queue** (dc92c54): 修复多 alert 并发时用户输入闪烁/丢失。promise-chain 队列 → drain-style batch 队列，一批 alert 只 save/restore 一次用户输入。
 - **booth kill safety interception** (0363c41): kill 前检查 deck 状态/模式。working/checking/hold/live 被拦截需 -f 强杀，DJ 永远拒绝。文字约束 → 机制保障。
+- **fix live stale check** (d894064): set-mode 切换到 live 时清除 checkSentAt + stop check poll timer，修复 hold→live 后 beat 误报 stale check。
 
 ---
 
