@@ -303,6 +303,13 @@ export class Daemon {
 
     this.ipcServer = createServer((conn) => {
       let buf = ''
+      conn.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
+          logger.warn(`[booth-daemon] IPC client disconnected (${err.code})`)
+        } else {
+          logger.error(`[booth-daemon] IPC connection error: ${err.message}`)
+        }
+      })
       conn.on('data', async (chunk) => {
         buf += chunk.toString()
         const lines = buf.split('\n')
@@ -312,12 +319,24 @@ export class Daemon {
           try {
             const req = JSON.parse(line)
             const res = await this.handleIpc(req)
-            conn.write(JSON.stringify(res) + '\n')
+            if (!conn.destroyed) conn.write(JSON.stringify(res) + '\n')
           } catch {
-            conn.write(JSON.stringify({ error: 'invalid request' }) + '\n')
+            if (!conn.destroyed) conn.write(JSON.stringify({ error: 'invalid request' }) + '\n')
           }
         }
       })
+    })
+
+    this.ipcServer.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        logger.warn(`[booth-daemon] socket file in use, removing stale socket: ${sockPath}`)
+        try { unlinkSync(sockPath) } catch { /* ignore */ }
+        this.ipcServer!.listen(sockPath, () => {
+          logger.info(`[booth-daemon] ipc listening on ${sockPath} (after EADDRINUSE recovery)`)
+        })
+      } else {
+        logger.error(`[booth-daemon] IPC server error: ${err.message}`)
+      }
     })
 
     return new Promise((resolve) => {
