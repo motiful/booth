@@ -79,10 +79,22 @@ export class Daemon {
       }
     }
 
-    // Restore DJ JSONL from persisted state, or wait for IPC notification.
+    // Validate DJ pane ID — it may be stale if tmux session was recreated.
+    // Unlike decks (where a missing pane means "awaiting resume"), the DJ tmux
+    // session always exists while booth is running. Re-resolve from dj:0.
     const dj = this.state.getDj()
-    if (dj?.jsonlPath) {
-      this.watchOrWait('dj', dj.jsonlPath, 0)
+    if (dj) {
+      const paneResult = tmuxSafe(this.socket, 'display-message', '-t', `${SESSION}:0`, '-p', '#{pane_id}')
+      if (paneResult.ok) {
+        const resolvedPaneId = paneResult.output.trim()
+        if (resolvedPaneId && resolvedPaneId !== dj.paneId) {
+          logger.warn(`[booth-daemon] DJ pane_id stale: DB=${dj.paneId} actual=${resolvedPaneId} — correcting`)
+          this.state.updateDj({ paneId: resolvedPaneId })
+        }
+      }
+      if (dj.jsonlPath) {
+        this.watchOrWait('dj', dj.jsonlPath, 0)
+      }
     }
 
     await this.startIpc()
@@ -488,7 +500,16 @@ export class Daemon {
           this.sessionChangeTimers.delete(target)
 
           if (role === 'dj') {
-            if (ccSessionId) this.state.updateDj({ sessionId: ccSessionId })
+            // Re-resolve pane ID from tmux — the DJ pane may have changed
+            // (e.g., tmux session recreated during restart)
+            const paneResult = tmuxSafe(this.socket, 'display-message', '-t', `${SESSION}:0`, '-p', '#{pane_id}')
+            const paneId = paneResult.ok ? paneResult.output.trim() : undefined
+            if (ccSessionId || paneId) {
+              this.state.updateDj({
+                ...(ccSessionId ? { sessionId: ccSessionId } : {}),
+                ...(paneId ? { paneId } : {}),
+              })
+            }
             this.updateDjJsonl(transcriptPath)
           } else if (sid) {
             const deck = this.state.getDeck(sid)
@@ -569,6 +590,50 @@ export class Daemon {
         logger.info('[booth-daemon] exit-all: all sessions marked exited')
         return { ok: true }
       }
+      case 'compact-prepare': {
+        const role = typeof msg.role === 'string' ? msg.role : null
+        const name = typeof msg.name === 'string' ? msg.name : null
+        const filePath = typeof msg.filePath === 'string' ? msg.filePath : null
+        const sid = typeof msg.sessionId === 'string' ? msg.sessionId : null
+        if (!role || !name || !filePath) {
+          return { error: 'role, name, and filePath required' }
+        }
+
+        const target = role === 'dj' ? 'dj' : sid
+        if (!target) return { error: 'sessionId required for deck compact-prepare' }
+
+        // Build recovery prompt
+        let prompt: string
+        if (role === 'dj') {
+          prompt = [
+            `[booth-compact-recovery] You are booth's DJ (project manager). Context compaction just happened.`,
+            `Read ${filePath} first — it contains the last 3 conversation turns before compaction. Delete the file after reading.`,
+            `Prioritize understanding those turns to recover your working context.`,
+            `If unsure about the current plan, read .booth/plan.md. If unsure about deck status, run \`booth ls\`.`,
+          ].join('\n')
+        } else {
+          const deck = this.state.getDeck(target)
+          const mode = deck?.mode ?? 'auto'
+          prompt = [
+            `[booth-compact-recovery] You are booth deck "${name}" (mode: ${mode}). Context compaction just happened.`,
+            `Read ${filePath} first — it contains the last 3 conversation turns before compaction. Delete the file after reading.`,
+            `Prioritize understanding those turns to recover your working context.`,
+            `If unsure about your current task, run \`booth status ${name}\` to check your original goal.`,
+          ].join('\n')
+        }
+
+        // Fire-and-forget: sendMessage in background, reply IPC immediately.
+        // This ensures the hook exits → CC starts compact → sendMessage's Ctrl+G
+        // arrives during compact → CC queues it → recovery prompt is first input after compact.
+        sendMessage(this.socket, this.state, target, prompt).then(result => {
+          if (!result.ok) {
+            logger.warn(`[booth-daemon] compact-prepare sendMessage failed: ${result.error}`)
+          }
+        }).catch(err => logger.error(`[booth-daemon] compact-prepare sendMessage threw: ${err}`))
+
+        logger.info(`[booth-daemon] compact-prepare: ${target} → sendMessage (filePath: ${filePath})`)
+        return { ok: true }
+      }
       case 'reload':
         if (this.reloading) return { error: 'reload already in progress' }
         this.reloading = true
@@ -609,12 +674,17 @@ export class Daemon {
         }
       }
 
-      // Check DJ pane
+      // Check DJ pane — also detect pane ID drift (stale ID pointing to wrong pane)
       const dj = this.state.getDj()
       if (dj) {
-        const target = dj.paneId || `${SESSION}:0`
-        const check = tmuxSafe(socket, 'display-message', '-t', target, '-p', '#{pane_pid}')
-        if (!check.ok || !check.output.trim()) {
+        const paneResult = tmuxSafe(socket, 'display-message', '-t', `${SESSION}:0`, '-p', '#{pane_id}')
+        if (paneResult.ok) {
+          const actualPaneId = paneResult.output.trim()
+          if (actualPaneId && actualPaneId !== dj.paneId) {
+            logger.warn(`[booth-daemon] DJ pane_id drift: DB=${dj.paneId} actual=${actualPaneId} — correcting`)
+            this.state.updateDj({ paneId: actualPaneId })
+          }
+        } else {
           logger.warn('[booth-daemon] DJ pane gone')
           this.signal.unwatch('dj')
         }
