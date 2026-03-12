@@ -399,6 +399,11 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 - Step 6: ✅ reports 表加 session_id 双列关联 — insertReport 写入 sessionId, getReports/countReports 支持 sessionId 过滤 (dc84635)
 - Step 7: ✅ 文档同步 — cli.md Identifier Resolution, child-protocol.md Deck Environment, check.md/mix.md state.json→booth.db (6c2346c, 3c9534b)
 
+**Report Ingestion Fix (327c608)**:
+- fix: deliverable 文件（无 YAML frontmatter）不再阻塞 check flow
+- fix: EXIT report 在 deck-exited handler 中 ingest 到 SQLite
+- fix: session-end-hook 不再让 deliverable 阻止 EXIT report 创建
+
 **关键设计决策**:
 - name 在活跃行中仍保持唯一（partial unique index 保留）
 - resolve 逻辑：完整 UUID → session_id 精确匹配；hex 前缀 → name 优先再试 session_id；其他 → name
