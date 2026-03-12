@@ -49,7 +49,19 @@ export class Reactor {
   start(): void {
     this.state.on('deck:idle', (deck: DeckInfo) => this.onDeckIdle(deck))
     this.state.on('deck:working', (deck: DeckInfo) => this.onDeckWorking(deck))
-    this.state.on('deck:state-changed', (_change: DeckStateChange) => this.resetBeat())
+    this.state.on('deck:state-changed', (change: DeckStateChange) => {
+      // Skip beat reset for decks with terminal reports — their idle↔working
+      // cycling is tmux activity noise, not meaningful state changes.
+      const deck = this.state.getDeck(change.deckId)
+      if (deck) {
+        const dbReport = this.state.getReport(deck.name)
+        if (dbReport && isTerminalStatus(dbReport.status) && dbReport.createdAt >= deck.createdAt) {
+          logger.debug(`[booth-reactor] skipping beat reset for "${deck.name}" — terminal report exists`)
+          return
+        }
+      }
+      this.resetBeat()
+    })
     this.state.on('dj:status-changed', () => this.scheduleBeat())
 
     // Restore check poll timers for decks with in-flight checks (e.g., after daemon reload)
