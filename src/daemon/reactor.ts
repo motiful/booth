@@ -29,7 +29,7 @@ export class Reactor {
   // Plan mode auto-approve state
   private planModeTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-  // DJ notification dedup cache — tracks which idle decks (hold/live) have already
+  // DJ notification dedup cache — tracks which idle hold decks have already
   // been reported to DJ, so beat doesn't re-notify about them.
   private holdingNotified = new Set<string>()
 
@@ -308,14 +308,16 @@ export class Reactor {
     if (!this.state.hasActiveDecks()) return
 
     const now = Date.now()
-    const decks = this.state.getAllDecks()
+    const allDecks = this.state.getAllDecks()
+    // Live decks belong to the user — DJ doesn't manage them, skip entirely
+    const decks = allDecks.filter(d => d.mode !== 'live')
     const working = decks.filter(d => d.status === 'working').map(d => d.name)
     const idle = decks.filter(d => d.status === 'idle' && !this.holdingNotified.has(d.id)).map(d => d.name)
 
-    // Mark idle hold/live decks as notified — they appear in THIS beat but not future ones.
+    // Mark idle hold decks as notified — they appear in THIS beat but not future ones.
     // Cleared on deck working transition (onDeckWorking), so re-idle triggers a fresh beat.
     for (const d of decks) {
-      if (d.status === 'idle' && (d.mode === 'hold' || d.mode === 'live') && !this.holdingNotified.has(d.id)) {
+      if (d.status === 'idle' && d.mode === 'hold' && !this.holdingNotified.has(d.id)) {
         this.holdingNotified.add(d.id)
       }
     }
@@ -333,9 +335,9 @@ export class Reactor {
       }
     }
 
-    // All active decks are holding and already notified — nothing for DJ to act on
+    // Nothing for DJ to act on (all managed decks holding/notified, or all decks are live)
     if (!working.length && !checkingNormal.length && !checkingStale.length && !idle.length) {
-      logger.debug('[booth-reactor] beat skipped: all active decks are notified holding')
+      logger.debug('[booth-reactor] beat skipped: no managed decks need attention')
       return
     }
 
