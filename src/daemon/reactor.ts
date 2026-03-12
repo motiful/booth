@@ -105,6 +105,19 @@ export class Reactor {
     }
 
     if (!rPath) {
+      // Report file missing — but it may have been ingested into SQLite already.
+      // Without this check, the reactor enters an infinite loop:
+      // idle → no file → send check → deck responds → idle → no file → send check …
+      const dbReport = this.state.getReport(deck.name)
+      if (dbReport && isTerminalStatus(dbReport.status) && dbReport.createdAt >= deck.createdAt) {
+        logger.debug(`[booth-reactor] deck "${deck.name}" terminal report already in SQLite — skipping check`)
+        this.state.updateDeck(deck.id, { checkSentAt: undefined })
+        this.clearCheckPollTimer(deck.id)
+        this.checkRounds.delete(deck.id)
+        this.checkSnapshot.delete(deck.id)
+        return
+      }
+
       if (deck.checkSentAt) {
         if (fromIdle) {
           // Deck went idle without writing report — resend.
