@@ -6,6 +6,28 @@
 
 > Compaction 防护 → Worktree isolation → Guardian 调研。详见下方路线图。
 
+### Recent (2026-03-12~13)
+
+**Identity Refactor — 全部完成** (6ba5d3e → 3c9534b, 8 commits)
+- 7 步重构全部落地：Schema 迁移 → resolve.ts → 内部寻址改 sessionId → IPC/CLI/hook 适配 → reports 双列 → 文档同步
+- Report Ingestion Fix (327c608): deliverable 文件不再阻塞 check flow, EXIT report 正确 ingest
+
+**Quality Hardening — 全部完成** (2026-03-12~13, 10 commits)
+- beat 冷却：hold idle 不重复触发 (8e2450d)
+- report DB 对齐：移除文件 fallback，DB 唯一 SoT (6498e7d)
+- 并发输入保护：batch drain 队列防 alert 并发丢输入 (dc92c54)
+- kill 安全拦截：working/hold/live 需 -f 强杀，DJ 永远拒绝 (0363c41)
+- live stale check：切 live 清 checkSentAt (d894064)
+- live beat 冷却：live idle 不重复 beat (43d9f2f)
+- beat 跳过 live：fireBeat 完全过滤 live deck (e93e41b)
+- DJ pane ID 防漂移：session-changed/startup/healthcheck 三处 re-resolve (3660d5d)
+- check 无限循环修复：report 已 ingest 后不再重复发 check (3c34049)
+
+**遗留修复 — 全部完成** (fix-remaining-issues, 3 commits)
+- PreCompact hook 完整实现 (463d1c4) — Phase A1 提前完成
+- live deck pane 保护 + DJ tmux 窗口命名 (0c10b25)
+- check 消息改进：identity 行 + deferred goal lookup (9aee9b2)
+
 ---
 
 ## Archived Phases
@@ -82,11 +104,20 @@ Signal Delivery (single channel):
 
 ---
 
-## Recent Completions
+## Known Bugs
 
-- **protectedSendToCC batch queue** (dc92c54): 修复多 alert 并发时用户输入闪烁/丢失。promise-chain 队列 → drain-style batch 队列，一批 alert 只 save/restore 一次用户输入。
-- **booth kill safety interception** (0363c41): kill 前检查 deck 状态/模式。working/checking/hold/live 被拦截需 -f 强杀，DJ 永远拒绝。文字约束 → 机制保障。
-- **fix live stale check** (d894064): set-mode 切换到 live 时清除 checkSentAt + stop check poll timer，修复 hold→live 后 beat 误报 stale check。
+### BUG-001: Compaction 打断 alert 链路 — 部分解决
+
+**现象**：Compaction 后 DJ 或 deck 丢失工作上下文，alert 链路中断。
+
+**已有防护**：
+- PreCompact hook (463d1c4) — compact 前抢救状态到 `.booth/compact-state.json`
+- CLAUDE.md Compact Instructions — compact 后指导 DJ 读 compact-state.json 恢复
+- Beat 兜底 — 周期性检查所有 deck 状态，compact 期间丢失的信号在下一个 beat 被发现
+
+**仍需实现**：
+- SessionStart(compact) hook — compact 后自动注入恢复 prompt（CC 目前不暴露此 hook，需等 CC 更新或用 workaround）
+- 完整 E2E 验证（模拟 compact → 验证状态恢复 → 验证 alert 链路恢复）
 
 ---
 
@@ -131,27 +162,18 @@ Signal Delivery (single channel):
 
 **成功标准**：DJ 被 compact 后能在 30 秒内恢复工作状态——知道当前有哪些 deck、各自状态、当前 plan 进度、未处理的 alert。
 
-- [ ] **PreCompact hook 防护**
-  - 配置 `PreCompact` hook 调用 `booth compact-prepare` CLI 命令
-  - `compact-prepare` 通过 IPC 获取 daemon 权威状态快照（deck 列表/状态、beat 位置、pending alerts）
-  - 快照写入 `.booth/compact-state.json`，hook 返回 exit 0 不阻塞 compact
-  - CC 支持：**已确认可用**（`settings.json` 的 `hooks.PreCompact`）
-  - 需实现：`src/cli/commands/compact-prepare.ts` + IPC handler `compact-prepare`
-- [ ] **CLAUDE.md Compact Instructions**（零代码）
+- [x] **PreCompact hook 防护** (463d1c4)
+  - `PreCompact` hook 调用 `booth compact-prepare` CLI → IPC 获取 daemon 权威状态快照 → 写入 `.booth/compact-state.json`
+  - hook 返回 exit 0 不阻塞 compact
+- [x] **CLAUDE.md Compact Instructions**（零代码）
   - 在项目 CLAUDE.md 中添加 `# Compact Instructions` section
-  - 指导 compact summary 保留：当前 deck 状态和 assignments、最近 beat 结果、未处理通知、当前 phase
-  - 指导 compact 后立即：读 `.booth/compact-state.json` 恢复状态 → `booth ls` 验证 → 恢复 beat 周期
-  - **必须写在 CLAUDE.md 而非 `.booth/mix.md`**——mix.md 作为对话上下文的一部分会被 summarize 掉
-  - CC 支持：**已确认可用**（官方推荐方式）
+  - 指导 compact 后读 `.booth/compact-state.json` 恢复状态 → `booth ls` 验证 → 恢复 beat 周期
 - [ ] **信号安全策略**
   - **SQLite 已持久化的状态**（compact 安全）：deck 列表、deck 状态（working/idle/checking/exited）、DJ 状态、pane ID、session ID、JSONL 路径、report 内容及审阅状态、所有历史记录
   - **仍在 CC 内存中的状态**（compact 会丢）：DJ 当前正在处理的 alert 文本、DJ 对 report 的评审进展、用户最近的指令和 DJ 的决策上下文、plan.md 的最新修改（如果还没写到磁盘）
   - **结论**：daemon 侧几乎所有状态已被 SQLite 持久化。风险集中在 DJ CC 对话上下文中的"软状态"——这些通过 CLAUDE.md Compact Instructions + compact-state.json 恢复。**不需要第三条信号路径**——beat 作为周期性兜底已足够，compact 典型持续时间（秒到分钟级）远小于 beat cooldown（5 分钟起）
   - 需调研：compact hang 住的极端情况（GitHub #19567）——归入 Guardian 范畴
-- [ ] **StatusLine hook 调研**
-  - CC StatusLine hook 可能允许在 TUI 底部显示 booth 状态（deck 数量、当前 phase 等）
-  - 需调研：CC 是否已支持 StatusLine hook？格式是什么？能否在 compact 期间/之后自动刷新？
-  - 优先级低——即使不做，compact-state.json + CLAUDE.md Instructions 已覆盖核心需求
+- [x] **StatusLine hook 调研** — CC 已支持 StatusLine hook，可在 TUI 底部显示 booth 状态。self-review 确认可用，优先级低但已知可行
 - [ ] **DJ Context 审计**
   - 列出 DJ 正常运作依赖的所有上下文信息
   - 逐一确认每项信息在 compact 后的恢复路径（SQLite / compact-state.json / CLAUDE.md / plan.md）
@@ -181,9 +203,14 @@ Signal Delivery (single channel):
 - **tmux socket 和 pane ID**：`deriveSocket()` 基于 `projectRoot` 路径的 SHA256 hash。如果 worktree 路径不同于主仓库路径，socket 会不同——**daemon 需要使用统一的主仓库路径**
 - **Worktree 清理**：`git worktree remove` 需要工作目录干净。如果 deck 崩溃留下脏 worktree 怎么办？
 
+**新发现（self-review, 2026-03-12）**：CC v2.1.49+ 原生支持 `isolation: "worktree"`，复杂度大幅降低：
+- `worktree.symlinkDirectories: [".booth"]` 解决 .booth/ 共享
+- `BOOTH_PROJECT_ROOT` env var 解决 socket 路径
+- 仍需解决：`deriveSocket()` 路径适配 + 实际 E2E 验证
+
 **成功标准**：两个 deck 可以同时修改同一个文件（不同区域），各自编译通过，最终自动合并到 main 无冲突。
 
-- [ ] 每个 deck 工作在独立 git worktree 中
+- [ ] 每个 deck 工作在独立 git worktree 中（利用 CC 原生 worktree 支持）
 - [ ] 确认 CC 在 worktree 中正常工作（CLAUDE.md、`.booth/` report 路径等）
 - [ ] deck 完成后 rebase + fast-forward merge 到 main
 - [ ] deck kill 时自动清理 worktree
@@ -373,9 +400,20 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 
 ---
 
-### Bug Fixes（Phase A 期间）
+### Bug Fixes（Phase A 期间，含 Quality Hardening）
 
-- [x] fix: beat 对 hold idle deck 重复触发 — fireBeat 层级直接标记 holdingNotified (8e2450d)
+- [x] beat 冷却 hold idle 不重复触发 (8e2450d)
+- [x] report ingestion: deliverable 不阻塞 check flow + EXIT report 正确 ingest (327c608)
+- [x] report DB 对齐: 移除文件 fallback，DB 唯一 SoT (6498e7d)
+- [x] 并发输入保护: batch drain 队列防 alert 并发丢输入 (dc92c54)
+- [x] kill 安全拦截: working/hold/live 需 -f 强杀 (0363c41)
+- [x] live stale check: 切 live 清 checkSentAt (d894064)
+- [x] live beat 冷却: live idle 不重复 beat (43d9f2f)
+- [x] beat 跳过 live deck (e93e41b)
+- [x] DJ pane ID 防漂移: 三处 re-resolve (3660d5d)
+- [x] check 无限循环: report 已 ingest 后不再重复发 check (3c34049)
+- [x] live deck pane 保护 + DJ tmux 窗口命名 (0c10b25)
+- [x] check 消息改进: identity 行 + deferred goal lookup (9aee9b2)
 
 ### 已关闭项
 
@@ -389,34 +427,18 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 
 ---
 
-### Identity Refactor（进行中）
+### Identity Refactor — 已完成 (6ba5d3e → 3c9534b)
 
-> 方向：方案 B — name 做 CLI 快捷方式，session_id 做内部唯一 identity。双重寻址。
+> 方案 B — name 做 CLI 快捷方式，session_id 做内部唯一 identity。双重寻址。
 
-**已完成**:
-- [x] 全局审计：`.booth/reports/identity-audit.md` — Schema 实况、Identity 真相、DJ 交替流程、Socket/Pane 寻址、文档不一致清单（8 处）
-- [x] 影响分析 + 执行计划：`.booth/reports/identity-refactor-plan.md` — 60+ 处 name-as-identity 定位、7 步重构计划
-- [x] P0 文档修复 (ba709e4)：mix.md kill 描述矛盾、child-protocol.md 过时状态、cli.md 未实现 flag
-- [x] MEMORY.md 清理：删除 5+ 条过时信息（archives 表、meta KV DJ、resume 读 state.json 等）
+**归档摘要**: 7 步重构 + Report Ingestion Fix，共 10 commits。
+- Schema: session_id 唯一索引 + reports.session_id 双列
+- `src/resolve.ts`: resolveIdentifier(input) 支持 name/UUID/前缀
+- 内部寻址: state.ts Map key 改 sessionId, IPC/CLI/hook 全部适配
+- 文档: cli.md, child-protocol.md, check.md, mix.md 同步更新
+- Report: deliverable 不阻塞 check flow, EXIT report 正确 ingest
 
-**执行计划（7 步）**:
-- Step 0: ✅ Schema 迁移准备 — 加 session_id 唯一索引 + reports.session_id 列（6ba5d3e）
-- Step 1: ✅ 新建 `src/resolve.ts` 解析层 — resolveIdentifier(input) 支持 name/UUID/前缀（30ac644, e419e22）
-- Step 2-4: ✅ 原子块 — state.ts Map key 改 sessionId + IPC 合约改 sessionId + CLI 层接入 resolve + hook 适配（af433b1）
-- Step 5: ✅ 环境变量 + hook 已在 Step 2-4 中一并完成
-- Step 6: ✅ reports 表加 session_id 双列关联 — insertReport 写入 sessionId, getReports/countReports 支持 sessionId 过滤 (dc84635)
-- Step 7: ✅ 文档同步 — cli.md Identifier Resolution, child-protocol.md Deck Environment, check.md/mix.md state.json→booth.db (6c2346c, 3c9534b)
-
-**Report Ingestion Fix (327c608)**:
-- fix: deliverable 文件（无 YAML frontmatter）不再阻塞 check flow
-- fix: EXIT report 在 deck-exited handler 中 ingest 到 SQLite
-- fix: session-end-hook 不再让 deliverable 阻止 EXIT report 创建
-
-**关键设计决策**:
-- name 在活跃行中仍保持唯一（partial unique index 保留）
-- resolve 逻辑：完整 UUID → session_id 精确匹配；hex 前缀 → name 优先再试 session_id；其他 → name
-- reports 表加 session_id 列但保留 deck_name（双列，不破坏旧查询）
-- DJ 方法不改（DJ 始终一个活跃行，name='DJ' 足够）
+**关键设计决策**: name 活跃行唯一 (partial unique index), resolve 逻辑 UUID→name→session_id, reports 双列不破坏旧查询, DJ 方法不改
 
 ---
 
@@ -427,7 +449,9 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 | 1–2.8 | Done | Foundation → Core loop → Init → Modes → Input protection → Signal simplification |
 | Wave C–E | Done | SQLite migration → Lifecycle simplification → Stop→Resume E2E |
 | Wave F | Done | Backlog 清零 + socket fix + deck perm isolation + fresh→clean refactor + resume --list 移除 |
-| Phase A | **Next** | 生存质量 — Compaction 防护、Worktree isolation、Guardian 调研 |
+| Identity Refactor | Done | 双重寻址 (name + session_id)，7 步重构 + report ingestion fix |
+| Quality Hardening | Done | 10 bug fixes: beat/report/input/kill/live/pane + 设计文档更新 |
+| Phase A | **In Progress** | 生存质量 — A1 大部分完成 (PreCompact hook + Compact Instructions)，A2/A3 待启动 |
 | Phase B | Queued | Skills 整改 — Mix 策略化、skill 依赖链 |
 | Phase C | Queued | 产品打磨 — UIUX、Token 统计、产品命名 |
 | Phase D | Queued | 市场定位 — 竞品分析、README/定位 |
@@ -449,6 +473,7 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 | `src/constants.ts` | Paths, directories, template locations |
 | `src/config.ts` | .booth/config.json read/write |
 | `src/hooks.ts` | SessionEnd/SessionStart hook management |
+| `src/resolve.ts` | Identifier resolution (name/UUID/prefix → sessionId) |
 | `src/ipc.ts` | IPC client (5s timeout) |
 
 ### CLI Commands
@@ -467,6 +492,7 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 | `src/cli/commands/reports.ts` | `booth reports` — list/view/open reports |
 | `src/cli/commands/config.ts` | `booth config` — set/get/list |
 | `src/cli/commands/init.ts` | `booth init` — register skill + setup |
+| `src/cli/commands/compact-prepare.ts` | `booth compact-prepare` — PreCompact hook handler |
 
 ### Skill Files
 | File | Purpose |
