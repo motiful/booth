@@ -51,9 +51,9 @@ No automatic check. The deck is a raw CC session for the human to use. When done
 
 After a deck goes idle (auto/hold modes only), the daemon sends `[booth-check]`. The deck:
 1. Reads `.booth/check.md` for self-verification instructions
-2. Runs a sub-agent review loop (review → fix → repeat) — unless `--no-loop` was set, in which case it writes the report directly
-3. Writes a report to `.booth/reports/<deck>.md`
-4. Goes idle again — daemon sees report + idle → notifies DJ
+2. Runs a sub-agent review loop (review → fix → repeat) — unless `--no-loop` was set, in which case it submits the report directly
+3. Submits a report via `booth report` CLI (goes to daemon DB via IPC)
+4. Goes idle again — daemon receives report → notifies DJ
 
 ## Deck Environment
 
@@ -114,10 +114,10 @@ Decks don't explicitly report to DJ. The signal mechanism handles it:
 **Auto/Hold decks:**
 ```
 Deck finishes task → JSONL turn_duration → idle detected
-→ Daemon checks for report file
+→ Daemon checks DB for report
 → No report → [booth-check] injected into deck
-→ Deck self-verifies (sub-agent loop, or direct report if --no-loop) → writes report → idle
-→ Daemon detects idle + report exists → notifies DJ
+→ Deck self-verifies (sub-agent loop, or direct report if --no-loop) → submits report via `booth report` CLI → idle
+→ Daemon receives report via IPC → notifies DJ
 → Auto: DJ reads report → kill deck
 → Hold: DJ reads report → deck pauses → DJ gives next instruction or kills
 ```

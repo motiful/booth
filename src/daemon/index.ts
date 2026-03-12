@@ -9,6 +9,7 @@ import { killSession, hasSession, tmuxSafe } from '../tmux.js'
 import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { sendMessage } from './send-message.js'
+import { parseReportBody } from './report.js'
 import { initLogger, logger } from './logger.js'
 import { removeWorktree } from '../worktree.js'
 import type { DeckInfo, DeckMode, DeckStatus } from '../types.js'
@@ -459,12 +460,6 @@ export class Daemon {
           tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
         }
 
-        // Ingest report before exiting (so it goes into SQLite)
-        const reportPath = typeof msg.reportPath === 'string' ? msg.reportPath : null
-        if (reportPath) {
-          this.reactor.ingestReport(reportPath, deckName, 0, deck.sessionId)
-        }
-
         // Clean up worktree if the deck was using one
         if (deck.worktreePath) {
           try {
@@ -502,6 +497,31 @@ export class Daemon {
 
         logger.info(`[booth-daemon] DJ session-end: ${reason}`)
         return { ok: true }
+      }
+      case 'submit-report': {
+        const deckName = typeof msg.deckName === 'string' ? msg.deckName : null
+        const sessionId = typeof msg.sessionId === 'string' ? msg.sessionId : null
+        const status = typeof msg.status === 'string' ? msg.status : null
+        const body = typeof msg.body === 'string' ? msg.body : null
+        if (!deckName || !status || !body) return { error: 'deckName, status, and body required' }
+
+        const reportId = `${deckName}-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 16)}`
+        const parsed = parseReportBody(body)
+
+        this.state.insertReport({
+          id: reportId,
+          deckName,
+          sessionId: sessionId ?? undefined,
+          status: parsed?.status ?? status,
+          content: body,
+          rounds: parsed?.rounds,
+          hasHumanReview: parsed?.hasHumanReview,
+          hasDjAction: parsed?.hasDjAction,
+        })
+
+        this.reactor.onReportSubmitted(deckName, parsed?.status ?? status)
+        logger.info(`[booth-daemon] report submitted: "${reportId}" (${status}) for deck "${deckName}"`)
+        return { ok: true, reportId }
       }
       case 'send-message': {
         const targetId = typeof msg.targetId === 'string' && msg.targetId ? msg.targetId : null

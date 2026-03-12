@@ -1,8 +1,7 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import Database from 'better-sqlite3'
-import { findProjectRoot, boothPath, timestampedReportPath, reportsDir, DB_FILE } from './constants.js'
-import { findLatestReport, readReportStatus } from './daemon/report.js'
+import { findProjectRoot, boothPath, DB_FILE } from './constants.js'
 import { ipcRequest } from './ipc.js'
 import { extractTextContent } from './transcript-utils.js'
 
@@ -118,62 +117,56 @@ async function main(): Promise<void> {
     return
   }
 
-  // Deck exit — write report and notify daemon
+  // Deck exit — submit EXIT report via IPC and notify daemon
   const sessionId = match.sessionId ?? `deck-${match.name}`
   const deckName = match.name
 
-  // Only reuse an existing report if it has valid YAML frontmatter (a real check report).
-  // Deliverables (deck work output without frontmatter) should not block EXIT report creation.
-  const existingReport = findLatestReport(projectRoot, deckName)
-  const hasValidReport = existingReport ? readReportStatus(existingReport) !== null : false
+  // Build EXIT report body
+  const { userText, assistantText } = parseJsonlTail(transcriptPath)
+  const timestamp = new Date().toISOString()
 
-  let finalReportPath = hasValidReport ? existingReport : undefined
-  if (!finalReportPath) {
-    finalReportPath = timestampedReportPath(projectRoot, deckName)
-    const { userText, assistantText } = parseJsonlTail(transcriptPath)
-    const timestamp = new Date().toISOString()
+  const reportBody = [
+    '---',
+    `status: EXIT`,
+    `deck: ${deckName}`,
+    `timestamp: ${timestamp}`,
+    `reason: ${reason}`,
+    '---',
+    '',
+    '## Summary',
+    '',
+    `Session exited: ${reason}`,
+    '',
+    '## Last Activity',
+    '',
+    '### User',
+    userText || '(no user message)',
+    '',
+    '### Assistant',
+    assistantText || '(no assistant message)',
+    '',
+  ].join('\n')
 
-    const report = [
-      '---',
-      `status: EXIT`,
-      `deck: ${deckName}`,
-      `timestamp: ${timestamp}`,
-      `reason: ${reason}`,
-      '---',
-      '',
-      '## Summary',
-      '',
-      `Session exited: ${reason}`,
-      '',
-      '## Last Activity',
-      '',
-      '### User',
-      userText || '(no user message)',
-      '',
-      '### Assistant',
-      assistantText || '(no assistant message)',
-      '',
-    ].join('\n')
-
-    try {
-      const rDir = reportsDir(projectRoot)
-      if (!existsSync(rDir)) {
-        mkdirSync(rDir, { recursive: true })
-      }
-      writeFileSync(finalReportPath, report)
-    } catch {
-      // Report write failure — still notify daemon
-    }
+  // Submit report via IPC (no file I/O)
+  try {
+    await ipcRequest(projectRoot, {
+      cmd: 'submit-report',
+      deckName,
+      sessionId,
+      status: 'EXIT',
+      body: reportBody,
+    })
+  } catch {
+    // Daemon unreachable — report will be lost, but deck-exited below handles state
   }
 
-  // Notify daemon
+  // Notify daemon of exit
   try {
     await ipcRequest(projectRoot, {
       cmd: 'deck-exited',
       sessionId,
       deckName,
       reason,
-      reportPath: finalReportPath,
     })
   } catch {
     // Daemon unreachable — fallback to health check

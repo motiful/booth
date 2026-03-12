@@ -62,7 +62,7 @@ When a deck is spun with `--no-loop`, the sub-agent review loop is skipped entir
 
 1. Assesses its own work (did it meet acceptance criteria?)
 2. Completes **Pre-Report Steps** (test, commit, progress update)
-3. Writes the report directly to `.booth/reports/<deck>-YYYY-MM-DD-HHMM.md` (UTC)
+3. Submits the report via `booth report --status <STATUS> --body "..."` CLI
 4. Uses `rounds: 0` in the YAML frontmatter
 
 ### When to use --no-loop vs default loop
@@ -189,10 +189,16 @@ Update the project's progress tracking file.
 
 ## Report Format
 
-Write the report to `.booth/reports/<your-deck-name>-YYYY-MM-DD-HHMM.md` (UTC timestamp, e.g. `signal-fix-2026-03-05-0732.md`). The exact path is provided in the `[booth-check]` signal.
+Submit the report via the `booth report` CLI. **Do NOT write files to `.booth/reports/`.**
 
-**IMPORTANT:** File references MUST use clickable relative markdown links.
-Since reports live in `.booth/reports/`, use `../../` prefix to reach the project root.
+```bash
+booth report --status SUCCESS --body "$(cat <<'EOF'
+<your report content with YAML frontmatter>
+EOF
+)"
+```
+
+The report goes directly to the daemon via IPC → SQLite. No file I/O.
 
 ### Session ID as Deck Identity
 
@@ -225,9 +231,9 @@ One-sentence description of what was done.
 
 ## Files Changed
 
-- [`src/auth/middleware.ts`](../../src/auth/middleware.ts) — added authentication middleware
-- [`src/routes/login.ts`](../../src/routes/login.ts) — updated route handlers
-- [`tests/auth.test.ts`](../../tests/auth.test.ts) — added auth tests
+- `src/auth/middleware.ts` — added authentication middleware
+- `src/routes/login.ts` — updated route handlers
+- `tests/auth.test.ts` — added auth tests
 
 ## Review Rounds
 
@@ -275,14 +281,10 @@ The daemon accepts four terminal status values: `SUCCESS`, `FAIL`, `FAILED`, `ER
 - Report 正文用**中文**撰写（Summary、Review Rounds、描述性内容）
 - 代码引用、文件路径、命令、YAML frontmatter 保持英文原样
 
-### Link format rules
+### File reference format
 
-- Every file reference in the report MUST be a clickable markdown link
-- All paths are **relative to the report file** at `.booth/reports/<name>.md`, NOT relative to the project root
-- The `../../` prefix reaches the project root (two levels up from `.booth/reports/`)
-- Format: `[`path/to/file`](../../path/to/file)` — backtick-wrapped display, relative link
-- For files in subdirectories: `[`src/deep/file.ts`](../../src/deep/file.ts)`
-- For files outside the project (e.g., a sibling repo `../other-repo/doc.md`): use `../../../other-repo/doc.md` (three levels up to reach the parent of the project root)
+- List file paths as plain text (e.g., `src/auth/middleware.ts`)
+- Reports are stored in SQLite, not as files — relative links are not applicable
 
 ### Test Status section
 
@@ -293,17 +295,15 @@ The report **must** include a `## Test Status` section listing every verificatio
 The report **must** include a `## Conflict Risk` section.
 
 - If you modified files that other decks might also be modifying concurrently, list them with a `[CONFLICT RISK]` tag:
-  - `[CONFLICT RISK]` [`src/shared/types.ts`](../../src/shared/types.ts) — 多个 deck 可能同时修改共享类型
+  - `[CONFLICT RISK]` `src/shared/types.ts` — 多个 deck 可能同时修改共享类型
 - If no conflict risk, write `无冲突风险。`
 
 ## Idempotency
 
 If you receive `[booth-check]`:
-1. **Check round number first** — if `round=N/M` where N > 1, this is a daemon-driven re-check. Your previous report was archived by the daemon. Proceed with a fresh review — do NOT skip because you "already wrote a report."
-2. **For round 1 (or no round info)**: check your own context — did you already write a report in this session? If yes, you're done.
-3. **Search, don't exact-match** — look for any report matching your deck name prefix in `.booth/reports/` (e.g., `ls .booth/reports/<deck-name>*`). A report named `<deck>-2026-03-05.md` counts. (Archived reports in `.booth/reports/archive/` don't count.)
-4. If a matching report exists with a terminal status (SUCCESS/FAIL/FAILED/ERROR/AUDIT), you're done — stay idle.
-5. If no matching report exists and you have no memory of writing one, re-read this document and start the review loop from the beginning.
+1. **Check round number first** — if `round=N/M` where N > 1, this is a daemon-driven re-check. Proceed with a fresh review — do NOT skip because you "already submitted a report."
+2. **For round 1 (or no round info)**: check your own context — did you already submit a report via `booth report` in this session? If yes, you're done.
+3. If you have no memory of submitting a report, re-read this document and start the review loop from the beginning.
 
 ## What You Don't Do
 

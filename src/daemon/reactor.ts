@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, statSync, unlinkSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { BoothState } from './state.js'
 import { sendMessage } from './send-message.js'
-import { readReportStatus, isTerminalStatus, findLatestReport, parseReport } from './report.js'
-import { timestampedReportPath, boothPath } from '../constants.js'
+import { isTerminalStatus } from './report.js'
+import { boothPath } from '../constants.js'
 import { tmuxSafe } from '../tmux.js'
 import { logger } from './logger.js'
 import type { DeckInfo, DeckStateChange } from '../types.js'
@@ -97,164 +97,65 @@ export class Reactor {
   }
 
   private runCheck(deck: DeckInfo, fromIdle = false): void {
-    let rPath = findLatestReport(this.projectRoot, deck.name)
-
-    // Stale report detection: if report exists but is older than the deck, delete it
-    if (rPath && this.isStaleReport(rPath, deck)) {
-      this.deleteStaleReport(rPath, deck.name)
-      rPath = undefined
-    }
-
-    // Skip files without valid YAML frontmatter — these are deliverables
-    // (deck work output), not check reports. Treat as if no report exists.
-    let reportStatus: string | null = null
-    if (rPath) {
-      reportStatus = readReportStatus(rPath)
-      if (!reportStatus) {
-        logger.debug(`[booth-reactor] deck "${deck.name}" ignoring non-report file (no YAML status): ${rPath}`)
-        rPath = undefined
-      }
-    }
-
-    if (!rPath) {
-      // Report file missing — but it may have been ingested into SQLite already.
-      // Without this check, the reactor enters an infinite loop:
-      // idle → no file → send check → deck responds → idle → no file → send check …
-      const dbReport = this.state.getReport(deck.name)
-      if (dbReport && isTerminalStatus(dbReport.status) && dbReport.createdAt >= deck.createdAt) {
-        logger.debug(`[booth-reactor] deck "${deck.name}" terminal report already in SQLite — skipping check`)
-        this.state.updateDeck(deck.id, { checkSentAt: undefined })
-        this.clearCheckPollTimer(deck.id)
-        this.checkRounds.delete(deck.id)
-        this.checkSnapshot.delete(deck.id)
-        return
-      }
-
-      if (deck.checkSentAt) {
-        if (fromIdle) {
-          // Deck went idle without writing report — resend.
-          // [booth-check] is idempotent (signals.md), safe after compaction/limit/crash.
-          logger.info(`[booth-reactor] deck "${deck.name}" idle without report — resending check (idempotent)`)
-          this.state.updateDeck(deck.id, { checkSentAt: undefined })
-          this.clearCheckPollTimer(deck.id)
-          // Fall through to send check below
-        } else {
-          // Poll path — only check for report, don't resend (avoids message pile-up)
-          logger.debug(`[booth-reactor] deck "${deck.name}" check already sent, waiting for report`)
-          return
-        }
-      }
-
-      // No report yet → trigger deck self-check via .booth/check.md
-      const newReportPath = timestampedReportPath(this.projectRoot, deck.name)
-      const checkPath = boothPath(this.projectRoot, 'check.md')
-      const round = this.checkRounds.get(deck.id) ?? 1
-      this.checkRounds.set(deck.id, round)
-
-      let msg = existsSync(checkPath)
-        ? `[booth-check] round=${round}/${MAX_CHECK_ROUNDS} Read ${checkPath} and follow the self-verification procedure. Your report path: ${newReportPath}`
-        : `[booth-check] round=${round}/${MAX_CHECK_ROUNDS} Self-verify your work. Write report to: ${newReportPath} with YAML frontmatter \`status: SUCCESS\` or \`status: FAIL\`.`
-
-      // noLoop: tell deck to skip sub-agent review loop
-      if (deck.noLoop) {
-        msg += ' Skip the sub-agent review loop. Write your report directly.'
-      }
-
-      // Identity — always present (critical for compaction recovery)
-      msg += `\n\nYou are booth deck "${deck.name}" (mode: ${deck.mode}).`
-      msg += `\nIf you need to review your original goal, run: \`booth status ${deck.name}\``
-
-      // Capture git snapshot for diff detection on next idle
-      this.checkSnapshot.set(deck.id, this.captureSnapshot(deck.dir))
-
-      // Set checking status optimistically
-      this.state.updateDeckStatus(deck.id, 'checking')
-      this.state.updateDeck(deck.id, { checkSentAt: Date.now() })
-      this.startCheckPoll(deck.id)
-
-      sendMessage(this.socket, this.state, deck.id, msg).then(result => {
-        if (!result.ok) {
-          logger.error(`[booth-reactor] check send failed for "${deck.name}": ${result.error}`)
-        } else {
-          logger.info(`[booth-reactor] sent check to "${deck.name}"`)
-        }
-      }).catch(err => logger.error(`[booth-reactor] check send threw for "${deck.name}": ${err}`))
-      return
-    }
-
-    // Report exists with valid status (reportStatus guaranteed non-null here)
-    const status = reportStatus!
-
-    if (isTerminalStatus(status)) {
-      // Guard: if checkSentAt already cleared, another runCheck already handled this report
-      if (!deck.checkSentAt) {
-        logger.debug(`[booth-reactor] deck "${deck.name}" terminal report already handled (checkSentAt cleared)`)
-        return
-      }
-
-      const round = this.checkRounds.get(deck.id) ?? 1
-      const savedSnapshot = this.checkSnapshot.get(deck.id)
-      const hasChanges = savedSnapshot ? this.hasGitChanges(deck.dir, savedSnapshot) : false
-
-      // Check loop: if there are changes and we haven't hit max rounds, re-trigger
-      if (round < MAX_CHECK_ROUNDS && hasChanges) {
-        const nextRound = round + 1
-        this.checkRounds.set(deck.id, nextRound)
-        this.state.updateDeck(deck.id, { checkSentAt: undefined })
-        this.clearCheckPollTimer(deck.id)
-        this.deleteStaleReport(rPath!, deck.name)
-        logger.info(`[booth-reactor] deck "${deck.name}" check round ${round}/${MAX_CHECK_ROUNDS} complete with changes — triggering round ${nextRound}`)
-        const refreshed = this.state.getDeck(deck.id)
-        if (refreshed) this.triggerCheck(refreshed)
-        return
-      }
-
-      // Final round — clear all check loop state
+    // Check if terminal report already exists in DB
+    const dbReport = this.state.getReport(deck.name)
+    if (dbReport && isTerminalStatus(dbReport.status) && dbReport.createdAt >= deck.createdAt) {
+      logger.debug(`[booth-reactor] deck "${deck.name}" terminal report already in DB — skipping check`)
       this.state.updateDeck(deck.id, { checkSentAt: undefined })
       this.clearCheckPollTimer(deck.id)
       this.checkRounds.delete(deck.id)
       this.checkSnapshot.delete(deck.id)
+      return
+    }
 
-      if (round >= MAX_CHECK_ROUNDS && hasChanges) {
-        logger.warn(`[booth-reactor] deck "${deck.name}" hit MAX_CHECK_ROUNDS (${MAX_CHECK_ROUNDS}) with remaining changes`)
-      }
-
-      // Ingest report into SQLite
-      this.ingestReport(rPath!, deck.name, round, deck.sessionId)
-
-      if (deck.mode === 'hold') {
-        const msg = `Deck "${deck.name}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Deck is holding. Use "booth reports ${deck.name}" to read.`
-        this.notifyDj(msg)
-        this.holdingNotified.add(deck.id)
-        this.systemNotify(`Booth: ${deck.name} → ${status} (holding)`)
-        logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status} (holding, round ${round})`)
+    if (deck.checkSentAt) {
+      if (fromIdle) {
+        // Deck went idle without submitting report — resend.
+        // [booth-check] is idempotent (signals.md), safe after compaction/limit/crash.
+        logger.info(`[booth-reactor] deck "${deck.name}" idle without report — resending check (idempotent)`)
+        this.state.updateDeck(deck.id, { checkSentAt: undefined })
+        this.clearCheckPollTimer(deck.id)
+        // Fall through to send check below
       } else {
-        const msg = `Deck "${deck.name}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Use "booth reports ${deck.name}" to read.`
-        this.notifyDj(msg)
-        this.systemNotify(`Booth: ${deck.name} → ${status}`)
-        logger.info(`[booth-reactor] deck "${deck.name}" check result: ${status} (round ${round})`)
+        // Poll path — only check DB, don't resend (avoids message pile-up)
+        logger.debug(`[booth-reactor] deck "${deck.name}" check already sent, waiting for report`)
+        return
       }
-    } else {
-      logger.debug(`[booth-reactor] deck "${deck.name}" report status "${status}" is non-terminal — waiting`)
     }
-  }
 
-  private isStaleReport(rPath: string, deck: DeckInfo): boolean {
-    try {
-      const mtime = statSync(rPath).mtimeMs
-      return mtime < deck.createdAt
-    } catch {
-      return false
-    }
-  }
+    // No report yet → trigger deck self-check via .booth/check.md
+    const checkPath = boothPath(this.projectRoot, 'check.md')
+    const round = this.checkRounds.get(deck.id) ?? 1
+    this.checkRounds.set(deck.id, round)
 
-  private deleteStaleReport(rPath: string, deckName: string): void {
-    try {
-      unlinkSync(rPath)
-      logger.info(`[booth-reactor] deleted stale report for "${deckName}": ${rPath}`)
-    } catch (err) {
-      logger.warn(`[booth-reactor] failed to delete stale report for "${deckName}": ${err}`)
+    let msg = existsSync(checkPath)
+      ? `[booth-check] round=${round}/${MAX_CHECK_ROUNDS} Read ${checkPath} and follow the self-verification procedure.`
+      : `[booth-check] round=${round}/${MAX_CHECK_ROUNDS} Self-verify your work. Submit report via: booth report --status SUCCESS --body "your report with YAML frontmatter".`
+
+    // noLoop: tell deck to skip sub-agent review loop
+    if (deck.noLoop) {
+      msg += ' Skip the sub-agent review loop. Write your report directly.'
     }
+
+    // Identity — always present (critical for compaction recovery)
+    msg += `\n\nYou are booth deck "${deck.name}" (mode: ${deck.mode}).`
+    msg += `\nIf you need to review your original goal, run: \`booth status ${deck.name}\``
+
+    // Capture git snapshot for diff detection on next idle
+    this.checkSnapshot.set(deck.id, this.captureSnapshot(deck.dir))
+
+    // Set checking status optimistically
+    this.state.updateDeckStatus(deck.id, 'checking')
+    this.state.updateDeck(deck.id, { checkSentAt: Date.now() })
+    this.startCheckPoll(deck.id)
+
+    sendMessage(this.socket, this.state, deck.id, msg).then(result => {
+      if (!result.ok) {
+        logger.error(`[booth-reactor] check send failed for "${deck.name}": ${result.error}`)
+      } else {
+        logger.info(`[booth-reactor] sent check to "${deck.name}"`)
+      }
+    }).catch(err => logger.error(`[booth-reactor] check send threw for "${deck.name}": ${err}`))
   }
 
   // --- Git diff detection for check loop ---
@@ -489,36 +390,60 @@ export class Reactor {
   }
 
 
-  ingestReport(reportPath: string, deckName: string, round: number, sessionId?: string): void {
-    try {
-      const parsed = parseReport(reportPath)
-      if (!parsed) {
-        logger.warn(`[booth-reactor] report ingestion failed: could not parse ${reportPath}`)
-        return
-      }
-      // Use filename (without .md) as report ID for dedup
-      const id = reportPath.split('/').pop()?.replace(/\.md$/, '') ?? deckName
-      this.state.insertReport({
-        id,
-        deckName,
-        sessionId,
-        status: parsed.status,
-        content: parsed.content,
-        rounds: parsed.rounds ?? round,
-        hasHumanReview: parsed.hasHumanReview,
-        hasDjAction: parsed.hasDjAction,
-      })
-      logger.info(`[booth-reactor] report ingested: "${id}" (${parsed.status})`)
+  /**
+   * Called when a report is submitted via IPC (booth report CLI).
+   * Replaces the file-detection path for check flow completion.
+   */
+  onReportSubmitted(deckName: string, status: string): void {
+    // Find the deck by name
+    const deck = this.state.getAllDecks().find(d => d.name === deckName)
+    if (!deck) {
+      logger.warn(`[booth-reactor] report submitted for unknown deck "${deckName}"`)
+      return
+    }
 
-      // Delete .md file — content is now in SQLite
-      try {
-        unlinkSync(reportPath)
-        logger.debug(`[booth-reactor] deleted report file: ${reportPath}`)
-      } catch (unlinkErr) {
-        logger.warn(`[booth-reactor] failed to delete report file: ${unlinkErr}`)
-      }
-    } catch (err) {
-      logger.error(`[booth-reactor] report ingestion threw: ${err}`)
+    if (!isTerminalStatus(status)) {
+      logger.debug(`[booth-reactor] deck "${deckName}" report status "${status}" is non-terminal`)
+      return
+    }
+
+    const round = this.checkRounds.get(deck.id) ?? 1
+    const savedSnapshot = this.checkSnapshot.get(deck.id)
+    const hasChanges = savedSnapshot ? this.hasGitChanges(deck.dir, savedSnapshot) : false
+
+    // Check loop: if there are changes and we haven't hit max rounds, re-trigger
+    if (round < MAX_CHECK_ROUNDS && hasChanges) {
+      const nextRound = round + 1
+      this.checkRounds.set(deck.id, nextRound)
+      this.state.updateDeck(deck.id, { checkSentAt: undefined })
+      this.clearCheckPollTimer(deck.id)
+      logger.info(`[booth-reactor] deck "${deckName}" check round ${round}/${MAX_CHECK_ROUNDS} complete with changes — triggering round ${nextRound}`)
+      const refreshed = this.state.getDeck(deck.id)
+      if (refreshed) this.triggerCheck(refreshed)
+      return
+    }
+
+    // Final round — clear all check loop state
+    this.state.updateDeck(deck.id, { checkSentAt: undefined })
+    this.clearCheckPollTimer(deck.id)
+    this.checkRounds.delete(deck.id)
+    this.checkSnapshot.delete(deck.id)
+
+    if (round >= MAX_CHECK_ROUNDS && hasChanges) {
+      logger.warn(`[booth-reactor] deck "${deckName}" hit MAX_CHECK_ROUNDS (${MAX_CHECK_ROUNDS}) with remaining changes`)
+    }
+
+    if (deck.mode === 'hold') {
+      const msg = `Deck "${deckName}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Deck is holding. Use "booth reports ${deckName}" to read.`
+      this.notifyDj(msg)
+      this.holdingNotified.add(deck.id)
+      this.systemNotify(`Booth: ${deckName} → ${status} (holding)`)
+      logger.info(`[booth-reactor] deck "${deckName}" check result: ${status} (holding, round ${round})`)
+    } else {
+      const msg = `Deck "${deckName}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Use "booth reports ${deckName}" to read.`
+      this.notifyDj(msg)
+      this.systemNotify(`Booth: ${deckName} → ${status}`)
+      logger.info(`[booth-reactor] deck "${deckName}" check result: ${status} (round ${round})`)
     }
   }
 

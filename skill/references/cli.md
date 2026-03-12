@@ -23,6 +23,7 @@
 | `booth auto <name>` | Switch deck to auto mode |
 | `booth hold <name>` | Switch deck to hold mode |
 | `booth live <name>` | Switch deck to live mode |
+| `booth report --status <S> --body "..."` | Submit a check report (deck use only) |
 | `booth reports` | List all reports with status and age |
 | `booth reports <name>` | Print a report to stdout |
 | `booth reports open <name>` | Open a report in editor |
@@ -208,7 +209,7 @@ If beat isn't firing:
 
 ### Report not found
 
-Reports are stored in SQLite (`booth.db`, `reports` table). Decks write report files to `.booth/reports/` as a transient intermediate step — the daemon ingests them into the database and deletes the files. Do not rely on files in `.booth/reports/` for long-term access.
+Reports are stored in SQLite (`booth.db`, `reports` table). Decks submit reports via `booth report` CLI → IPC → daemon → SQLite. No file I/O involved.
 
 ```bash
 booth reports           # lists all reports from DB (works even when daemon is down)

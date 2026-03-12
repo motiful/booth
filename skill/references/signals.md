@@ -41,13 +41,13 @@ All alerts are delivered as `[booth-alert] <natural language description>`. Ther
 When daemon detects deck idle, behavior depends on mode:
 
 **Auto mode** (default):
-1. Check if `.booth/reports/<deck>.md` exists
+1. Check DB for terminal report
 2. **No report** → send `[booth-check]` to deck (triggers self-verification)
-3. **Report exists with terminal status** → notify DJ → DJ reads report → kill deck
+3. **Report submitted via `booth report` CLI** → daemon receives via IPC → notify DJ → kill deck
 
 **Hold mode**:
 1. Same check flow as auto
-2. **Report exists with terminal status** → notify DJ → deck **pauses** (waits for next instruction)
+2. **Report submitted with terminal status** → notify DJ → deck **pauses** (waits for next instruction)
 3. DJ can give the deck a new task or kill it
 
 **Live mode**:
@@ -81,7 +81,7 @@ The 3s delay allows `--dangerously-skip-permissions` to auto-resolve if possible
 | Signal | Target | When |
 |--------|--------|------|
 | `[booth-alert]` | DJ | Deck state change (idle with report, deck exited) |
-| `[booth-check]` | Deck | Deck idle, no report file yet |
+| `[booth-check]` | Deck | Deck idle, no terminal report in DB |
 | `[booth-beat]` | DJ | Timer: active decks exist + cooldown elapsed (fires regardless of DJ status) |
 
 ## Alert Delivery
@@ -95,13 +95,13 @@ The beat mechanism serves as a periodic fallback — even if an individual alert
 ### Check signal format
 
 ```
-[booth-check] Read /absolute/path/to/.booth/check.md and follow the self-verification procedure. Your report path: /absolute/path/to/.booth/reports/<deck>.md
+[booth-check] round=1/5 Read /absolute/path/to/.booth/check.md and follow the self-verification procedure.
 ```
 
 Paths are absolute (resolved from the project root). If `.booth/check.md` does not exist, a fallback message is sent instead:
 
 ```
-[booth-check] Self-verify your work. Write report to: /absolute/path/to/.booth/reports/<deck>.md with YAML frontmatter `status: SUCCESS` or `status: FAIL`.
+[booth-check] round=1/5 Self-verify your work. Submit report via: booth report --status SUCCESS --body "your report with YAML frontmatter".
 ```
 
 If the deck was spun with `--no-loop`, an additional suffix is appended: `Skip the sub-agent review loop. Write your report directly.`
@@ -146,7 +146,7 @@ No race condition: kill-pane triggers an async chain (SIGHUP → CC shutdown →
 CC exits gracefully → SessionEnd hook fires:
   1. read stdin JSON {session_id, transcript_path, cwd, reason}
   2. query SQLite — match deck by jsonlPath (status != 'exited')
-  3. write EXIT report to .booth/reports/<deck>.md
+  3. submit EXIT report via IPC "submit-report" → daemon DB
   4. IPC "deck-exited" → daemon: exitDeck() + notifyDj()
 ```
 

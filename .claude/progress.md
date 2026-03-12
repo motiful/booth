@@ -6,7 +6,17 @@
 
 > Compaction 防护 → Worktree isolation → Guardian 调研。详见下方路线图。
 
-### Recent (2026-03-12~13)
+### Recent (2026-03-13)
+
+**Beat cooldown 修复** (dfc6197)
+- Hold deck terminal report 存在时，idle↔working cycling 不再重置 beat cooldown
+- deck:state-changed handler 增加 terminal report 检查，跳过噪声状态变化
+
+**EPIPE 崩溃修复** (66cfba7)
+- IPC socket 加 error handler，EPIPE/ECONNRESET 不再杀死 daemon
+- socket.write() 前 destroyed guard，EADDRINUSE 自动恢复
+
+### Previous (2026-03-12~13)
 
 **Identity Refactor — 全部完成** (6ba5d3e → 3c9534b, 8 commits)
 - 7 步重构全部落地：Schema 迁移 → resolve.ts → 内部寻址改 sessionId → IPC/CLI/hook 适配 → reports 双列 → 文档同步
