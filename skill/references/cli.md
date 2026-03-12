@@ -12,7 +12,8 @@
 | `booth status <name>` | Show detailed info for a specific deck |
 | `booth peek <name>` | View a deck's terminal output (capture-pane) |
 | `booth send <name> --prompt "..."` | Send a prompt to a deck (idle/holding) |
-| `booth kill <name>` | Kill a deck (marks exited, row preserved in DB) |
+| `booth kill <name>` | Kill a deck (safety checks: blocks working/checking/hold/live decks) |
+| `booth kill <name> -f` | Force kill a deck (bypasses safety checks, still can't kill DJ) |
 | `booth resume` | Resume all non-exited decks (auto-starts daemon if needed) |
 | `booth resume <name>` | Resume a specific deck by name — unconditional, any status |
 | `booth stop` | Stop booth entirely (daemon + all decks + tmux session) |
@@ -135,7 +136,8 @@ booth reports fix-typo   # read a report
 ### 5. Clean up
 
 ```bash
-booth kill fix-typo      # kill a single deck (marks exited, row preserved)
+booth kill fix-typo      # kill a deck (blocked if working/checking/hold/live)
+booth kill fix-typo -f   # force kill (bypasses safety, still can't kill DJ)
 booth stop               # stop everything (status preserved for resume)
 booth stop --clean       # stop everything (marks all exited)
 ```
@@ -189,7 +191,7 @@ A deck shows `working` in `booth ls` but doesn't seem to be making progress.
 2. **Check deck age:** `booth status <name>` — if updated recently, it's still active
 3. **Check for CC plan mode:** The daemon auto-approves plan mode exit in auto/hold modes (3s delay). If the deck is in live mode, plan mode won't be auto-approved
 4. **Check JSONL tailing:** The daemon may have lost its JSONL tail. Try `booth reload` to reconnect
-5. **Last resort:** `booth kill <name>` and re-spin
+5. **Last resort:** `booth kill <name> -f` and re-spin (force required since deck is working)
 
 ### Beat not triggering
 
@@ -206,18 +208,14 @@ If beat isn't firing:
 
 ### Report not found
 
-Reports are stored at `.booth/reports/<deck-name>.md`. If a report has a timestamp suffix:
+Reports are stored in SQLite (`booth.db`, `reports` table). Decks write report files to `.booth/reports/` as a transient intermediate step — the daemon ingests them into the database and deletes the files. Do not rely on files in `.booth/reports/` for long-term access.
 
 ```bash
-# List all report files
-ls .booth/reports/
-
-# Find reports by deck name
-booth reports           # lists all with status and age
-booth reports <name>    # prints report content (finds latest match)
+booth reports           # lists all reports from DB (works even when daemon is down)
+booth reports <name>    # prints report content from DB
 ```
 
-`booth reports` uses fuzzy matching — it finds the latest report file whose name starts with the deck name.
+`booth reports <name>` matches by report ID first, then by deck name (most recent). Both commands work without the daemon running — they read the database directly as a fallback.
 
 ### Deck fails to start
 

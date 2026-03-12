@@ -312,12 +312,50 @@ export class Daemon {
       case 'kill-deck': {
         const sessionId = typeof msg.sessionId === 'string' && msg.sessionId ? msg.sessionId : null
         if (!sessionId) return { error: 'sessionId string required' }
+        const force = msg.force === true
+
+        // DJ protection — always reject, even with force
+        const deckName = typeof msg.name === 'string' ? msg.name : ''
+        if (deckName.toLowerCase() === 'dj') {
+          return { error: 'cannot kill DJ — use "booth stop" to shut down booth' }
+        }
+
         const socket = this.socket
         const deck = this.state.getDeck(sessionId)
-        if (deck?.paneId) {
+
+        if (!deck) {
+          // Already exited or not found — safe to proceed with cleanup
+          this.removeDeck(sessionId)
+          return { ok: true }
+        }
+
+        // Safety checks — block unless forced
+        if (!force) {
+          const { status, mode } = deck
+          // Working or checking deck — always block
+          if (status === 'working' || status === 'checking') {
+            return {
+              ok: false,
+              blocked: true,
+              reason: `deck "${deck.name}" is ${status} — cannot kill a ${status} deck without -f`,
+            }
+          }
+          // Hold or live mode (idle) — block to protect persistent workspaces
+          if (status === 'idle' && (mode === 'hold' || mode === 'live')) {
+            return {
+              ok: false,
+              blocked: true,
+              reason: `deck "${deck.name}" is idle in ${mode} mode — ${mode} decks are persistent workspaces, use -f to force kill`,
+            }
+          }
+          // idle + auto, exited — safe to kill
+        }
+
+        if (deck.paneId) {
           tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
         }
         this.removeDeck(sessionId)
+        logger.info(`[booth-daemon] deck "${deck.name}" killed${force ? ' (forced)' : ''}`)
         return { ok: true }
       }
       case 'deck-exited': {

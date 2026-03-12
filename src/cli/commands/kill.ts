@@ -8,9 +8,20 @@ export async function killCommand(args: string[]): Promise<void> {
     process.exit(1)
   }
 
-  const name = args[0]
+  // Parse flags
+  let force = false
+  const positional: string[] = []
+  for (const arg of args) {
+    if (arg === '-f' || arg === '--force') {
+      force = true
+    } else {
+      positional.push(arg)
+    }
+  }
+
+  const name = positional[0]
   if (!name) {
-    console.error('Usage: booth kill <name>')
+    console.error('Usage: booth kill <name> [-f|--force]')
     process.exit(1)
   }
 
@@ -23,8 +34,24 @@ export async function killCommand(args: string[]): Promise<void> {
 
   const resolved = resolveIdentifier(projectRoot, name)
 
-  // Daemon handles tmux kill + state cleanup in one atomic operation
-  await ipcRequest(projectRoot, { cmd: 'kill-deck', sessionId: resolved.sessionId, name: resolved.name })
+  // Daemon handles safety checks, tmux kill + state cleanup
+  const res = await ipcRequest(projectRoot, {
+    cmd: 'kill-deck',
+    sessionId: resolved.sessionId,
+    name: resolved.name,
+    force,
+  }) as { ok?: boolean; error?: string; blocked?: boolean; reason?: string }
 
-  console.log(`[booth] deck "${resolved.name}" killed`)
+  if (res.blocked) {
+    console.error(`[booth] kill blocked: ${res.reason}`)
+    console.error('[booth] use "booth kill <name> -f" to force kill')
+    process.exit(1)
+  }
+
+  if (res.error) {
+    console.error(`[booth] error: ${res.error}`)
+    process.exit(1)
+  }
+
+  console.log(`[booth] deck "${resolved.name}" killed${force ? ' (forced)' : ''}`)
 }

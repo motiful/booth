@@ -340,7 +340,7 @@ When DJ receives a check-complete alert, **review before kill**:
 ### What "handling" looks like
 
 - **SUCCESS report (auto deck)** → acknowledge, `booth kill <deck>`, move on to next task
-- **SUCCESS report (hold deck)** → deck is paused. Send next instruction with `booth send <deck> --prompt "..."`. **NEVER kill a hold deck without explicit user permission.** Hold decks are the user's persistent workspaces — killing one destroys the CC session and all conversation context. Only the user decides when a hold deck is done.
+- **SUCCESS report (hold deck)** → deck is paused. Send next instruction with `booth send <deck> --prompt "..."`. **NEVER kill a hold deck without explicit user permission.** Hold decks are the user's persistent workspaces — killing one destroys the CC session and all conversation context. Only the user decides when a hold deck is done. (This rule is enforced by mechanism: `booth kill` blocks on hold/live decks, requiring `-f` to override.)
 - **FAIL report** → read what failed, decide: re-spin with adjusted prompt, or escalate to user
 - **deck-exited** → read the EXIT report in `.booth/reports/<deck>.md`. Check the last activity to understand why. If task was incomplete, re-spin. If the user `/exit`'d intentionally, acknowledge and move on. Deck stays in `booth ls` as `exited` — kill it when done reviewing.
 - **No more tasks** → tell user everything is done, summarize results
@@ -420,7 +420,7 @@ The user should never have to piece together what happened across decks. DJ cons
 | Goal | Command | Behavior |
 |------|---------|----------|
 | Reload daemon code | `booth reload` | Hot-restart daemon, all tmux panes stay alive |
-| Exit one deck | `booth kill <name>` | exitDeck → kill pane. Record stays in DB, still resumable via `booth resume <name>` |
+| Exit one deck | `booth kill <name>` | Safety check → exitDeck → kill pane. Blocks if working/checking/hold/live (use `-f` to force). DJ is never killable. Record stays in DB, still resumable via `booth resume <name>` |
 | Exit all + preserve resume | `booth stop` | Kill all panes, status unchanged in DB, resumable |
 | Exit all + no resume | `booth stop --clean` | Kill all panes + set all to exited |
 | Full restart | `booth restart` | stop + start + resume all |
