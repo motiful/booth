@@ -2,8 +2,8 @@ import { readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { findProjectRoot } from '../../constants.js'
-import { findLatestReport } from '../../daemon/report.js'
+import Database from 'better-sqlite3'
+import { findProjectRoot, boothPath, DB_FILE } from '../../constants.js'
 import { readConfig } from '../../config.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import type { ReportInfo } from '../../types.js'
@@ -42,13 +42,28 @@ async function getReportContent(projectRoot: string, name: string): Promise<stri
     }
   }
 
-  // Fallback: read from filesystem (old reports without content in DB)
-  const rPath = findLatestReport(projectRoot, name)
-  if (rPath) {
-    return readFileSync(rPath, 'utf-8')
-  }
+  // Fallback: read DB directly (daemon not running)
+  return getReportContentFromDb(projectRoot, name)
+}
 
-  return null
+function getReportContentFromDb(projectRoot: string, name: string): string | null {
+  const dbPath = boothPath(projectRoot, DB_FILE)
+  if (!existsSync(dbPath)) return null
+  try {
+    const db = new Database(dbPath, { readonly: true })
+    try {
+      // Try by ID first, then by deck_name (most recent)
+      let row = db.prepare(`SELECT content FROM reports WHERE id = ?`).get(name) as { content: string } | undefined
+      if (!row) {
+        row = db.prepare(`SELECT content FROM reports WHERE deck_name = ? ORDER BY created_at DESC LIMIT 1`).get(name) as { content: string } | undefined
+      }
+      return row?.content ?? null
+    } finally {
+      db.close()
+    }
+  } catch {
+    return null
+  }
 }
 
 function parseReportsArgs(args: string[]): { limit: number; offset: number; showAll: boolean } {
@@ -170,45 +185,67 @@ export async function reportsCommand(args: string[]): Promise<void> {
     }
   }
 
-  // Fallback: filesystem scan (daemon not running or IPC failed)
-  const { reportsDir } = await import('../../constants.js')
-  const { readdirSync, statSync } = await import('node:fs')
-  const { readReportStatus } = await import('../../daemon/report.js')
+  // Fallback: read DB directly (daemon not running or IPC failed)
+  listReportsFromDb(projectRoot, showAll ? 0 : limit, offset)
+}
 
-  const dir = reportsDir(projectRoot)
-  if (!existsSync(dir)) {
+interface ReportListRow {
+  id: string
+  deck_name: string
+  status: string
+  created_at: number
+  read_status: string
+  rounds: number | null
+  has_human_review: number
+  has_dj_action: number
+}
+
+function listReportsFromDb(projectRoot: string, limit: number, offset: number): void {
+  const dbPath = boothPath(projectRoot, DB_FILE)
+  if (!existsSync(dbPath)) {
     console.log('No reports.')
     return
   }
 
-  const files = readdirSync(dir).filter(f => f.endsWith('.md'))
-  if (files.length === 0) {
-    console.log('No reports.')
-    return
-  }
+  const db = new Database(dbPath, { readonly: true })
+  try {
+    const totalRow = db.prepare(`SELECT COUNT(*) as total FROM reports`).get() as { total: number }
+    const total = totalRow.total
+    if (total === 0) {
+      console.log('No reports.')
+      return
+    }
 
-  let entries = files.map(f => {
-    const fullPath = join(dir, f)
-    const name = basename(f, '.md')
-    const status = readReportStatus(fullPath)
-    const mtime = statSync(fullPath).mtimeMs
-    return { name, status, mtime }
-  }).sort((a, b) => b.mtime - a.mtime)
+    let sql = `SELECT id, deck_name, status, created_at, read_status, rounds, has_human_review, has_dj_action FROM reports ORDER BY created_at DESC`
+    const params: number[] = []
+    if (limit > 0) {
+      sql += ` LIMIT ?`
+      params.push(limit)
+      if (offset > 0) {
+        sql += ` OFFSET ?`
+        params.push(offset)
+      }
+    }
+    const rows = db.prepare(sql).all(...params) as ReportListRow[]
 
-  const total = entries.length
-  if (!showAll) {
-    entries = entries.slice(offset, offset + limit)
-  }
-
-  const maxName = Math.max(...entries.map(r => r.name.length))
-  console.log('Reports:')
-  for (const r of entries) {
-    const name = r.name.padEnd(maxName)
-    const status = (r.status ?? 'UNKNOWN').padEnd(10)
-    const time = relativeTime(Date.now() - r.mtime)
-    console.log(`  ${name}  ${status}  ${time}`)
-  }
-  if (!showAll && entries.length < total) {
-    console.log(`\n  (showing ${entries.length} of ${total} — use --all to see all, or -n / --offset to paginate)`)
+    const maxName = Math.max(...rows.map(r => r.deck_name.length))
+    console.log('Reports:')
+    for (const r of rows) {
+      const readIcon = r.read_status === 'read' ? ' ' : '*'
+      const name = r.deck_name.padEnd(maxName)
+      const status = r.status.padEnd(10)
+      const time = relativeTime(Date.now() - r.created_at)
+      const rounds = r.rounds ? `r${r.rounds}` : ''
+      const flags: string[] = []
+      if (r.has_human_review) flags.push('human-review')
+      if (r.has_dj_action) flags.push('dj-action')
+      const flagStr = flags.length > 0 ? `  [${flags.join(', ')}]` : ''
+      console.log(`  ${readIcon} ${name}  ${status}  ${rounds.padEnd(4)} ${time}${flagStr}`)
+    }
+    if (limit > 0 && rows.length < total) {
+      console.log(`\n  (showing ${rows.length} of ${total} — use --all to see all, or -n / --offset to paginate)`)
+    }
+  } finally {
+    db.close()
   }
 }

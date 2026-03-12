@@ -1,6 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, statSync, renameSync, mkdirSync, unlinkSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, statSync, unlinkSync } from 'node:fs'
 import { BoothState } from './state.js'
 import { sendMessage } from './send-message.js'
 import { readReportStatus, isTerminalStatus, findLatestReport, parseReport } from './report.js'
@@ -88,9 +87,9 @@ export class Reactor {
   private runCheck(deck: DeckInfo, fromIdle = false): void {
     let rPath = findLatestReport(this.projectRoot, deck.name)
 
-    // Stale report detection: if report exists but is older than the deck, archive it
+    // Stale report detection: if report exists but is older than the deck, delete it
     if (rPath && this.isStaleReport(rPath, deck)) {
-      this.archiveStaleReport(rPath, deck.name)
+      this.deleteStaleReport(rPath, deck.name)
       rPath = undefined
     }
 
@@ -179,7 +178,7 @@ export class Reactor {
         this.checkRounds.set(deck.id, nextRound)
         this.state.updateDeck(deck.id, { checkSentAt: undefined })
         this.clearCheckPollTimer(deck.id)
-        this.archiveStaleReport(rPath!, deck.name)
+        this.deleteStaleReport(rPath!, deck.name)
         logger.info(`[booth-reactor] deck "${deck.name}" check round ${round}/${MAX_CHECK_ROUNDS} complete with changes — triggering round ${nextRound}`)
         const refreshed = this.state.getDeck(deck.id)
         if (refreshed) this.triggerCheck(refreshed)
@@ -225,17 +224,12 @@ export class Reactor {
     }
   }
 
-  private archiveStaleReport(rPath: string, deckName: string): void {
+  private deleteStaleReport(rPath: string, deckName: string): void {
     try {
-      const dir = dirname(rPath)
-      const archiveDir = join(dir, 'archive')
-      if (!existsSync(archiveDir)) mkdirSync(archiveDir, { recursive: true })
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-      const archivePath = join(archiveDir, `${deckName}-${timestamp}.md`)
-      renameSync(rPath, archivePath)
-      logger.info(`[booth-reactor] archived stale report for "${deckName}" → ${archivePath}`)
+      unlinkSync(rPath)
+      logger.info(`[booth-reactor] deleted stale report for "${deckName}": ${rPath}`)
     } catch (err) {
-      logger.warn(`[booth-reactor] failed to archive stale report for "${deckName}": ${err}`)
+      logger.warn(`[booth-reactor] failed to delete stale report for "${deckName}": ${err}`)
     }
   }
 
