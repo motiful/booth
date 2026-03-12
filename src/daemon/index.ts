@@ -132,6 +132,13 @@ export class Daemon {
       if (!deck.paneId) continue
       const check = tmuxSafe(socket, 'display-message', '-t', deck.paneId, '-p', '#{pane_pid}')
       if (!check.ok || !check.output.trim()) {
+        // Live decks are persistent workspaces — never auto-clear their paneId.
+        // The user may resume manually; clearing makes them unrecoverable.
+        if (deck.mode === 'live') {
+          logger.warn(`[booth-daemon] deck "${deck.name}" (live) pane gone — preserving pane_id for manual resume`)
+          this.signal.unwatch(deck.id)
+          continue
+        }
         logger.warn(`[booth-daemon] deck "${deck.name}" pane gone, cleared pane_id (resumable)`)
         this.state.clearPaneId(deck.id)
         this.signal.unwatch(deck.id)

@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { findProjectRoot, deriveSocket, initBoothDir, logsDir, generateSessionId, jsonlPathForSession, SESSION } from '../../constants.js'
 import { hasSession, newSession, tmux, tmuxSafe, tmuxAttach } from '../../tmux.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
-import { ensureSessionStartHook, ensureSessionEndHook } from '../../hooks.js'
+import { ensureSessionStartHook, ensureSessionEndHook, ensurePreCompactHook } from '../../hooks.js'
 
 function forkDaemon(projectRoot: string): void {
   const daemonEntry = join(dirname(fileURLToPath(import.meta.url)), '../../daemon/run.js')
@@ -32,8 +32,10 @@ export async function ensureDaemonAndSession(projectRoot: string): Promise<void>
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
   const sessionStartHookScript = join(packageRoot, 'skill', 'scripts', 'session-start-hook.sh')
   const sessionEndHookScript = join(packageRoot, 'skill', 'scripts', 'session-end-hook.sh')
+  const preCompactHookScript = join(packageRoot, 'skill', 'scripts', 'pre-compact-hook.sh')
   ensureSessionStartHook(projectRoot, sessionStartHookScript)
   ensureSessionEndHook(projectRoot, sessionEndHookScript)
+  ensurePreCompactHook(projectRoot, preCompactHookScript)
 
   if (!(await isDaemonRunning(projectRoot))) {
     forkDaemon(projectRoot)
@@ -49,6 +51,7 @@ export async function ensureDaemonAndSession(projectRoot: string): Promise<void>
 
   if (!hasSession(socket, SESSION)) {
     newSession(socket, SESSION)
+    tmux(socket, 'rename-window', '-t', `${SESSION}:0`, 'dj')
     tmux(socket, 'set', '-g', '@booth-root', projectRoot)
     tmux(socket, 'set', '-g', '@booth-socket', socket)
     console.log(`[booth] tmux session created (socket: ${socket})`)
