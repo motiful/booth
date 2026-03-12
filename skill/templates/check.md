@@ -12,6 +12,16 @@
 
 You have finished your task. Before it's delivered, you must verify your own work.
 
+### Goal Alignment
+
+Before assessing acceptance, determine what goal to verify against:
+
+- If your most recent instructions clearly define the current task, verify against those.
+- If you're unsure what success looks like, run `booth status YOUR_NAME` to check
+  your original goal. Compare it with your recent work to decide if it's still relevant.
+- For multi-round work (hold mode), your latest instructions take precedence over
+  the original goal — tasks evolve.
+
 There are two paths depending on whether the deck was spun with `--no-loop`:
 
 - **Default (looper enabled)**: Run the full sub-agent review loop below

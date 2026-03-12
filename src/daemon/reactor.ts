@@ -148,10 +148,9 @@ export class Reactor {
         msg += ' Skip the sub-agent review loop. Write your report directly.'
       }
 
-      // Inject original goal so deck can self-verify against it
-      if (deck.prompt) {
-        msg += `\n\n**Original Goal:**\n${deck.prompt}`
-      }
+      // Identity — always present (critical for compaction recovery)
+      msg += `\n\nYou are booth deck "${deck.name}" (mode: ${deck.mode}).`
+      msg += `\nIf you need to review your original goal, run: \`booth status ${deck.name}\``
 
       // Capture git snapshot for diff detection on next idle
       this.checkSnapshot.set(deck.id, this.captureSnapshot(deck.dir))
