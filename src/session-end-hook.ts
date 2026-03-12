@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import Database from 'better-sqlite3'
 import { findProjectRoot, boothPath, timestampedReportPath, reportsDir, DB_FILE } from './constants.js'
-import { findLatestReport } from './daemon/report.js'
+import { findLatestReport, readReportStatus } from './daemon/report.js'
 import { ipcRequest } from './ipc.js'
 
 interface SessionEndInput {
@@ -133,10 +133,13 @@ async function main(): Promise<void> {
   const sessionId = match.sessionId ?? `deck-${match.name}`
   const deckName = match.name
 
+  // Only reuse an existing report if it has valid YAML frontmatter (a real check report).
+  // Deliverables (deck work output without frontmatter) should not block EXIT report creation.
   const existingReport = findLatestReport(projectRoot, deckName)
+  const hasValidReport = existingReport ? readReportStatus(existingReport) !== null : false
 
-  let finalReportPath = existingReport
-  if (!existingReport) {
+  let finalReportPath = hasValidReport ? existingReport : undefined
+  if (!finalReportPath) {
     finalReportPath = timestampedReportPath(projectRoot, deckName)
     const { userText, assistantText } = parseJsonlTail(transcriptPath)
     const timestamp = new Date().toISOString()

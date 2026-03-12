@@ -94,6 +94,17 @@ export class Reactor {
       rPath = undefined
     }
 
+    // Skip files without valid YAML frontmatter — these are deliverables
+    // (deck work output), not check reports. Treat as if no report exists.
+    let reportStatus: string | null = null
+    if (rPath) {
+      reportStatus = readReportStatus(rPath)
+      if (!reportStatus) {
+        logger.debug(`[booth-reactor] deck "${deck.name}" ignoring non-report file (no YAML status): ${rPath}`)
+        rPath = undefined
+      }
+    }
+
     if (!rPath) {
       if (deck.checkSentAt) {
         if (fromIdle) {
@@ -148,12 +159,8 @@ export class Reactor {
       return
     }
 
-    // Report exists — check status
-    const status = readReportStatus(rPath)
-    if (!status) {
-      logger.warn(`[booth-reactor] deck "${deck.name}" report exists but has no valid YAML status — waiting`)
-      return
-    }
+    // Report exists with valid status (reportStatus guaranteed non-null here)
+    const status = reportStatus!
 
     if (isTerminalStatus(status)) {
       // Guard: if checkSentAt already cleared, another runCheck already handled this report
@@ -458,7 +465,7 @@ export class Reactor {
   }
 
 
-  private ingestReport(reportPath: string, deckName: string, round: number, sessionId?: string): void {
+  ingestReport(reportPath: string, deckName: string, round: number, sessionId?: string): void {
     try {
       const parsed = parseReport(reportPath)
       if (!parsed) {

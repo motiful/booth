@@ -338,6 +338,12 @@ export class Daemon {
           tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
         }
 
+        // Ingest report before exiting (so it goes into SQLite)
+        const reportPath = typeof msg.reportPath === 'string' ? msg.reportPath : null
+        if (reportPath) {
+          this.reactor.ingestReport(reportPath, deckName, 0, deck.sessionId)
+        }
+
         // Cleanup — exit (single atomic step)
         this.stopWaiter(sessionId)
         this.signal.unwatch(sessionId)
