@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { findProjectRoot, deriveSocket, generateSessionId, ccProjectsDir } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { tmux, sleepMs } from '../../tmux.js'
-import { createWorktree } from '../../worktree.js'
+import { deckWorktreePath } from '../../worktree.js'
 import type { DeckInfo, DeckMode } from '../../types.js'
 
 export async function spinCommand(args: string[]): Promise<void> {
@@ -38,8 +38,8 @@ export async function spinCommand(args: string[]): Promise<void> {
     process.exit(1)
   }
 
-  // Create git worktree for isolation
-  const wtPath = createWorktree(projectRoot, name)
+  // CC --worktree creates the worktree + symlinks. Path is deterministic.
+  const wtPath = deckWorktreePath(projectRoot, name)
 
   // Pre-generate session ID — JSONL path is deterministic.
   // CC runs in the worktree, so it will encode the worktree path for JSONL storage.
@@ -47,11 +47,10 @@ export async function spinCommand(args: string[]): Promise<void> {
   const wtProjectsDir = ccProjectsDir(wtPath)
   const jsonlPath = join(wtProjectsDir, `${sessionId}.jsonl`)
 
-  // Create shell window in the worktree directory.
-  // -c sets the starting directory for the new window.
+  // Create shell window in project root (CC --worktree will cd into worktree).
   // -P -F gets paneId atomically in one call.
   const paneId = tmux(socket, 'new-window', '-d', '-a', '-t', 'dj', '-n', name,
-    '-c', wtPath, '-P', '-F', '#{pane_id}')
+    '-c', projectRoot, '-P', '-F', '#{pane_id}')
 
   const deck: DeckInfo = {
     id: sessionId,
@@ -86,9 +85,9 @@ export async function spinCommand(args: string[]): Promise<void> {
     const promptFile = join(tmpdir(), `booth-prompt-${name}-${Date.now()}.txt`)
     writeFileSync(promptFile, prompt)
     tmux(socket, 'send-keys', '-t', paneId,
-      `${envSetup} && PROMPT=$(cat ${promptFile}) && rm -f ${promptFile} && claude --dangerously-skip-permissions --session-id "${sessionId}" "$PROMPT"; reset`, 'Enter')
+      `${envSetup} && PROMPT=$(cat ${promptFile}) && rm -f ${promptFile} && claude --worktree ${name} --dangerously-skip-permissions --session-id "${sessionId}" "$PROMPT"; reset`, 'Enter')
   } else {
-    tmux(socket, 'send-keys', '-t', paneId, `${envSetup} && claude --dangerously-skip-permissions --session-id "${sessionId}"; reset`, 'Enter')
+    tmux(socket, 'send-keys', '-t', paneId, `${envSetup} && claude --worktree ${name} --dangerously-skip-permissions --session-id "${sessionId}"; reset`, 'Enter')
   }
 
   const modeLabel = mode === 'auto' ? '' : ` [${mode}]`

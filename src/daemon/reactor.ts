@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { BoothState } from './state.js'
 import { sendMessage } from './send-message.js'
 import { isTerminalStatus } from './report.js'
+import { tryMerge } from '../worktree.js'
 import { boothPath } from '../constants.js'
 import { tmuxSafe } from '../tmux.js'
 import { logger } from './logger.js'
@@ -77,12 +78,21 @@ export class Reactor {
   }
 
   private onDeckIdle(deck: DeckInfo): void {
-    logger.debug(`[booth-reactor] deck "${deck.name}" idle (mode=${deck.mode}, checkSentAt=${deck.checkSentAt ?? 'none'})`)
+    logger.debug(`[booth-reactor] deck "${deck.name}" idle (mode=${deck.mode}, checkSentAt=${deck.checkSentAt ?? 'none'}, mergeStatus=${deck.mergeStatus ?? 'none'})`)
     // Cancel plan mode timer — deck completed its turn, approval was auto-granted
     if (this.planModeTimers.has(deck.id)) {
       this.clearPlanModeTimer(deck.id)
       logger.debug(`[booth-reactor] deck "${deck.name}" plan mode auto-resolved (idle)`)
     }
+
+    // Merge conflict: deck was resumed to resolve conflicts. Send guidance message.
+    if (deck.mergeStatus === 'conflict') {
+      sendMessage(this.socket, this.state, deck.id,
+        `[booth-merge-conflict] Your branch has conflicts with main. Run \`git rebase main\`, resolve all conflicts, commit, then idle. A check will re-run automatically.`
+      ).catch(err => logger.error(`[booth-reactor] conflict message failed for "${deck.name}": ${err}`))
+      return
+    }
+
     // Live mode: skip check unless one is already in-flight
     if (deck.mode === 'live' && !deck.checkSentAt) {
       logger.debug(`[booth-reactor] deck "${deck.name}" live mode — skipping check`)
@@ -382,6 +392,11 @@ export class Reactor {
   private onDeckWorking(deck: DeckInfo): void {
     // Clear holding-notified flag — deck is active again
     this.holdingNotified.delete(deck.id)
+    // Reset merge status — deck is actively working again
+    if (deck.mergeStatus) {
+      this.state.updateDeck(deck.id, { mergeStatus: undefined })
+      logger.debug(`[booth-reactor] deck "${deck.name}" merge status reset (working)`)
+    }
     // Cancel plan mode timer — deck progressed, approval was auto-granted
     if (this.planModeTimers.has(deck.id)) {
       this.clearPlanModeTimer(deck.id)
@@ -433,8 +448,12 @@ export class Reactor {
       logger.warn(`[booth-reactor] deck "${deckName}" hit MAX_CHECK_ROUNDS (${MAX_CHECK_ROUNDS}) with remaining changes`)
     }
 
-    if (deck.mode === 'hold') {
-      const msg = `Deck "${deckName}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Deck is holding. Use "booth reports ${deckName}" to read.`
+    if (deck.mode === 'auto') {
+      // Auto merge after check SUCCESS
+      this.attemptMerge(deck, status, round)
+    } else if (deck.mode === 'hold') {
+      this.state.updateDeck(deck.id, { mergeStatus: 'pending' })
+      const msg = `Deck "${deckName}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Merge pending — use "booth merge ${deckName}". Report: "booth reports ${deckName}".`
       this.notifyDj(msg)
       this.holdingNotified.add(deck.id)
       this.systemNotify(`Booth: ${deckName} → ${status} (holding)`)
@@ -444,6 +463,33 @@ export class Reactor {
       this.notifyDj(msg)
       this.systemNotify(`Booth: ${deckName} → ${status}`)
       logger.info(`[booth-reactor] deck "${deckName}" check result: ${status} (round ${round})`)
+    }
+  }
+
+  private attemptMerge(deck: DeckInfo, checkStatus: string, round: number): void {
+    this.state.updateDeck(deck.id, { mergeStatus: 'merging' })
+    const result = tryMerge(this.projectRoot, deck.name)
+
+    if (result.ok) {
+      if (result.nothingToMerge) {
+        this.state.updateDeck(deck.id, { mergeStatus: undefined })
+        const msg = `Deck "${deck.name}" check complete: ${checkStatus} (round ${round}/${MAX_CHECK_ROUNDS}). No new commits to merge.`
+        this.notifyDj(msg)
+      } else {
+        this.state.updateDeck(deck.id, { mergeStatus: 'merged' })
+        const msg = `Deck "${deck.name}" check complete: ${checkStatus} (round ${round}/${MAX_CHECK_ROUNDS}). Merged to main.`
+        this.notifyDj(msg)
+        this.systemNotify(`Booth: ${deck.name} merged`)
+      }
+      logger.info(`[booth-reactor] deck "${deck.name}" merge: ${result.nothingToMerge ? 'nothing to merge' : 'success'}`)
+    } else {
+      this.state.updateDeck(deck.id, { mergeStatus: 'conflict' })
+      sendMessage(this.socket, this.state, deck.id,
+        `[booth-merge-conflict] Auto-merge failed after check. Run \`git rebase main\`, resolve conflicts, commit, then idle. Check will re-run.`
+      ).catch(err => logger.error(`[booth-reactor] conflict message failed for "${deck.name}": ${err}`))
+      const msg = `Deck "${deck.name}" check complete: ${checkStatus}, but merge conflict. Deck notified to resolve.`
+      this.notifyDj(msg)
+      logger.warn(`[booth-reactor] deck "${deck.name}" merge conflict: ${result.error}`)
     }
   }
 

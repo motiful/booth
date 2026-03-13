@@ -27,7 +27,7 @@ Booth injects signals into CC sessions via the editor proxy (Ctrl+G mechanism):
 
 ## Report Statuses
 
-Decks write reports to `.booth/reports/<deck>.md`:
+Decks submit reports via `booth report` CLI → daemon → SQLite:
 
 | Status | Meaning |
 |--------|---------|
@@ -41,8 +41,7 @@ Decks write reports to `.booth/reports/<deck>.md`:
 | Path | Purpose |
 |------|---------|
 | `.booth/` | Booth runtime directory (project-local) |
-| `.booth/reports/` | Deck check reports |
-| `.booth/booth.db` | Daemon state (SQLite: decks, DJ, reports) |
+| `.booth/booth.db` | Daemon state + reports (SQLite). Use `booth reports` CLI to read |
 | `.booth/mix.md` | DJ management guidelines (customizable) |
 | `.booth/check.md` | Deck self-verification template (customizable) |
 | `.booth/beat.md` | Beat patrol checklist (customizable) |

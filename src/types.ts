@@ -2,6 +2,7 @@ export type DeckStatus = 'working' | 'idle' | 'checking' | 'exited'
 
 export type DeckMode = 'auto' | 'hold' | 'live'
 
+export type MergeStatus = 'pending' | 'merging' | 'merged' | 'conflict'
 
 export interface DeckInfo {
   id: string
@@ -16,6 +17,7 @@ export interface DeckInfo {
   noLoop?: boolean
   worktreePath?: string
   checkSentAt?: number
+  mergeStatus?: MergeStatus
   createdAt: number
   updatedAt: number
 }

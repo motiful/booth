@@ -10,7 +10,6 @@ export const SESSION = 'dj'
 export const BOOTH_DIR = '.booth'
 export const STATE_FILE = 'state.json'
 export const DB_FILE = 'booth.db'
-export const REPORTS_DIR = 'reports'
 
 export function findProjectRoot(from: string = process.cwd()): string {
   // BOOTH_PROJECT_ROOT is set in worktree deck environments to point back
@@ -42,14 +41,6 @@ export function deriveSocket(projectRoot: string): string {
 
 export function boothDir(projectRoot: string): string {
   return join(projectRoot, BOOTH_DIR)
-}
-
-export function reportsDir(projectRoot: string): string {
-  return join(boothDir(projectRoot), REPORTS_DIR)
-}
-
-export function reportPath(projectRoot: string, deckName: string): string {
-  return join(reportsDir(projectRoot), `${deckName}.md`)
 }
 
 // Resolve the skill directory (relative to compiled dist/src/ → ../../skill/)

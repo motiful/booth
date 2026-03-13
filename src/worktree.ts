@@ -1,20 +1,14 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync } from 'node:fs'
+import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { boothDir } from './constants.js'
 
-const WORKTREES_DIR = 'worktrees'
-
-export function worktreesDir(projectRoot: string): string {
-  return join(boothDir(projectRoot), WORKTREES_DIR)
-}
-
 export function deckWorktreePath(projectRoot: string, deckName: string): string {
-  return join(worktreesDir(projectRoot), deckName)
+  return join(projectRoot, '.claude', 'worktrees', deckName)
 }
 
 export function branchName(deckName: string): string {
-  return `booth/${deckName}`
+  return `worktree-${deckName}`
 }
 
 function gitSync(args: string[], cwd: string): string {
@@ -26,11 +20,12 @@ function gitSync(args: string[], cwd: string): string {
   }).trim()
 }
 
-function gitSyncSafe(args: string[], cwd: string): { ok: boolean; output: string } {
+function gitSyncSafe(args: string[], cwd: string): { ok: boolean; output: string; error?: string } {
   try {
     return { ok: true, output: gitSync(args, cwd) }
-  } catch {
-    return { ok: false, output: '' }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { ok: false, output: '', error: msg }
   }
 }
 
@@ -42,33 +37,22 @@ function unlinkIfSymlink(path: string): void {
   } catch {}
 }
 
-/** Check if a path exists as a real file/dir OR a symlink (including dangling). */
-function pathOrSymlinkExists(path: string): boolean {
-  try {
-    lstatSync(path)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** Create symlink, handling dangling symlinks (existsSync returns false for dangling). */
+/** Create symlink if path doesn't exist. */
 function ensureSymlink(target: string, linkPath: string): void {
-  if (pathOrSymlinkExists(linkPath)) return
+  try {
+    lstatSync(linkPath)
+    return // exists (file, dir, or symlink)
+  } catch {}
   symlinkSync(target, linkPath)
 }
 
+/**
+ * Ensure symlinks in worktree match CC's worktree.symlinkDirectories convention.
+ * Used when booth rebuilds a worktree for resume (CC --worktree handles this for spin).
+ */
 function ensureSymlinks(projectRoot: string, wtPath: string): void {
-  // .booth/ → main project's .booth/ (reports, check.md, daemon.sock)
+  // .booth/ → main project's .booth/ (daemon.sock, check.md, booth.db)
   ensureSymlink(boothDir(projectRoot), join(wtPath, '.booth'))
-
-  // .claude/settings.json → main project's (for CC hooks)
-  const claudeDir = join(wtPath, '.claude')
-  if (!existsSync(claudeDir)) mkdirSync(claudeDir, { recursive: true })
-  const settingsSrc = join(projectRoot, '.claude', 'settings.json')
-  if (existsSync(settingsSrc)) {
-    ensureSymlink(settingsSrc, join(claudeDir, 'settings.json'))
-  }
 
   // node_modules/ → main project's (for build tools)
   const nmSrc = join(projectRoot, 'node_modules')
@@ -78,14 +62,14 @@ function ensureSymlinks(projectRoot: string, wtPath: string): void {
 }
 
 /**
- * Create a git worktree for a deck.
- * Returns the absolute path to the worktree directory.
+ * Create a git worktree for a deck (used by ensureWorktree for resume fallback).
+ * For spin, CC --worktree handles creation.
  */
 export function createWorktree(projectRoot: string, deckName: string): string {
   const wtPath = deckWorktreePath(projectRoot, deckName)
 
   // Ensure worktrees parent dir exists
-  const wtDir = worktreesDir(projectRoot)
+  const wtDir = join(projectRoot, '.claude', 'worktrees')
   if (!existsSync(wtDir)) mkdirSync(wtDir, { recursive: true })
 
   // Clean up stale worktree entry if path exists
@@ -101,17 +85,13 @@ export function createWorktree(projectRoot: string, deckName: string): string {
   if (branchExists) {
     const isMerged = gitSyncSafe(['merge-base', '--is-ancestor', branch, 'HEAD'], projectRoot).ok
     if (isMerged) {
-      // Branch is fully merged — safe to delete and reuse the name
-      gitSyncSafe(['branch', '-d', branch], projectRoot)
+      gitSyncSafe(['branch', '-D', branch], projectRoot)
     } else {
-      // Branch has unmerged commits — use timestamped name to avoid data loss
       branch = `${branchName(deckName)}-${Date.now()}`
     }
   }
 
-  // Create worktree with a new branch from current HEAD
   gitSync(['worktree', 'add', '-b', branch, wtPath, 'HEAD'], projectRoot)
-
   ensureSymlinks(projectRoot, wtPath)
   return wtPath
 }
@@ -128,10 +108,14 @@ export function removeWorktree(projectRoot: string, deckName: string): { hadUnme
   if (existsSync(wtPath)) {
     // Remove symlinks before git worktree remove (git complains about dirty tree otherwise)
     unlinkIfSymlink(join(wtPath, '.booth'))
-    unlinkIfSymlink(join(wtPath, '.claude', 'settings.json'))
     unlinkIfSymlink(join(wtPath, 'node_modules'))
 
-    gitSyncSafe(['worktree', 'remove', '--force', wtPath], projectRoot)
+    const result = gitSyncSafe(['worktree', 'remove', '--force', wtPath], projectRoot)
+    if (!result.ok && existsSync(wtPath)) {
+      // Fallback: git worktree remove may fail if CC left untracked files.
+      // Force-remove the directory and prune the worktree entry.
+      try { rmSync(wtPath, { recursive: true, force: true }) } catch {}
+    }
   }
 
   // Always prune stale worktree entries
@@ -142,15 +126,13 @@ export function removeWorktree(projectRoot: string, deckName: string): { hadUnme
   if (branchExists) {
     const isMerged = gitSyncSafe(['merge-base', '--is-ancestor', branch, 'HEAD'], projectRoot).ok
     if (isMerged) {
-      // Branch fully merged — safe to delete
-      gitSyncSafe(['branch', '-d', branch], projectRoot)
+      gitSyncSafe(['branch', '-D', branch], projectRoot)
     } else {
-      // Branch has unmerged commits — keep it, warn caller
       hadUnmergedCommits = true
     }
   }
 
-  // Also check for timestamped branch variants (booth/<deckName>-<timestamp>)
+  // Also check for timestamped branch variants (worktree-<deckName>-<timestamp>)
   const listResult = gitSyncSafe(['branch', '--list', `${branchName(deckName)}-*`], projectRoot)
   if (listResult.ok && listResult.output.trim()) {
     for (const line of listResult.output.trim().split('\n')) {
@@ -158,12 +140,76 @@ export function removeWorktree(projectRoot: string, deckName: string): { hadUnme
       if (!tsb) continue
       const tsbMerged = gitSyncSafe(['merge-base', '--is-ancestor', tsb, 'HEAD'], projectRoot).ok
       if (tsbMerged) {
-        gitSyncSafe(['branch', '-d', tsb], projectRoot)
+        gitSyncSafe(['branch', '-D', tsb], projectRoot)
       }
     }
   }
 
   return { hadUnmergedCommits }
+}
+
+// --- Merge ---
+
+export interface MergeResult {
+  ok: boolean
+  nothingToMerge?: boolean
+  error?: string
+}
+
+/**
+ * Try to merge a deck's worktree branch into the main branch.
+ * Strategy: rebase worktree branch onto main, then ff-only merge.
+ */
+export function tryMerge(projectRoot: string, deckName: string): MergeResult {
+  const wtPath = deckWorktreePath(projectRoot, deckName)
+  const branch = branchName(deckName)
+
+  // Detect main branch
+  const mainResult = gitSyncSafe(['rev-parse', '--abbrev-ref', 'HEAD'], projectRoot)
+  if (!mainResult.ok) return { ok: false, error: 'cannot detect main branch' }
+  const mainBranch = mainResult.output
+
+  // Check branch exists
+  if (!gitSyncSafe(['rev-parse', '--verify', branch], projectRoot).ok) {
+    return { ok: true, nothingToMerge: true }
+  }
+
+  // Check if branch has commits ahead of main
+  const ahead = gitSyncSafe(['rev-list', '--count', `${mainBranch}..${branch}`], projectRoot)
+  if (!ahead.ok) return { ok: false, error: 'cannot check commit count' }
+  if (ahead.output === '0') return { ok: true, nothingToMerge: true }
+
+  // Need worktree for rebase
+  if (!existsSync(join(wtPath, '.git'))) {
+    // No worktree — try direct ff-only (works if main hasn't diverged)
+    const merge = gitSyncSafe(['merge', '--ff-only', branch], projectRoot)
+    if (merge.ok) return { ok: true }
+    return { ok: false, error: 'worktree unavailable for rebase, ff-only failed' }
+  }
+
+  // Rebase worktree branch onto main
+  const rebase = gitSyncSafe(['rebase', mainBranch], wtPath)
+  if (!rebase.ok) {
+    gitSyncSafe(['rebase', '--abort'], wtPath)
+    return { ok: false, error: rebase.error ?? 'rebase conflict' }
+  }
+
+  // Fast-forward main to rebased branch
+  const merge = gitSyncSafe(['merge', '--ff-only', branch], projectRoot)
+  if (!merge.ok) {
+    return { ok: false, error: merge.error ?? 'ff-only merge failed after rebase' }
+  }
+
+  return { ok: true }
+}
+
+/**
+ * Check if a deck's branch has unmerged commits.
+ */
+export function hasUnmergedCommits(projectRoot: string, deckName: string): boolean {
+  const branch = branchName(deckName)
+  if (!gitSyncSafe(['rev-parse', '--verify', branch], projectRoot).ok) return false
+  return !gitSyncSafe(['merge-base', '--is-ancestor', branch, 'HEAD'], projectRoot).ok
 }
 
 /**
@@ -188,13 +234,13 @@ export function ensureWorktree(projectRoot: string, deckName: string): string {
   // Branch exists — recreate worktree on existing branch
   const branchExists = gitSyncSafe(['rev-parse', '--verify', branch], projectRoot).ok
   if (branchExists) {
-    const wtDir = worktreesDir(projectRoot)
+    const wtDir = join(projectRoot, '.claude', 'worktrees')
     if (!existsSync(wtDir)) mkdirSync(wtDir, { recursive: true })
     gitSync(['worktree', 'add', wtPath, branch], projectRoot)
     ensureSymlinks(projectRoot, wtPath)
     return wtPath
   }
 
-  // Neither exists — create fresh (same as createWorktree)
+  // Neither exists — create fresh
   return createWorktree(projectRoot, deckName)
 }

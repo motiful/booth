@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { sendMessage } from './send-message.js'
 import { parseReportBody } from './report.js'
 import { initLogger, logger } from './logger.js'
-import { removeWorktree } from '../worktree.js'
+import { removeWorktree, branchName, tryMerge, hasUnmergedCommits } from '../worktree.js'
 import type { DeckInfo, DeckMode, DeckStatus } from '../types.js'
 
 const VALID_MODES: DeckMode[] = ['auto', 'hold', 'live']
@@ -426,13 +426,22 @@ export class Daemon {
           tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
         }
 
-        // Clean up worktree if the deck was using one
+        // Try merge before cleanup (worktree must exist for rebase)
+        let mergeWarning: string | undefined
+        if (deck.worktreePath && hasUnmergedCommits(this.projectRoot, deck.name)) {
+          const mergeResult = tryMerge(this.projectRoot, deck.name)
+          if (mergeResult.ok) {
+            logger.info(`[booth-daemon] deck "${deck.name}" auto-merged on kill`)
+          } else {
+            mergeWarning = `branch ${branchName(deck.name)} preserved (unmerged commits — merge conflict)`
+            logger.warn(`[booth-daemon] deck "${deck.name}" ${mergeWarning}`)
+          }
+        }
+
+        // Clean up worktree
         if (deck.worktreePath) {
           try {
-            const { hadUnmergedCommits } = removeWorktree(this.projectRoot, deck.name)
-            if (hadUnmergedCommits) {
-              logger.warn(`[booth-daemon] deck "${deck.name}" has unmerged commits on branch booth/${deck.name}`)
-            }
+            removeWorktree(this.projectRoot, deck.name)
           } catch (err) {
             logger.error(`[booth-daemon] worktree cleanup failed for "${deck.name}": ${err}`)
           }
@@ -440,7 +449,7 @@ export class Daemon {
 
         this.removeDeck(sessionId)
         logger.info(`[booth-daemon] deck "${deck.name}" killed${force ? ' (forced)' : ''}`)
-        return { ok: true }
+        return { ok: true, mergeWarning }
       }
       case 'deck-exited': {
         // During shutdown, ignore exit hooks to preserve resumability
@@ -460,13 +469,27 @@ export class Daemon {
           tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
         }
 
-        // Clean up worktree if the deck was using one
+        // Try merge before cleanup (worktree must exist for rebase)
+        if (deck.worktreePath && hasUnmergedCommits(this.projectRoot, deckName)) {
+          const mergeResult = tryMerge(this.projectRoot, deckName)
+          if (mergeResult.ok) {
+            logger.info(`[booth-daemon] deck "${deckName}" auto-merged on exit`)
+          } else {
+            // Conflict — resume deck for resolution (force auto mode)
+            logger.warn(`[booth-daemon] deck "${deckName}" merge conflict on exit — resuming for resolution`)
+            this.state.updateDeck(sessionId, { mergeStatus: 'conflict', mode: 'auto' })
+            // Don't cleanup — let guardian resume the deck
+            this.paneLost.add(deck.id)
+            this.guardianRecover(deck)
+            this.reactor.notifyDj(`Deck "${deckName}" exited with merge conflict — auto-resuming for resolution.`)
+            return { ok: true }
+          }
+        }
+
+        // Clean up worktree
         if (deck.worktreePath) {
           try {
-            const { hadUnmergedCommits } = removeWorktree(this.projectRoot, deckName)
-            if (hadUnmergedCommits) {
-              logger.warn(`[booth-daemon] deck "${deckName}" has unmerged commits on branch booth/${deckName}`)
-            }
+            removeWorktree(this.projectRoot, deckName)
           } catch (err) {
             logger.error(`[booth-daemon] worktree cleanup failed for "${deckName}": ${err}`)
           }
@@ -522,6 +545,30 @@ export class Daemon {
         this.reactor.onReportSubmitted(deckName, parsed?.status ?? status)
         logger.info(`[booth-daemon] report submitted: "${reportId}" (${status}) for deck "${deckName}"`)
         return { ok: true, reportId }
+      }
+      case 'merge-deck': {
+        const deckName = typeof msg.name === 'string' && msg.name ? msg.name : null
+        if (!deckName) return { error: 'name string required' }
+
+        const deck = this.state.getAllDecks().find(d => d.name === deckName)
+        if (!deck) return { error: `no active deck named "${deckName}"` }
+
+        this.state.updateDeck(deck.id, { mergeStatus: 'merging' })
+        const result = tryMerge(this.projectRoot, deckName)
+
+        if (result.ok) {
+          if (result.nothingToMerge) {
+            this.state.updateDeck(deck.id, { mergeStatus: undefined })
+            return { ok: true, nothingToMerge: true }
+          }
+          this.state.updateDeck(deck.id, { mergeStatus: 'merged' })
+          logger.info(`[booth-daemon] deck "${deckName}" merged to main`)
+          return { ok: true, merged: true }
+        }
+
+        this.state.updateDeck(deck.id, { mergeStatus: 'conflict' })
+        logger.warn(`[booth-daemon] deck "${deckName}" merge conflict: ${result.error}`)
+        return { error: `merge conflict: ${result.error}` }
       }
       case 'send-message': {
         const targetId = typeof msg.targetId === 'string' && msg.targetId ? msg.targetId : null

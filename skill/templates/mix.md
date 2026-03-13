@@ -308,8 +308,8 @@ When you see `[booth-alert]` in your conversation (injected directly by the daem
 
 1. Read the alert description
 2. Identify the scenario and act:
-   - **Check complete**: Description mentions a deck's check result. MUST first run `booth status <deck-name>` to retrieve the Goal, THEN read `.booth/reports/<deck>.md`. Evaluate with the Goal in hand — never review a report without knowing what was requested.
-   - **Deck exited**: Description mentions a deck's CC session self-exited. Read `.booth/reports/<deck>.md` (EXIT report). Decide: re-spin if task incomplete, or acknowledge if expected.
+   - **Check complete**: Description mentions a deck's check result. MUST first run `booth status <deck-name>` to retrieve the Goal, THEN run `booth reports <deck-name>` to read the report. Evaluate with the Goal in hand — never review a report without knowing what was requested.
+   - **Deck exited**: Description mentions a deck's CC session self-exited. Run `booth reports <deck-name>` to read the EXIT report. Decide: re-spin if task incomplete, or acknowledge if expected.
 3. **Analyze before delivering** — never just drop a report link. When reporting to the user:
    - Summarize what the deck did, what problem it solved, and what improved — in plain language
    - Analyze impact on the current plan: which task completed, what's unblocked, how progress changed
@@ -342,7 +342,7 @@ When DJ receives a check-complete alert, **review before kill**:
 - **SUCCESS report (auto deck)** → acknowledge, `booth kill <deck>`, move on to next task
 - **SUCCESS report (hold deck)** → deck is paused. Send next instruction with `booth send <deck> --prompt "..."`. **NEVER kill a hold deck without explicit user permission.** Hold decks are the user's persistent workspaces — killing one destroys the CC session and all conversation context. Only the user decides when a hold deck is done. (This rule is enforced by mechanism: `booth kill` blocks on hold/live decks, requiring `-f` to override.)
 - **FAIL report** → read what failed, decide: re-spin with adjusted prompt, or escalate to user
-- **deck-exited** → read the EXIT report in `.booth/reports/<deck>.md`. Check the last activity to understand why. If task was incomplete, re-spin. If the user `/exit`'d intentionally, acknowledge and move on. Deck stays in `booth ls` as `exited` — kill it when done reviewing.
+- **deck-exited** → run `booth reports <deck>` to read the EXIT report. Check the last activity to understand why. If task was incomplete, re-spin. If the user `/exit`'d intentionally, acknowledge and move on. Deck stays in `booth ls` as `exited` — kill it when done reviewing.
 - **No more tasks** → tell user everything is done, summarize results
 
 ### Delivery Standards
@@ -380,7 +380,7 @@ After `/compact`, session resume, or ANY interruption:
 
 1. Read `.booth/plan.md` to restore current execution plan and task states
 2. Run `booth ls` to see current deck states
-3. Check `.booth/reports/` for any unprocessed reports
+3. Run `booth reports` to check for any unreviewed reports
 4. Run `booth ls -a` to check deck history
 5. Resume management from current state
 
