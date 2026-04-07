@@ -30,9 +30,9 @@ export async function ensureDaemonAndSession(projectRoot: string): Promise<void>
   initBoothDir(projectRoot)
 
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
-  const sessionStartHookScript = join(packageRoot, 'skill', 'scripts', 'session-start-hook.sh')
-  const sessionEndHookScript = join(packageRoot, 'skill', 'scripts', 'session-end-hook.sh')
-  const preCompactHookScript = join(packageRoot, 'skill', 'scripts', 'pre-compact-hook.sh')
+  const sessionStartHookScript = join(packageRoot, 'runtime', 'scripts', 'session-start-hook.sh')
+  const sessionEndHookScript = join(packageRoot, 'runtime', 'scripts', 'session-end-hook.sh')
+  const preCompactHookScript = join(packageRoot, 'runtime', 'scripts', 'pre-compact-hook.sh')
   ensureSessionStartHook(projectRoot, sessionStartHookScript)
   ensureSessionEndHook(projectRoot, sessionEndHookScript)
   ensurePreCompactHook(projectRoot, preCompactHookScript)
@@ -70,7 +70,7 @@ export async function launchDJ(projectRoot: string, resumeSessionId?: string): P
   const djSessionId = resumeSessionId ?? generateSessionId()
   const djJsonlPath = jsonlPathForSession(projectRoot, djSessionId)
 
-  const bootPath = join(packageRoot, 'skill', 'boot.md')
+  const bootPath = join(packageRoot, 'runtime', 'boot.md')
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
 
   const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`

@@ -24,23 +24,26 @@ An AI project manager for Claude Code. You keep thinking, keep branching — Boo
 ## Project Layout
 
 ```
-booth/
-├── bin/                    # CLI entry + editor proxy (published)
-├── src/                    # TypeScript source
-├── dist/                   # Compiled output (published)
-├── skill/                  # Booth skill (published) — entrypoint + references
-│   ├── SKILL.md            # Shared vocabulary (signals, modes, statuses, CLI)
-│   ├── boot.md             # DJ system prompt (~41 lines, loaded by start.ts)
-│   ├── references/         # signals, cli
-│   └── templates/          # mix.md, check.md (legacy reference, not copy-on-init)
-├── booth-skills/           # CC-native role skills (installed via npx skills add)
-│   ├── booth-dj/SKILL.md   # DJ management handbook (~172 lines)
-│   └── booth-deck/SKILL.md # Deck execution protocol (~210 lines)
-├── .claude/                # CC local config (gitignored)
-├── package.json            # "files": ["dist/", "bin/", "skill/"]
-├── CLAUDE.md               # This file
-├── README.md               # Public documentation
-└── LICENSE
+booth-project/                       # 项目命名空间（非 git）
+├── booth/                           # 代码仓库（npm package）
+│   ├── bin/                         #   CLI entry + editor proxy
+│   ├── src/                         #   TypeScript source
+│   ├── dist/                        #   Compiled output
+│   ├── skill/                       #   CC Skill — shared vocabulary
+│   │   ├── SKILL.md                 #     信号表、模式表、CLI 速查
+│   │   └── references/              #     signals.md, cli.md
+│   ├── runtime/                     #   代码 runtime（npm published）
+│   │   ├── boot.md                  #     DJ system prompt (~41 lines)
+│   │   └── scripts/                 #     CC hooks (session-start/end, pre-compact)
+│   ├── .claude/skills/              #   In-repo skills
+│   │   └── maintenance-rules/       #     维护约束
+│   ├── package.json                 #   "files": ["dist/", "bin/", "skill/", "runtime/"]
+│   └── LICENSE
+├── booth-backstage/                 # 私有文档仓库
+├── booth-dj/                        # DJ skill 仓库（独立 git）
+│   └── SKILL.md                     #   DJ 管理手册 (~177 lines)
+└── booth-deck/                      # Deck skill 仓库（独立 git）
+    └── SKILL.md                     #   Deck 执行协议 (~215 lines)
 ```
 
 ## CC Launch Rules
