@@ -2,561 +2,87 @@
 
 > Current execution state. Read this first when starting a session.
 
-## Current Phase: Phase B — Skill 架构改造（设计完成，待执行）
+## Current Phase: Phase B — Skill 架构改造（已完成）
 
-> Phase A 全部完成。Phase B 经过 skill-forge 审计 + 竞品调研 + 信号机制分析 + DJ/Deck 设计回顾，设计定稿。
-
-### Phase B 设计决策 (2026-04-06)
-
-**定位校准**：Booth = 质量优先的 AI 编排层。不是"多 agent 框架"（Agent Teams 做了），而是"保证 N 个 agent 输出质量"。
-
-**关键决策**：
-1. **信号机制统一**：所有信号（check/beat/alert/compact-recovery）走同一条投递管道（protectedSendToCC → Ctrl+G editor proxy）。之前误以为 compact-recovery 有特殊时效要求——实际是排队投递，与 check 一致。
-2. **Skill 化范围**：只有 check EP（200 行重知识）值得做 skill。其余短消息（alert 1-2 行、merge-conflict 3 行、compact-recovery 8 行）留代码。
-3. **三个 skill**：booth（共享词汇 ~50 行）、booth-dj（DJ 手册 ~200 行，从 mix.md 提炼）、booth-deck（deck 协议 ~200 行，从 check.md + child-protocol 合并）。
-4. **System prompt 瘦身**：488 行 mix.md → ~50 行 boot.md（身份 + 核心规则 + skill 指针）。保留 `--append-system-prompt` 作为 compaction 安全网。
-5. **信号格式探索**：`/booth-check` 作为 CC 原生 skill 调用（比 `[booth-check]` 更可靠）。Phase B 后期验证可行性。
-6. **DJ/Deck + Subagent 三层**：DJ 不用 subagent（保护 context），Deck 在 check 阶段用 subagent 做独立审查，三层互补。
-7. **分发**：skill 走标准 `npx skills add`，booth 代码不管 skill 注册。
-8. **扩展轴**：管理风格会趋同。真正的扩展是不同项目类型的 check 标准（前端/API/migration/文档）。
-
-**补充决策（2026-04-06 深夜）**：
-9. **信号格式统一**：不混用 bracket 和 slash。Step 8 验证后决定全部 `/slash` 或全部 `[bracket]`。
-10. **Check 扩展性**：daemon 只管 WHEN+DONE，skill 管 HOW。支持任意审查机制（Codex/Gemini/独立 deck/人工），唯一约束是最终调 `booth report`。
-11. **架构原创性**：底层模式不新（IoC+EDA+Supervisor），但 AI agent 语境下的组合有独特性（LLM-as-coordinator, JSONL 零 token 监控）。Blog-worthy 角度：具体实践对比，不是架构创新。
-12. **定位校准**：给用户——"开完任务就走，回来收验证过的结果"。与 BMAD/skill 的关系——"BMAD 是方法论，booth 是基础设施"。Prompt 替代不了 daemon 的跨 session 能力。
-13. **控制论视角**（George Zhang 2026-03-07; Böckeler/Fowler 2026-04-02）：Booth = 控制论第三浪潮（蒸汽调速器→K8s→AI Harness）的具体实现。Prompt 是开环控制，Booth 是闭环控制（前馈+反馈+迭代）。工具会被平台吸收，但 harness templates（什么 check 标准对什么项目有效）是长期资产。长期定位："AI coding 的质量控制标准库"而非"daemon 工具"。
-
-**设计文档**：`../booth-backstage/design/phase-b-renovation-v2.md`
+**设计权威**：`../booth-backstage/design/phase-b-renovation-v2.md`
 **执行计划**：`../booth-backstage/plan/phase-b-execution-v2.md`
 
-**Phase B 步骤**：
-- [x] Step 0: 删除 4 个过时散装文件 + 补 LICENSE ✓
-- [x] Step 1: 合并 references（reactor-rules → signals.md）✓
-- [x] Step 2: 写 booth-dj SKILL.md (172 行) ✓
-- [x] Step 3: 写 booth-deck SKILL.md (210 行) ✓
-- [ ] Step 4: 压缩 system prompt 488→50 行 (30min)
-- [ ] Step 5: 更新 reactor 信号措辞 (30min)
-- [ ] Step 6: 移除 BEHAVIOR_TEMPLATES (15min)
-- [x] Step 7: Published skill 精简 (SKILL.md 61 行) ✓
-- [ ] Step 8: 验证 /booth-check skill 调用（实验性）
+### Phase B 完成记录 (2026-04-07)
 
-### Phase A 完成记录 (2026-03-13)
+**Step 0-7 全部完成** (36d822b, dabe228, 62f2a5b):
+- 散装 skill 清理 + MIT LICENSE
+- references 合并（reactor-rules → signals.md）+ YAML frontmatter
+- booth-dj SKILL.md (177 行) + booth-deck SKILL.md (215 行)
+- System prompt 压缩 488→41 行 (boot.md)
+- spin.ts deck 身份注入
+- Reactor 信号措辞更新（check → skill, beat → CLI）
+- BEHAVIOR_TEMPLATES 移除 + 死 import 清理
+- Published skill 精简 (SKILL.md 61 行)
 
-**Merge Lifecycle**（Plan Step 3 — 完成，E2E 验证通过）
-- `MergeStatus` type: `pending | merging | merged | conflict`
-- `sessions` 表新增 `merge_status` 列 + migration
-- `tryMerge()`: rebase worktree branch onto main + ff-only merge
-- `booth merge <name>` CLI + `merge-deck` IPC handler
-- Auto mode: check SUCCESS → auto merge → DJ 通知 "Merged to main"
-- Hold mode: check SUCCESS → `merge_status=pending` → DJ 手动 `booth merge`
-- Exit handler: 有 unmerged commits → 尝试 merge → 冲突则 guardian resume（强制 auto）
-- Kill handler: 尝试 merge → 冲突保留 branch → worktree 清理
-- Reactor: conflict 状态 deck idle 时发 `[booth-merge-conflict]` 指导解冲突
-- `onDeckWorking` 重置 `mergeStatus`（解冲突后正常进入 check → merge 循环）
-- `git branch -D`（not `-d`）修复：本地 merged 但 upstream 未 push 时 `-d` 拒绝删除
-- `removeWorktree` rmSync fallback：CC 留下 untracked 文件时 `git worktree remove` 失败的兜底
-- **E2E 验证**：spin merge-test → commit → idle → check → report SUCCESS → auto merge → `git log main` 确认 `6a0a107 test: add merge-test.txt` → kill → worktree+branch 清理干净
+**目录重组** (7cd4a91):
+- `skill/` 拆分为 `skill/`（CC Skill）+ `runtime/`（代码 runtime）
+- `skill/templates/` 删除（死代码）
+- booth-dj / booth-deck 提取为独立 git 仓库（booth-project/ 顶层）
+- 外层目录 `booth/` → `booth-project/`（repo-scaffold 对齐）
+- `.claude/skills/maintenance-rules/` 创建（从 CLAUDE.local.md 提取约束）
+- CLAUDE.md / CLAUDE.local.md 更新
+- 设计文档 §6.3-6.4 同步更新
 
-**Worktree 改用 CC `--worktree`**（Plan Step 2 — 完成，E2E 验证通过）
-- `spin.ts`: `createWorktree()` → `deckWorktreePath()` + `claude --worktree <name>`
-- CC 原生创建 worktree at `.claude/worktrees/<name>/`，symlink via `settings.json` `symlinkDirectories`
-- `resume.ts`: `ensureWorktree()` 手动重建（CC `--worktree --resume` 不支持 #31969）
-- `worktree.ts`: 路径 `.claude/worktrees/<name>/`，branch `worktree-<name>`
-- daemon: branch 引用 `booth/<name>` → `branchName()` 统一
-- **E2E 验证**：spin → CC 创建 worktree → `.booth/` symlink 自动 → branch `worktree-wt-test` → kill → cleanup
+**Pending**: Step 8（验证 /booth-check skill 调用，实验性）
+**Pending**: E2E 运行时验证（booth start → spin → check → report 全链路）
 
-**Report 直接写 DB**（Plan Step 1 — 完成，E2E 验证通过）
-- `booth report --status <S> --body "..."` CLI 新增
-- IPC `submit-report` handler + `reactor.onReportSubmitted()` 处理 check 完成流
-- `runCheck()` 重构为 DB-only（删除文件检测、stale report、ingestReport）
-- `session-end-hook.ts` EXIT report 改 IPC
-- 死代码清理：全部旧 report 文件函数删除
-- skill 文档全面同步（check.md, signals.md, child-protocol.md, cli.md, SKILL.md, mix.md）
-- **E2E 验证通过**：spin → check → `booth report` CLI → IPC → reactor → DJ 通知 → 二次 idle 正确跳过
-
-**Beat cooldown 修复** (dfc6197)
-- Hold deck terminal report 存在时，idle↔working cycling 不再重置 beat cooldown
-- deck:state-changed handler 增加 terminal report 检查，跳过噪声状态变化
-
-**EPIPE 崩溃修复** (66cfba7)
-- IPC socket 加 error handler，EPIPE/ECONNRESET 不再杀死 daemon
-- socket.write() 前 destroyed guard，EADDRINUSE 自动恢复
-
-### Previous (2026-03-12~13)
-
-**Identity Refactor — 全部完成** (6ba5d3e → 3c9534b, 8 commits)
-- 7 步重构全部落地：Schema 迁移 → resolve.ts → 内部寻址改 sessionId → IPC/CLI/hook 适配 → reports 双列 → 文档同步
-- Report Ingestion Fix (327c608): deliverable 文件不再阻塞 check flow, EXIT report 正确 ingest
-
-**Quality Hardening — 全部完成** (2026-03-12~13, 10 commits)
-- beat 冷却：hold idle 不重复触发 (8e2450d)
-- report DB 对齐：移除文件 fallback，DB 唯一 SoT (6498e7d)
-- 并发输入保护：batch drain 队列防 alert 并发丢输入 (dc92c54)
-- kill 安全拦截：working/hold/live 需 -f 强杀，DJ 永远拒绝 (0363c41)
-- live stale check：切 live 清 checkSentAt (d894064)
-- live beat 冷却：live idle 不重复 beat (43d9f2f)
-- beat 跳过 live：fireBeat 完全过滤 live deck (e93e41b)
-- DJ pane ID 防漂移：session-changed/startup/healthcheck 三处 re-resolve (3660d5d)
-- check 无限循环修复：report 已 ingest 后不再重复发 check (3c34049)
-
-**遗留修复 — 全部完成** (fix-remaining-issues, 3 commits)
-- PreCompact hook 完整实现 (463d1c4) — Phase A1 提前完成
-- live deck pane 保护 + DJ tmux 窗口命名 (0c10b25)
-- check 消息改进：identity 行 + deferred goal lookup (9aee9b2)
+**Decisions carried forward**:
+- 信号格式暂用 `[bracket]`，Step 8 验证后决定最终格式
+- booth-dj / booth-deck 尚未 `npx skills add` 发布到 GitHub
 
 ---
 
 ## Archived Phases
 
+### Phase A + B — 已归档
+
+**归档文件**: `.claude/archive/progress-phaseA-B-2026-04-07.md`
+**摘要**: Phase A（Compaction 防护 + Worktree + Guardian + Merge Lifecycle + Report DB + Identity Refactor + Quality Hardening）全部完成。Phase B 设计决策 13 条 + 控制论深度讨论 4 条。Architecture PRE-PHASE-B 快照。Key Design Decisions 7 条。BUG-001 部分解决。
+**关键决策**: 三条哲学（机制>提示、一信号一权威、CC能做的给CC）、三层架构（DJ/Deck/Subagent）、统一信号管道（protectedSendToCC）
+
 ### Phase 1 to 2.8 — 已归档
 
 **归档文件**: `.claude/archive/progress-phase1-to-2.8-2026-03-11.md`
-**摘要**: Foundation → Core loop → Init hardening → Deck modes → Pre-Phase 3 补充 → Input protection + Signal simplification → Skill overhaul → 30+ incremental fixes (idle detection, JSONL IPC, session ID pre-gen, archive unification, startup UX, DJ persistence)
-**关键决策**: 单通道 notifyDj（alert 双通道移除）、protectedSendToCC 统一（Ctrl+G editor proxy）、Daemon 禁止同步阻塞、.booth/ 刚性入口
+**摘要**: Foundation → Core loop → Init hardening → Deck modes → Input protection + Signal simplification → Skill overhaul → 30+ incremental fixes
 
 ### Wave C to E — 已归档
 
 **归档文件**: `.claude/archive/progress-wave-c-to-e-2026-03-11.md`
-**摘要**: State 层 JSON → SQLite 迁移 → Sessions/Archives 合并为单表 → Wave E lifecycle simplification（DeckStatus 6→4 值、退出信号统一、unconditional resume、records persist forever）→ ls DJ 显示 + limit flag。Stop→Resume 全链路 E2E 验证通过。
-**关键决策**: better-sqlite3 同步 API、DeckStatus 仅 4 值（working/idle/checking/exited）、所有退出操作为 UPDATE 不 DELETE、stop 默认保留状态 + --clean 设 exited
+**摘要**: SQLite migration → Sessions/Archives 合并 → Lifecycle simplification（DeckStatus 6→4 值）→ Stop→Resume E2E
 
 ---
 
-## Architecture (⚠ PRE-PHASE-B — Phase B 完成后会更新以下内容)
+## Architecture (POST-PHASE-B)
 
 ```
-CLI Layer:
-  booth          → daemon + tmux + DJ (--dangerously-skip-permissions --append-system-prompt)
-  booth spin     → tmux new-window + CC --worktree <name> --dangerously-skip-permissions
-  booth ls       → IPC query
-  booth kill     → try merge → IPC kill-deck (tmux kill + worktree cleanup)
-  booth merge    → IPC merge-deck (rebase + ff-only)
-  booth stop     → IPC shutdown (archive all decks + kill windows + session + daemon exit)
-  booth resume   → ensureWorktree + restore deck (--resume CC session)
-  booth config   → read/write .booth/config.json (set/get/list)
-
-Daemon Layer:
-  Signal    → JSONL tail per deck + DJ JSONL tracking
-  State     → SQLite (better-sqlite3) + in-memory cache
-  Reactor   → idle → check flow + beat timer + notifyDj + plan-mode auto-approve
-  IPC       → ping, ls, status, register/remove/kill/merge-deck, send-message, shutdown, deck-exited, resume-deck
-  Health    → 30s pane liveness check
+Project Layout:
+  booth-project/                     (文件系统命名空间，非 git)
+  ├── booth/                         (代码仓库，npm package)
+  │   ├── skill/                     CC Skill (SKILL.md + references/)
+  │   ├── runtime/                   代码 runtime (boot.md + scripts/)
+  │   ├── src/ → dist/               TypeScript → compiled
+  │   └── bin/                       CLI entry + editor proxy
+  ├── booth-backstage/               (私有文档仓库)
+  ├── booth-dj/                      (DJ skill 独立仓库)
+  └── booth-deck/                    (Deck skill 独立仓库)
 
 Signal Flow:
   Deck completes → JSONL turn_duration → idle
-  → Reactor.onDeckIdle() → 500ms delay → runCheck()
-  → No terminal report in DB? → sendMessage [booth-check] → deck reads .booth/check.md
-  → Deck sub-agent review → submits report via `booth report` CLI → idle
-  → Daemon receives report via IPC → inserts to SQLite → notifyDj() → protectedSendToCC (Ctrl+G safe)
-  → DJ receives [booth-alert] → reads report → handles per mix.md → booth kill <deck>
+  → Reactor.onDeckIdle() → runCheck()
+  → No report? → [booth-check] "Follow the booth-deck self-verification protocol"
+  → Deck review loop → `booth report` CLI → IPC → SQLite
+  → notifyDj() → [booth-alert] via protectedSendToCC (Ctrl+G)
 
-Signal Delivery (single channel):
-  notifyDj(message) → sendMessage() → protectedSendToCC()
-  - Ctrl+G editor proxy: PID file detection, wait for user close
-  - Per-pane state isolation: ~/.booth/editor-state/pane-XX/
-  - All CC sessions (DJ + deck) use same protectedSendToCC
-  - Beat as periodic fallback (adaptive cooldown 5→10→20→…→60min)
-
-.booth/ Directory (gitignored):
-  booth.db                             — runtime state (SQLite: sessions, DJ, deck status — migrated from state.json)
-  daemon.sock                          — daemon IPC
-  logs/daemon-YYYY-MM-DD.log           — Winston daily rotate (7d retention)
-  logs/daemon-stderr.log               — uncaught errors fallback
-  (reports go directly to SQLite via `booth report` CLI → IPC — no file intermediary)
-  config.json                         — user config (editor, etc.)
-  check.md, mix.md, beat.md           — rigid entry points (copied from templates, user-customizable, future: skill routers)
+Three Skills:
+  booth       (~61 行)  共享词汇：信号表、模式表、CLI 速查
+  booth-dj    (~177 行) DJ 管理手册：alert/beat 响应、deck 管理、report 审核
+  booth-deck  (~215 行) Deck 执行协议：check EP、review loop、report 格式
 ```
-
-## Key Design Decisions
-
-| 决策 | 内容 |
-|------|------|
-| 单通道 notifyDj | protectedSendToCC 直接注入，beat 周期性兜底。alert 双通道已移除 |
-| protectedSendToCC 统一 | DJ 和 deck 全部走 Ctrl+G editor proxy，统一保护逻辑 |
-| .booth/ 行为文档 | check/mix/beat.md 拷贝到 .booth/，用户可改，绝对不用 global install 路径 |
-| @booth-root | tmux 全局变量锚定 projectRoot，防 CWD 漂移 |
-| Beat 降级 | 核心闭环不依赖 beat，但 beat 是 notifyDj 的周期性兜底 |
-| 全 skip-permissions | DJ + 所有 deck 默认 --dangerously-skip-permissions |
-| .booth/ 刚性入口 | check/mix/beat.md 是代码保证执行的刚性入口，同时是用户可定制的路由器，未来可指向 skills |
-
----
-
-## Known Bugs
-
-### BUG-001: Compaction 打断 alert 链路 — 部分解决
-
-**现象**：Compaction 后 DJ 或 deck 丢失工作上下文，alert 链路中断。
-
-**已有防护**：
-- PreCompact hook (463d1c4) — compact 前抢救状态到 `.booth/compact-state.json`
-- CLAUDE.md Compact Instructions — compact 后指导 DJ 读 compact-state.json 恢复
-- Beat 兜底 — 周期性检查所有 deck 状态，compact 期间丢失的信号在下一个 beat 被发现
-
-**仍需实现**：
-- SessionStart(compact) hook — compact 后自动注入恢复 prompt（CC 目前不暴露此 hook，需等 CC 更新或用 workaround）
-- 完整 E2E 验证（模拟 compact → 验证状态恢复 → 验证 alert 链路恢复）
-
----
-
-## Pending Items — Phase A–F 路线图
-
-### Phase A: 生存质量 — DJ 不失忆、deck 不打架
-
-> 目标：booth 在长时间运行中保持可靠。
-
-**A1. Compaction 防护**（重中之重）
-
-> 调研文档：`../booth-backstage/research/cc-compaction-2026.md`（25+ 来源引用）
-
-**问题/痛点**：DJ 是长期运行的 CC session，上下文窗口必然会被 compaction（自动或手动 `/compact`）。Compaction 后 DJ 丢失的不是"记忆"而是**工作能力**：
-
-- **Deck 追踪上下文**：哪些 deck 在做什么、进度到哪了、之前给了什么 prompt——全部 summarize 为模糊描述
-- **未处理 alert**：compact 前收到的 `[booth-alert]` 消息被压缩成"收到一个 deck 通知"，丧失可操作性
-- **Plan 进度**：step-by-step 计划被压缩为模糊描述，compact 后 DJ 可能重新做已完成的步骤或推翻之前的决策（社区确认的 "plan drift" 问题）
-- **当前决策上下文**：正在评估的 report、正在做的 trade-off 分析、用户最近的指令——全部被 summarize
-
-**已知信息**（来自调研文档）：
-
-- CC compaction 有两种：auto-compaction（上下文 75-95% 时自动触发）和手动 `/compact`
-- **CLAUDE.md 在 compact 后从磁盘重新加载**，不参与 summarization——这是最可靠的持久化锚点
-- CC 提供 `PreCompact` hook（在 summarization 之前触发），但**没有 PostCompact hook**（GitHub #14258 有 feature request）
-- 环境变量 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` (1-100) 可配置触发阈值
-- CC 无法自检上下文使用率（GitHub #23457 有 feature request），DJ 无法主动知道自己距 compact 多远
-- compact 期间 CC 是 working 状态，不接受交互输入，Ctrl+G editor proxy 可能 hang
-- beat 是天然安全的兜底——compact 期间丢失的 notifyDj 信号会在下一个 beat 周期被发现
-
-**已观察到的 Bug（2026-03-12）**：
-
-- **Compaction 打断 alert 链路**：hold 模式 deck 被 compact 后，完成工作但 DJ 没收到 alert。Compaction 压缩了 deck 的对话上下文，deck 不知道自己还有待完成的汇报流程。DJ 端也没有机制检测到"deck 完成了但没通知我"。这个问题同时影响 DJ 和 deck——任何一方被 compact 都可能丢失工作状态。
-- **影响范围**：不止是通知——compact 后 deck 可能丢失当前任务上下文、遗忘验收标准、重复已完成的工作。DJ compact 后可能丢失 pending alert、plan 进度、当前决策上下文。
-
-**未知/困惑**：
-
-- Ctrl+G 在 compact 期间的**确切行为**未经验证——调研文档中的分析基于机制推断，需要实际测试
-- PreCompact hook 的执行时序——是在 summarization API 调用之前还是之后？命名暗示是"之前"，但需验证
-- Compact Instructions 在 CLAUDE.md 中的遵循程度——社区评价参差不齐
-- `pause_after_compaction`（API 层参数）何时在 CC CLI 中暴露——暂不可用
-
-**成功标准**：DJ 被 compact 后能在 30 秒内恢复工作状态——知道当前有哪些 deck、各自状态、当前 plan 进度、未处理的 alert。
-
-- [x] **PreCompact hook 防护** (463d1c4) — compact 前抢救状态到 compact-state.json
-- [x] **CLAUDE.md Compact Instructions**（零代码）— compact 后指导读 compact-state.json 恢复
-- [x] **StatusLine hook 调研** — CC 已支持，优先级低但已知可行
-- [x] **信号安全策略结论** — daemon 侧几乎所有状态已被 SQLite 持久化，CC 对话"软状态"通过 compact-state.json + beat 兜底恢复，不需要第三条信号路径
-- [ ] ~~SessionStart(compact) hook~~ — **deferred**，等 CC 上游支持 PostCompact hook（GitHub #14258）
-- [ ] ~~DJ compact-recover CLI~~ — **deferred**，依赖 SessionStart hook
-- [ ] ~~DJ Context 审计~~ — **deferred**，信号安全策略已得出结论，审计优先级降低
-
-**A2. Worktree Isolation**（必做）
-
-**问题/痛点**：当前所有 deck 共享同一个 git 工作目录。这导致：
-
-- **文件冲突**：两个 deck 同时修改同一个文件（例如都需要改 `src/daemon/index.ts`），后提交的覆盖先提交的
-- **git status 污染**：一个 deck 的 uncommitted changes 出现在所有 deck 的 `git status` 中，干扰判断
-- **编译破坏**：一个 deck 的半完成修改可能导致另一个 deck 运行 `npx tsc` 时失败
-- **DJ 当前通过 "Safe concurrency"（不同 deck 改不同文件）来规避**，但这是脆弱的约定而非机制保障
-
-**已知信息**：
-
-- Git worktree 是 git 原生功能：`git worktree add <path> -b <branch>` 创建独立工作目录，共享 `.git` 对象
-- CC 本身已有 worktree 支持（`isolation: "worktree"` 参数给 subagent）
-- Worktree 完成后需要 rebase 到 main 才能合并
-
-**已知挑战/未知**：
-
-- **CLAUDE.md 发现**：CC 通过向上遍历目录找 `.git` 或 `CLAUDE.md`。Worktree 的 `.git` 是一个 file（指向主仓库），不是目录。**需验证 CC 能否在 worktree 中正确找到项目 CLAUDE.md**
-- **`.booth/` 路径解析**：`findProjectRoot()` (`src/constants.ts:15-28`) 先找 `.booth/` 目录，找不到再找 `.git` / `package.json`。Worktree 中没有 `.booth/`——deck 通过 `BOOTH_PROJECT_ROOT` env var 找到主仓库路径。Report 直接走 IPC 到 daemon DB，不需要文件访问
-- **Rebase 冲突**：如果两个 deck 都改了同一个文件（不同行），rebase 可能自动合并；如果改了同一行，需要冲突处理。当前无自动化——deck 需要报告冲突让 DJ 决策
-- **tmux socket 和 pane ID**：`deriveSocket()` 基于 `projectRoot` 路径的 SHA256 hash。如果 worktree 路径不同于主仓库路径，socket 会不同——**daemon 需要使用统一的主仓库路径**
-- **Worktree 清理**：`git worktree remove` 需要工作目录干净。如果 deck 崩溃留下脏 worktree 怎么办？
-
-**新发现（self-review, 2026-03-12）**：CC v2.1.49+ 原生支持 `isolation: "worktree"`，复杂度大幅降低：
-- `worktree.symlinkDirectories: [".booth"]` 解决 .booth/ 共享
-- `BOOTH_PROJECT_ROOT` env var 解决 socket 路径
-- 仍需解决：`deriveSocket()` 路径适配 + 实际 E2E 验证
-
-**成功标准**：两个 deck 可以同时修改同一个文件（不同区域），各自编译通过，最终自动合并到 main 无冲突。
-
-- [x] 每个 deck 工作在独立 git worktree 中 — `booth spin` 自动创建 `.booth/worktrees/<name>/` + `booth/<name>` 分支
-- [x] 确认 CC 在 worktree 中正常工作 — `.booth/` symlink + `.claude/settings.json` symlink + `node_modules/` symlink + `BOOTH_PROJECT_ROOT` env var
-- [x] deck kill 时自动清理 worktree — `git worktree remove --force` + 已合并分支自动删除，未合并分支保留并警告
-- [x] `deriveSocket()` 路径适配 — `BOOTH_PROJECT_ROOT` 使 `findProjectRoot()` 返回主仓库路径
-- [x] E2E 验证 — 两个 deck 同时修改 README.md，各自 commit，main 不受影响
-- [x] deck 完成后 rebase + fast-forward merge 到 main — auto mode 自动 merge，hold/live 手动 `booth merge <name>`
-- [x] 冲突处理机制 — rebase 冲突 → deck 自动 resume (auto) → 解冲突 → re-check → retry merge
-
-**A3. Guardian 进程自愈** — ✅ 已完成
-
-**问题/痛点**：CC session 可能崩溃（OOM、网络断开、CC bug、API 故障），pane 死了但 daemon 不知道。当前流程是：health check 30s 检测 → 发现 pane gone → 日志记录 → 等待 DJ 手动处理。没有自动恢复机制。
-
-**已知信息——现有 health check 做了什么** (`src/daemon/index.ts:520-553`)：
-
-- 每 30 秒运行一次（`setInterval(30_000)`）
-- 遍历所有 deck，用 `tmux display-message -t <paneId> -p '#{pane_pid}'` 检测 pane 存活
-- pane 丢失时：`logger.warn()` 记录日志 + `signal.unwatch()` 停止 JSONL 监控 + 加入 `paneLost` Set
-- pane 恢复时（resume 后）：从 `paneLost` Set 移除
-- 也检查 DJ pane，但仅日志记录
-- **不修改 deck 状态，不发送 alert，不触发自动恢复**
-
-**pane ID 准确性**（`src/daemon/state.ts`）：
-
-- pane ID 在 deck 注册时存入 SQLite（`registerDeck()`），resume 时更新（`resumeDeck()`）
-- pane ID 格式为 tmux `%N`（如 `%26`），由 tmux 分配
-- `clearPaneId()` 在 `pruneStaleDecks()` 中调用——daemon 重启时清除已失效的 pane ID
-- **pane ID 不会自然漂移**——它在 pane 的生命周期内是稳定的。但 pane 被 kill 后 ID 被 tmux 回收，可能分配给新 pane
-- 当前无 "pane ID → process" 的二次验证。如果 ID 被回收分配给非 booth 的 pane，health check 会误判为存活
-
-**Guardian 在 health check 基础上增加什么**：
-
-- 自动 resume：检测到 pane 死亡 → 调用 `booth resume <name>` → 验证恢复成功
-- 重试限制：同一 deck 连续失败 3 次 → 放弃恢复 → 通知 DJ
-- 可能需要区分"可恢复崩溃"（OOM/网络）和"不可恢复错误"（代码 bug 导致无限崩溃）
-
-**未知/困惑**：
-
-- 自动 resume 的成本：每次 resume 启动一个新的 CC session，消耗 token（至少读 CLAUDE.md + 恢复上下文）
-- CC `--resume` 对崩溃 session 的行为：如果 session 是非正常退出，`--resume` 能正确恢复吗？
-- 是否需要 Guardian？如果 DJ 在 5 分钟内（下一个 beat）能收到 deck-exited 信号并手动处理，自动化的收益是否值得额外复杂度？
-
-**成功标准**：deck CC 崩溃后 60 秒内自动恢复工作，无需 DJ 干预。连续崩溃 3 次自动停止并通知 DJ。
-
-- [x] Guardian 调研报告：发现关键盲区（CC 崩溃后 pane 仍存活），结论为值得实现
-- [x] Guardian 实现：CC 进程检测（`pane_current_command`）+ two-strike 确认 + 自动 resume + 3 次失败放弃 + DJ 通知 + live 豁免 + 竞态保护
-
----
-
-### Phase B: Skills 整改 — 加载策略健康化
-
-> 目标：Mix 和所有 skill 的加载/管理策略理顺。优先级最高（Phase A 之后）。
-
-**调研完成 (2026-04-05)**:
-- Skill-forge 全量审核完成（37 文件，7 系统级缺陷）
-- CC 源码确认：`--append-system-prompt` 在 compaction 后 100% 保留
-- CC Hook 系统（26 种 event）vs JSONL watching 对比完成
-- 改造方案: `../booth-backstage/design/phase-b-skill-architecture.md`
-- 战略洞察: `../booth-backstage/design/booth-architecture-insights-2026-04.md`
-- 哲学总结: `/tmp/booth-philosophy.md`（给协作 session 参考）
-- 详细审核报告: `/tmp/skill-forge-booth.md`
-
-**B1. Mix 策略化**
-
-**问题/痛点**：当前 skill/mix 的加载和管理链路有几个潜在问题，但**需要先调研确认哪些是真实问题、哪些是猜测**。
-
-**当前加载链路**（已确认）：
-
-1. `skill/SKILL.md` — CC skill system 加载入口，在 CC 启动时注入 system prompt。定义 booth 的概况、信号含义、deck 模式、关键路径、参考文件列表（约 70 行）
-2. `skill/templates/mix.md` — DJ 管理手册（Source of Truth），约 480 行。在 `booth init` 或首次 `initBoothDir()` 时被 **copy** 到 `.booth/mix.md`
-3. `.booth/mix.md` — 运行时 DJ 实际读取的文件。用户可自定义。DJ 通过 `--append-system-prompt` 加载此文件
-4. `skill/references/*.md` — signals.md、cli.md、child-protocol.md、beat.md 等参考文档，CC 按需读取
-
-**已确认的问题**：
-
-- **Copy 不是 version-tracked**：`.booth/mix.md` 是 `skill/templates/mix.md` 的一次性 copy（`initBoothDir()` 只在文件不存在时拷贝，`src/constants.ts:89`）。代码更新 `skill/templates/mix.md` 后，已有项目的 `.booth/mix.md` 不会自动更新。用户必须手动删除 `.booth/mix.md` 再 `booth init` 才能获得新版本
-- **SKILL.md 和 mix.md 的职责边界模糊**：SKILL.md 定义了概况信息，mix.md 定义了详细操作指南。但两者都在 DJ system prompt 中——SKILL.md 通过 CC skill system 注入，mix.md 通过 `--append-system-prompt` 注入。**是否存在重复加载和 context 浪费？**
-
-**需要调研确认的问题**：
-
-- **Mix 的 context 成本**：mix.md 约 480 行作为 system prompt 注入，实际占用多少 token？是否构成 DJ context 的显著比例？如果 DJ 200K context 中 mix.md 只占 2-3K token，优化的收益很小
-- **Skill 动态加载**：references/ 下的文件是 CC 按需读取的（DJ 执行 Read 工具时读），不是预加载的。这已经是"动态加载"了——**是否还需要进一步优化？**
-- **用户自定义需求**：`.booth/mix.md` 的"用户可自定义"设计是否有实际用户？如果没有，copy 机制可以简化为直接读 template
-
-**未知/困惑**：
-
-- 如果 mix.md 改为"路由器"模式（.booth/mix.md 只包含指向 skill 的 reference link），DJ 的 system prompt 变小了，但需要多一次 Read 才能获取完整指南——这是否反而增加延迟和 token 消耗？
-- domain-specific skills（例如不同项目有不同的 check 标准）的需求是否真实存在？
-
-**成功标准**：mix/skill 的加载策略有明确文档；消除 copy 不同步问题；context 成本可量化。
-
-- [ ] 调研当前 Mix 加载策略的 context 成本（量化 token 占比）
-- [ ] 解决 copy 不同步问题（版本检查？hash 对比？每次启动自动更新？）
-- [ ] .booth/ 文件作为刚性入口 + 路由器，可指向 domain-specific skills
-- [ ] skill 依赖链理顺（SKILL.md vs mix.md 职责边界明确化）
-
----
-
-### Phase C: 产品打磨 — 用户体验可交付
-
-> 目标：UIUX 达到可交付标准。
-
-**C1. UIUX 打磨**
-
-**已知 UX 痛点**：
-
-- **CLI 交互模式单一**：当前 17 个命令（`src/cli/commands/`）全部是"执行一次退出"模式。没有 interactive/dashboard 模式——用户必须反复输入 `booth ls` 来查看状态
-- **错误信息不友好**：CLI 错误只输出 `Usage: booth <cmd> <name>` + `process.exit(1)`，没有上下文提示（例如"你是不是想说 booth kill auth-fix？deck 'auth-fx' 不存在"）
-- **`booth ls` 信息密度低**：只显示 mode/status/时间。缺少：当前 prompt 摘要、check 进度、report 状态
-- **Report 展示**：`booth reports` 列表缺少摘要预览；`booth reports <name>` 输出纯 markdown 到 stdout，没有语法高亮或分页
-- **`booth peek` 信息有限**：只看最后 N 行 tmux 输出，无法区分 CC 输出 vs 用户输入 vs 工具调用
-- **缺少 `booth dashboard`**：一个持续刷新的 TUI，实时展示所有 deck 状态、DJ 状态、最近 alert——对于管理多个 deck 的场景非常有价值
-
-**成功标准**：新用户 5 分钟内能理解 booth 工作流；日常操作不需要反复输入查询命令。
-
-- [ ] booth 指令交互打磨（参考老 booth 取精华去糟粕，推陈出新）
-- [ ] Report 系统展示优化（摘要预览、语法高亮、分页）
-- [ ] 整体用户流程优化（错误提示、fuzzy match deck 名、命令补全）
-
-**C2. Token 统计**（精简版 Attention Management）
-
-**已知信息**：
-
-- CC JSONL 输出中**已包含 token 用量数据**。每条 `type: "assistant"` 的消息包含 `message.usage` 字段：
-  - `input_tokens`：输入 token 数
-  - `output_tokens`：输出 token 数
-  - `cache_creation_input_tokens`：缓存创建 token 数
-  - `cache_read_input_tokens`：缓存读取 token 数
-  - `service_tier`：服务层级
-- Booth 的 `SignalCollector`（`src/daemon/signal.ts`）已经在 tail JSONL——**可以在现有 watcher 中同时提取 token 数据，零额外 I/O**
-- 数据存储可复用 SQLite（在 sessions 表加 `total_input_tokens` / `total_output_tokens` 列，或新建 `token_usage` 表按 turn 记录）
-
-**未知/困惑**：
-
-- CC session resume 后 token 计数是否重置？（JSONL 是追加的，但 usage 字段是每 turn 独立的，需要累加）
-- `cache_read_input_tokens` 是否应计入总量？（它代表实际消耗的 API quota 但不是"新 context"）
-- Codex 的 token 统计 UI/UX 是什么样的？值得参考
-
-**成功标准**：用户运行 `booth ls` 能看到每个 deck 的累计 token 消耗；`booth kill` 时显示总消耗。
-
-- [ ] 在 `SignalCollector` 或 reactor 中累加 token 用量（从 JSONL `message.usage` 字段提取）
-- [ ] 存入 SQLite（sessions 表扩展或独立 token_usage 表）
-- [ ] `booth ls` 和 `booth kill` 显示 token 统计
-- [ ] 不用于自动 kill 决策，用于分析和可视化
-
-**C3. 产品命名重新评估**
-
-**问题**：Booth 作为产品名在语音输入（Siri、语音转文字）中容易被识别为 "Boost"。这影响语音驱动的使用场景，但不阻塞当前技术开发。需要在 Phase D 市场定位时一并评估。
-
-- [ ] Booth 语音输入易误识别为 Boost，评估替代名称
-- [ ] 重要但不阻塞技术开发
-
----
-
-### Phase D: 市场定位 — 知道自己是谁
-
-> 目标：明确 booth 在市场中的位置。
-
-**D1. 竞品分析**（Phase A 完成后最高优先级）
-
-- [ ] 2026 新竞品调研（最近冒出的竞品）
-- [ ] 与老 booth signal 思想对比，声明 novelty
-
-**D2. README / 定位**
-
-- [ ] 仓库 README 决定市场认知
-- [ ] 必须在竞品分析后确定定位
-
----
-
-### Phase E: 发布 — npm + 宣发
-
-> 目标：正式上线。可在 Phase B 完成后先发一版（不宣传）。
-
-**E1. npm publish**
-
-hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
-
-- [ ] npm publish 准备（package.json 审查、README、LICENSE、prepublishOnly script）
-- [ ] `src/version.ts` — getCurrentVersion() + checkForUpdates()
-- [ ] bare `booth` 版本检查（npm registry fetch，5s timeout，失败静默跳过）
-- [ ] 提示格式：`[booth] New version available: 0.2.0 → npm update -g @motiful/booth`
-
-**E2. 博客 / 宣发**
-
-- [ ] 发博客造势
-- [ ] signal 思想等沉淀内容与竞品 PK
-- [ ] 在 Phase D 定位确认后执行
-
----
-
-### Phase F: 平台化 — 给 agent 用
-
-> 目标：booth 不只是给人用，主要是给 agent 用。人也可以用，但不是主要服务对象。
-
-- [ ] Agent-as-consumer API — 其他 agent 如何调用 booth
-- [ ] Codex 支持 — 探索 Codex 集成（竞品调研后）
-- [ ] 跨工具集成 — 其他 CC/OpenClaw 直接调用 booth
-- [ ] 移动端探索 — 手机端调用（远期）
-
----
-
-### Phase G: booth-api — 把交互式 CC session 变成 REST API
-
-> 目标：利用 booth 的 tmux + editor proxy 架构，对外暴露 OpenAI-compatible HTTP API。每个请求分配一个交互式 CC deck，天然 `entrypoint=cli` + `isInteractive=true`，不触发 `-p` 模式限制。
-
-**背景（2026-04-05）**：Anthropic 4月4日起 `claude -p` 走 Extra Usage 而非订阅额度。booth 的交互式 deck 天然不受此限制——CC 视角下每个 deck 就是一个人类坐在终端前的正常会话。booth-api 的核心价值：把这个"交互式特权"封装成标准 API，供外部工具/代码调用。
-
-**架构**：
-```
-POST /v1/chat/completions
-  → Auth (API key) → 路由到 deck pool
-  → 找空闲 deck / spin 新 deck
-  → editor proxy 注入用户消息
-  → 监听 JSONL 输出 → Stream SSE 响应
-  → deck 回到空闲池
-```
-
-**与 cc-gateway 的关系**：booth-api 解决应用层（session 编排），cc-gateway 解决网络层（指纹归一化）。组合使用：booth 每个 deck 的 launcher 设置 `ANTHROPIC_BASE_URL` 指向 cc-gateway，同时实现交互式模式 + 指纹统一化。
-
-**核心待办**：
-- [ ] HTTP API 层（Express/Hono，OpenAI-compatible 格式）
-- [ ] Deck pool 管理（空闲检测、自动扩缩、健康检查、最大并发数）
-- [ ] JSONL → 结构化 API response parser（提取 assistant 回复 + tool calls + thinking）
-- [ ] SSE streaming（实时流式返回，匹配 OpenAI stream format）
-- [ ] Session 复用策略（context 累积 vs 隔离、何时 /compact、何时 spin 新 deck）
-- [ ] API 认证 + rate limiting（防外部滥用）
-- [ ] 错误处理（CC 崩溃 → guardian 恢复 → 请求 retry / 502）
-- [ ] 与 cc-gateway 集成（launcher 环境变量注入）
-
-**已有基础设施可复用**：
-- deck spin/kill/send：已有完整 CLI + IPC
-- editor proxy：Ctrl+G 注入，零修改可用
-- JSONL watcher：SignalCollector 已在 tail
-- Guardian：CC 崩溃自动恢复
-- SQLite 状态管理：deck 池状态天然有持久化
-
-**预估工作量**：1-2 周（基于 booth 现有代码）
-
----
-
-### Bug Fixes（Phase A 期间，含 Quality Hardening）
-
-- [x] beat 冷却 hold idle 不重复触发 (8e2450d)
-- [x] report ingestion: deliverable 不阻塞 check flow + EXIT report 正确 ingest (327c608)
-- [x] report DB 对齐: 移除文件 fallback，DB 唯一 SoT (6498e7d)
-- [x] 并发输入保护: batch drain 队列防 alert 并发丢输入 (dc92c54)
-- [x] kill 安全拦截: working/hold/live 需 -f 强杀 (0363c41)
-- [x] live stale check: 切 live 清 checkSentAt (d894064)
-- [x] live beat 冷却: live idle 不重复 beat (43d9f2f)
-- [x] beat 跳过 live deck (e93e41b)
-- [x] DJ pane ID 防漂移: 三处 re-resolve (3660d5d)
-- [x] check 无限循环: report 已 ingest 后不再重复发 check (3c34049)
-- [x] live deck pane 保护 + DJ tmux 窗口命名 (0c10b25)
-- [x] check 消息改进: identity 行 + deferred goal lookup (9aee9b2)
-
-### 已关闭项
-
-| 项目 | 理由 |
-|------|------|
-| Archive system | SQLite 迁移后 session records persist forever，booth kill 只设 exited 不删记录 |
-| User takeover/handback | live mode + booth auto/hold/live 切换已完全实现 |
-| Reports follow-up auto routing | DJ 手动读 report 做决策运转良好，自动化收益不大 |
-| DJ Context Management（单独项） | 被 Phase A Compaction 防护完全吸收 |
-| Check timeout protection | 5 rounds 硬上限已足够，用户确认 |
-
----
-
-### Identity Refactor — 已完成 (6ba5d3e → 3c9534b)
-
-> 方案 B — name 做 CLI 快捷方式，session_id 做内部唯一 identity。双重寻址。
-
-**归档摘要**: 7 步重构 + Report Ingestion Fix，共 10 commits。
-- Schema: session_id 唯一索引 + reports.session_id 双列
-- `src/resolve.ts`: resolveIdentifier(input) 支持 name/UUID/前缀
-- 内部寻址: state.ts Map key 改 sessionId, IPC/CLI/hook 全部适配
-- 文档: cli.md, child-protocol.md, check.md, mix.md 同步更新
-- Report: deliverable 不阻塞 check flow, EXIT report 正确 ingest
-
-**关键设计决策**: name 活跃行唯一 (partial unique index), resolve 逻辑 UUID→name→session_id, reports 双列不破坏旧查询, DJ 方法不改
 
 ---
 
@@ -564,62 +90,56 @@ POST /v1/chat/completions
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| 1–2.8 | Done | Foundation → Core loop → Init → Modes → Input protection → Signal simplification |
-| Wave C–E | Done | SQLite migration → Lifecycle simplification → Stop→Resume E2E |
-| Wave F | Done | Backlog 清零 + socket fix + deck perm isolation + fresh→clean refactor + resume --list 移除 |
-| Identity Refactor | Done | 双重寻址 (name + session_id)，7 步重构 + report ingestion fix |
-| Quality Hardening | Done | 10 bug fixes: beat/report/input/kill/live/pane + 设计文档更新 |
-| Phase A | **Done** | 生存质量 — A1 Compaction + A2 Worktree + A3 Guardian 全部完成 |
-| Phase B | Queued | Skills 整改 — Mix 策略化、skill 依赖链 |
+| 1–2.8 | Done | Foundation → Core loop → Modes → Signal simplification |
+| Wave C–E | Done | SQLite → Lifecycle simplification → Stop→Resume E2E |
+| Identity + Quality | Done | 双重寻址 + 10 bug fixes |
+| Phase A | **Done** | Compaction + Worktree + Guardian + Merge + Report DB |
+| Phase B | **Done** | Skill 架构改造 + 目录重组（Step 8 pending） |
 | Phase C | Queued | 产品打磨 — UIUX、Token 统计、产品命名 |
 | Phase D | Queued | 市场定位 — 竞品分析、README/定位 |
 | Phase E | Queued | 发布 — npm publish + 博客宣发 |
 | Phase F | Outlined | 平台化 — Agent API、Codex、跨工具集成 |
-| Phase G | Idea | booth-api — 把交互式 CC session 封装成 REST API，绕过 -p 限制 |
+| Phase G | Idea | booth-api — REST API 封装 |
 
-## File Map
+---
 
-### Core Files
-| File | Purpose |
-|------|---------|
-| `src/daemon/index.ts` | Daemon main — IPC, health check, JSONL watcher |
-| `src/daemon/state.ts` | SQLite state layer (better-sqlite3) + in-memory cache |
-| `src/daemon/reactor.ts` | Check flow + beat + notifyDj + plan-mode auto-approve |
-| `src/daemon/send-message.ts` | protectedSendToCC message injection |
-| `src/daemon/report.ts` | YAML frontmatter parser for check reports |
-| `src/tmux.ts` | tmux operations + protectedSendToCC + editor proxy |
-| `src/types.ts` | DeckStatus, DeckMode, DeckInfo, SessionRow |
-| `src/constants.ts` | Paths, directories, template locations |
-| `src/config.ts` | .booth/config.json read/write |
-| `src/hooks.ts` | SessionEnd/SessionStart hook management |
-| `src/resolve.ts` | Identifier resolution (name/UUID/prefix → sessionId) |
-| `src/ipc.ts` | IPC client (5s timeout) |
+## Pending Items — Phase C–G 路线图
 
-### CLI Commands
-| File | Purpose |
-|------|---------|
-| `src/cli/index.ts` | Command router |
-| `src/cli/commands/start.ts` | `booth` / `booth start` — daemon + DJ + attach |
-| `src/cli/commands/spin.ts` | `booth spin` — create deck |
-| `src/cli/commands/kill.ts` | `booth kill` — terminate deck |
-| `src/cli/commands/stop.ts` | `booth stop` — shutdown everything |
-| `src/cli/commands/resume.ts` | `booth resume` — restore decks + DJ |
-| `src/cli/commands/restart.ts` | `booth restart` — stop + start + resume |
-| `src/cli/commands/ls.ts` | `booth ls` — list decks + DJ |
-| `src/cli/commands/send.ts` | `booth send` — inject prompt to deck |
-| `src/cli/commands/reload.ts` | `booth reload` — graceful daemon restart |
-| `src/cli/commands/merge.ts` | `booth merge` — rebase + ff-only merge deck branch |
-| `src/cli/commands/reports.ts` | `booth reports` — list/view/open reports |
-| `src/cli/commands/config.ts` | `booth config` — set/get/list |
-| `src/cli/commands/init.ts` | `booth init` — register skill + setup |
-| `src/cli/commands/compact-prepare.ts` | `booth compact-prepare` — PreCompact hook handler |
+### Phase C: 产品打磨 — 用户体验可交付
 
-### Skill Files
-| File | Purpose |
-|------|---------|
-| `skill/SKILL.md` | General entrypoint (loaded by CC skill system) |
-| `skill/templates/mix.md` | DJ management handbook (source of truth) |
-| `skill/templates/check.md` | Deck self-review template |
-| `skill/references/signals.md` | Signal types + lifecycle docs |
-| `skill/references/cli.md` | CLI command reference |
-| `skill/references/child-protocol.md` | Deck behavior protocol |
+- [ ] C1: CLI 交互打磨（错误提示、fuzzy match、命令补全）
+- [ ] C1: Report 展示优化（摘要预览、语法高亮、分页）
+- [ ] C2: Token 统计（从 JSONL usage 字段累加，存 SQLite，booth ls 显示）
+- [ ] C3: 产品命名评估（Booth 语音识别为 Boost 问题）
+
+### Phase D: 市场定位
+
+- [ ] 竞品深度分析（Agent Teams、ComposioHQ、Claude Squad）
+- [ ] README 重写 + 定位校准
+- [ ] 博客方向确定（实践对比，不是架构创新）
+
+### Phase E: 发布
+
+- [ ] npm publish @motiful/booth
+- [ ] booth-dj / booth-deck 发布到 GitHub（npx skills add）
+- [ ] 博客宣发
+
+### Phase F: 平台化
+
+- [ ] Agent API（给其他 agent 调用 booth）
+- [ ] Codex 适配
+- [ ] 跨工具集成
+
+### Phase G: booth-api（Idea）
+
+- [ ] 把交互式 CC session 封装成 REST API
+
+---
+
+## Known Bugs
+
+### BUG-001: Compaction 打断 alert 链路 — 部分解决
+
+已有防护：PreCompact hook + CLAUDE.md Compact Instructions + Beat 兜底。
+待实现：PostCompact hook（等 CC 上游 #14258）。
+详见归档：`.claude/archive/progress-phaseA-B-2026-04-07.md`
