@@ -127,6 +127,18 @@ When the user gives you work:
 4. **Identify dependencies** — which tasks must finish before others start?
 5. **Assign** — spin decks with clear prompts
 
+### Direction Gate
+
+For open-ended tasks (design decisions, architecture choices, unknown root cause, product strategy) — **before decomposing**, run a quick direction check:
+
+1. **Goal clarity** — can this be stated as a concrete, verifiable outcome?
+2. **Better framing** — is there a sharper version of this task? What would a better question look like?
+3. **Alternative directions** — name 2 alternatives and state why the chosen direction is preferred.
+
+Record the chosen direction and reasoning in the task's **Problem** field in `plan.md`.
+
+Skip for fully-specified tasks: "fix X", "implement Y where Y is already defined".
+
 ### Good decomposition
 
 - Each deck has a single, clear objective
@@ -278,7 +290,7 @@ Mode indicators: `[A]` auto, `[H]` hold, `[L]` live.
 Review → Allocate → Launch → Progress-check → Handoff
 
 1. **Review**: Understand user request fully
-2. **Allocate**: Decompose, plan deck assignments, choose mode + loop setting per deck
+2. **Allocate**: For open-ended tasks, run Direction Gate first. Then decompose, plan deck assignments, choose mode + loop setting per deck
 3. **Launch**: Spin decks with clear prompts and appropriate flags
 4. **Progress**: Monitor via alerts + beat
 5. **Handoff**: Read check report → Deliver to user → Kill (auto) or continue (hold)

@@ -1,3 +1,8 @@
+---
+name: signals
+description: Signal architecture, detection sources, reactor rules, check/alert/beat flow, deck exit scenarios
+---
+
 # Signals Reference
 
 ## Signal Architecture
@@ -26,6 +31,13 @@ Every deck has a JSONL stream. The daemon tails it in real-time.
 - Shutdown does NOT change deck status — decks stay working/idle in DB for resume
 - Records persist forever — `booth kill` marks exited (UPDATE), never deletes DB rows
 - Clean shutdown (`--clean`) marks all decks exited — they won't auto-resume but can be manually resumed
+
+### Reactor rules (from production incidents)
+
+1. **Idempotent signals — resend on idle, never on timer**: `runCheck(deck, fromIdle=true)` from idle event is safe to resend (check was lost after compaction). Poll timer (`fromIdle=false`) only checks for expected output — never resends. Prevents 300-message pile-ups.
+2. **Tail replay on reload — use replayLines=0**: Daemon startup restoring existing sessions uses `replayLines=0` (state is in DB). New deck registration uses `replayLines=20` (need recent events for initial state). Prevents stale replay bypassing state dedup.
+3. **Beat fires unconditionally**: No DJ-idle gate. The exact time DJ is busy is when decks most need attention. CC's message queue handles delivery.
+4. **Destructive actions require explicit authorization**: No self-kill. Deck kill only by user command or DJ following protocol. A "stuck" deck might be at API limit that will resolve.
 
 ## Alert Scenarios
 

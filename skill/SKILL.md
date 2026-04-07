@@ -42,28 +42,20 @@ Decks submit reports via `booth report` CLI → daemon → SQLite:
 |------|---------|
 | `.booth/` | Booth runtime directory (project-local) |
 | `.booth/booth.db` | Daemon state + reports (SQLite). Use `booth reports` CLI to read |
-| `.booth/mix.md` | DJ management guidelines (customizable) |
-| `.booth/check.md` | Deck self-verification template (customizable) |
-| `.booth/beat.md` | Beat patrol checklist (customizable) |
+| `.booth/logs/` | Daemon logs |
 
 ## References
 
-Detailed protocols and specifications:
-
 | Reference | Content |
 |-----------|---------|
-| `references/child-protocol.md` | Deck behavior contract, lifecycle, report format |
-| `references/signals.md` | Signal architecture, injection mechanism, editor proxy |
-| `references/beat.md` | Periodic patrol trigger conditions and checklist |
-| `references/cli.md` | CLI command reference, workflows, and troubleshooting |
+| `references/signals.md` | Signal architecture, reactor rules, check/alert/beat flow |
+| `references/cli.md` | CLI command reference, workflows, troubleshooting |
 
-### Templates
+## Role-Specific Skills
 
-Cloned to `.booth/` on init. Users customize their local copies — runtime reads `.booth/`, not the package templates.
+DJ and Deck each have dedicated skills with full operational protocols:
 
-| Template | Destination | Content |
-|----------|-------------|---------|
-| `templates/mix.md` | `.booth/mix.md` | DJ management handbook |
-| `templates/check.md` | `.booth/check.md` | Deck self-verification framework |
-| `templates/beat/work.md` | `.booth/beat.md` | Beat patrol checklist |
-| `templates/plan.md` | `.booth/plan.md` | Plan persistence template |
+| Skill | Content |
+|-------|---------|
+| `booth-dj` | DJ management handbook — alert/beat response, deck management, report review |
+| `booth-deck` | Deck execution protocol — check procedure, review loop, report format |

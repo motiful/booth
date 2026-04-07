@@ -1,3 +1,8 @@
+---
+name: cli
+description: CLI command reference, spin/resume/ls options, modes, workflows, troubleshooting
+---
+
 # CLI Reference
 
 ## Command Quick Reference

@@ -2,11 +2,78 @@
 
 > Current execution state. Read this first when starting a session.
 
-## Current Phase: Phase A — 生存质量
+## Current Phase: Phase B — Skill 架构改造（设计完成，待执行）
 
-> Compaction 防护 → Worktree isolation → Guardian 调研。详见下方路线图。
+> Phase A 全部完成。Phase B 经过 skill-forge 审计 + 竞品调研 + 信号机制分析 + DJ/Deck 设计回顾，设计定稿。
 
-### Recent (2026-03-13)
+### Phase B 设计决策 (2026-04-06)
+
+**定位校准**：Booth = 质量优先的 AI 编排层。不是"多 agent 框架"（Agent Teams 做了），而是"保证 N 个 agent 输出质量"。
+
+**关键决策**：
+1. **信号机制统一**：所有信号（check/beat/alert/compact-recovery）走同一条投递管道（protectedSendToCC → Ctrl+G editor proxy）。之前误以为 compact-recovery 有特殊时效要求——实际是排队投递，与 check 一致。
+2. **Skill 化范围**：只有 check EP（200 行重知识）值得做 skill。其余短消息（alert 1-2 行、merge-conflict 3 行、compact-recovery 8 行）留代码。
+3. **三个 skill**：booth（共享词汇 ~50 行）、booth-dj（DJ 手册 ~200 行，从 mix.md 提炼）、booth-deck（deck 协议 ~200 行，从 check.md + child-protocol 合并）。
+4. **System prompt 瘦身**：488 行 mix.md → ~50 行 boot.md（身份 + 核心规则 + skill 指针）。保留 `--append-system-prompt` 作为 compaction 安全网。
+5. **信号格式探索**：`/booth-check` 作为 CC 原生 skill 调用（比 `[booth-check]` 更可靠）。Phase B 后期验证可行性。
+6. **DJ/Deck + Subagent 三层**：DJ 不用 subagent（保护 context），Deck 在 check 阶段用 subagent 做独立审查，三层互补。
+7. **分发**：skill 走标准 `npx skills add`，booth 代码不管 skill 注册。
+8. **扩展轴**：管理风格会趋同。真正的扩展是不同项目类型的 check 标准（前端/API/migration/文档）。
+
+**补充决策（2026-04-06 深夜）**：
+9. **信号格式统一**：不混用 bracket 和 slash。Step 8 验证后决定全部 `/slash` 或全部 `[bracket]`。
+10. **Check 扩展性**：daemon 只管 WHEN+DONE，skill 管 HOW。支持任意审查机制（Codex/Gemini/独立 deck/人工），唯一约束是最终调 `booth report`。
+11. **架构原创性**：底层模式不新（IoC+EDA+Supervisor），但 AI agent 语境下的组合有独特性（LLM-as-coordinator, JSONL 零 token 监控）。Blog-worthy 角度：具体实践对比，不是架构创新。
+12. **定位校准**：给用户——"开完任务就走，回来收验证过的结果"。与 BMAD/skill 的关系——"BMAD 是方法论，booth 是基础设施"。Prompt 替代不了 daemon 的跨 session 能力。
+13. **控制论视角**（George Zhang 2026-03-07; Böckeler/Fowler 2026-04-02）：Booth = 控制论第三浪潮（蒸汽调速器→K8s→AI Harness）的具体实现。Prompt 是开环控制，Booth 是闭环控制（前馈+反馈+迭代）。工具会被平台吸收，但 harness templates（什么 check 标准对什么项目有效）是长期资产。长期定位："AI coding 的质量控制标准库"而非"daemon 工具"。
+
+**设计文档**：`../booth-backstage/design/phase-b-renovation-v2.md`
+**执行计划**：`../booth-backstage/plan/phase-b-execution-v2.md`
+
+**Phase B 步骤**：
+- [x] Step 0: 删除 4 个过时散装文件 + 补 LICENSE ✓
+- [x] Step 1: 合并 references（reactor-rules → signals.md）✓
+- [x] Step 2: 写 booth-dj SKILL.md (172 行) ✓
+- [x] Step 3: 写 booth-deck SKILL.md (210 行) ✓
+- [ ] Step 4: 压缩 system prompt 488→50 行 (30min)
+- [ ] Step 5: 更新 reactor 信号措辞 (30min)
+- [ ] Step 6: 移除 BEHAVIOR_TEMPLATES (15min)
+- [x] Step 7: Published skill 精简 (SKILL.md 61 行) ✓
+- [ ] Step 8: 验证 /booth-check skill 调用（实验性）
+
+### Phase A 完成记录 (2026-03-13)
+
+**Merge Lifecycle**（Plan Step 3 — 完成，E2E 验证通过）
+- `MergeStatus` type: `pending | merging | merged | conflict`
+- `sessions` 表新增 `merge_status` 列 + migration
+- `tryMerge()`: rebase worktree branch onto main + ff-only merge
+- `booth merge <name>` CLI + `merge-deck` IPC handler
+- Auto mode: check SUCCESS → auto merge → DJ 通知 "Merged to main"
+- Hold mode: check SUCCESS → `merge_status=pending` → DJ 手动 `booth merge`
+- Exit handler: 有 unmerged commits → 尝试 merge → 冲突则 guardian resume（强制 auto）
+- Kill handler: 尝试 merge → 冲突保留 branch → worktree 清理
+- Reactor: conflict 状态 deck idle 时发 `[booth-merge-conflict]` 指导解冲突
+- `onDeckWorking` 重置 `mergeStatus`（解冲突后正常进入 check → merge 循环）
+- `git branch -D`（not `-d`）修复：本地 merged 但 upstream 未 push 时 `-d` 拒绝删除
+- `removeWorktree` rmSync fallback：CC 留下 untracked 文件时 `git worktree remove` 失败的兜底
+- **E2E 验证**：spin merge-test → commit → idle → check → report SUCCESS → auto merge → `git log main` 确认 `6a0a107 test: add merge-test.txt` → kill → worktree+branch 清理干净
+
+**Worktree 改用 CC `--worktree`**（Plan Step 2 — 完成，E2E 验证通过）
+- `spin.ts`: `createWorktree()` → `deckWorktreePath()` + `claude --worktree <name>`
+- CC 原生创建 worktree at `.claude/worktrees/<name>/`，symlink via `settings.json` `symlinkDirectories`
+- `resume.ts`: `ensureWorktree()` 手动重建（CC `--worktree --resume` 不支持 #31969）
+- `worktree.ts`: 路径 `.claude/worktrees/<name>/`，branch `worktree-<name>`
+- daemon: branch 引用 `booth/<name>` → `branchName()` 统一
+- **E2E 验证**：spin → CC 创建 worktree → `.booth/` symlink 自动 → branch `worktree-wt-test` → kill → cleanup
+
+**Report 直接写 DB**（Plan Step 1 — 完成，E2E 验证通过）
+- `booth report --status <S> --body "..."` CLI 新增
+- IPC `submit-report` handler + `reactor.onReportSubmitted()` 处理 check 完成流
+- `runCheck()` 重构为 DB-only（删除文件检测、stale report、ingestReport）
+- `session-end-hook.ts` EXIT report 改 IPC
+- 死代码清理：全部旧 report 文件函数删除
+- skill 文档全面同步（check.md, signals.md, child-protocol.md, cli.md, SKILL.md, mix.md）
+- **E2E 验证通过**：spin → check → `booth report` CLI → IPC → reactor → DJ 通知 → 二次 idle 正确跳过
 
 **Beat cooldown 修复** (dfc6197)
 - Hold deck terminal report 存在时，idle↔working cycling 不再重置 beat cooldown
@@ -56,31 +123,32 @@
 
 ---
 
-## Architecture
+## Architecture (⚠ PRE-PHASE-B — Phase B 完成后会更新以下内容)
 
 ```
 CLI Layer:
   booth          → daemon + tmux + DJ (--dangerously-skip-permissions --append-system-prompt)
-  booth spin     → tmux new-window + register deck + CC (--dangerously-skip-permissions)
+  booth spin     → tmux new-window + CC --worktree <name> --dangerously-skip-permissions
   booth ls       → IPC query
-  booth kill     → IPC kill-deck (tmux kill-window + unwatch + remove + archive)
+  booth kill     → try merge → IPC kill-deck (tmux kill + worktree cleanup)
+  booth merge    → IPC merge-deck (rebase + ff-only)
   booth stop     → IPC shutdown (archive all decks + kill windows + session + daemon exit)
-  booth resume   → restore archived deck (--resume CC session)
+  booth resume   → ensureWorktree + restore deck (--resume CC session)
   booth config   → read/write .booth/config.json (set/get/list)
 
 Daemon Layer:
   Signal    → JSONL tail per deck + DJ JSONL tracking
   State     → SQLite (better-sqlite3) + in-memory cache
   Reactor   → idle → check flow + beat timer + notifyDj + plan-mode auto-approve
-  IPC       → ping, ls, status, register/remove/kill-deck, send-message, shutdown, deck-exited, resume-deck
+  IPC       → ping, ls, status, register/remove/kill/merge-deck, send-message, shutdown, deck-exited, resume-deck
   Health    → 30s pane liveness check
 
 Signal Flow:
   Deck completes → JSONL turn_duration → idle
   → Reactor.onDeckIdle() → 500ms delay → runCheck()
-  → No .booth/reports/<deck>.md? → sendMessage [booth-check] → deck reads .booth/check.md
-  → Deck sub-agent review → writes report → idle
-  → Report exists + terminal status? → notifyDj() → protectedSendToCC (Ctrl+G safe)
+  → No terminal report in DB? → sendMessage [booth-check] → deck reads .booth/check.md
+  → Deck sub-agent review → submits report via `booth report` CLI → idle
+  → Daemon receives report via IPC → inserts to SQLite → notifyDj() → protectedSendToCC (Ctrl+G safe)
   → DJ receives [booth-alert] → reads report → handles per mix.md → booth kill <deck>
 
 Signal Delivery (single channel):
@@ -95,7 +163,7 @@ Signal Delivery (single channel):
   daemon.sock                          — daemon IPC
   logs/daemon-YYYY-MM-DD.log           — Winston daily rotate (7d retention)
   logs/daemon-stderr.log               — uncaught errors fallback
-  reports/                             — transient report files (ingested to SQLite then deleted)
+  (reports go directly to SQLite via `booth report` CLI → IPC — no file intermediary)
   config.json                         — user config (editor, etc.)
   check.md, mix.md, beat.md           — rigid entry points (copied from templates, user-customizable, future: skill routers)
 ```
@@ -198,7 +266,7 @@ Signal Delivery (single channel):
 **已知挑战/未知**：
 
 - **CLAUDE.md 发现**：CC 通过向上遍历目录找 `.git` 或 `CLAUDE.md`。Worktree 的 `.git` 是一个 file（指向主仓库），不是目录。**需验证 CC 能否在 worktree 中正确找到项目 CLAUDE.md**
-- **`.booth/` 路径解析**：`findProjectRoot()` (`src/constants.ts:15-28`) 先找 `.booth/` 目录，找不到再找 `.git` / `package.json`。Worktree 中没有 `.booth/`——**deck 需要通过什么方式访问 `.booth/reports/`？** 选项：(a) 符号链接 `.booth/` 到主仓库 (b) 环境变量传递 projectRoot (c) 修改 `findProjectRoot` 逻辑
+- **`.booth/` 路径解析**：`findProjectRoot()` (`src/constants.ts:15-28`) 先找 `.booth/` 目录，找不到再找 `.git` / `package.json`。Worktree 中没有 `.booth/`——deck 通过 `BOOTH_PROJECT_ROOT` env var 找到主仓库路径。Report 直接走 IPC 到 daemon DB，不需要文件访问
 - **Rebase 冲突**：如果两个 deck 都改了同一个文件（不同行），rebase 可能自动合并；如果改了同一行，需要冲突处理。当前无自动化——deck 需要报告冲突让 DJ 决策
 - **tmux socket 和 pane ID**：`deriveSocket()` 基于 `projectRoot` 路径的 SHA256 hash。如果 worktree 路径不同于主仓库路径，socket 会不同——**daemon 需要使用统一的主仓库路径**
 - **Worktree 清理**：`git worktree remove` 需要工作目录干净。如果 deck 崩溃留下脏 worktree 怎么办？
@@ -215,8 +283,8 @@ Signal Delivery (single channel):
 - [x] deck kill 时自动清理 worktree — `git worktree remove --force` + 已合并分支自动删除，未合并分支保留并警告
 - [x] `deriveSocket()` 路径适配 — `BOOTH_PROJECT_ROOT` 使 `findProjectRoot()` 返回主仓库路径
 - [x] E2E 验证 — 两个 deck 同时修改 README.md，各自 commit，main 不受影响
-- [ ] deck 完成后 rebase + fast-forward merge 到 main（DJ 手动 `git merge booth/<name>` 即可）
-- [ ] 冲突处理机制（deck 尝试 rebase → 冲突时报告 DJ → DJ 决策：手动解决/放弃/重新 spin）
+- [x] deck 完成后 rebase + fast-forward merge 到 main — auto mode 自动 merge，hold/live 手动 `booth merge <name>`
+- [x] 冲突处理机制 — rebase 冲突 → deck 自动 resume (auto) → 解冲突 → re-check → retry merge
 
 **A3. Guardian 进程自愈** — ✅ 已完成
 
@@ -261,6 +329,15 @@ Signal Delivery (single channel):
 ### Phase B: Skills 整改 — 加载策略健康化
 
 > 目标：Mix 和所有 skill 的加载/管理策略理顺。优先级最高（Phase A 之后）。
+
+**调研完成 (2026-04-05)**:
+- Skill-forge 全量审核完成（37 文件，7 系统级缺陷）
+- CC 源码确认：`--append-system-prompt` 在 compaction 后 100% 保留
+- CC Hook 系统（26 种 event）vs JSONL watching 对比完成
+- 改造方案: `../booth-backstage/design/phase-b-skill-architecture.md`
+- 战略洞察: `../booth-backstage/design/booth-architecture-insights-2026-04.md`
+- 哲学总结: `/tmp/booth-philosophy.md`（给协作 session 参考）
+- 详细审核报告: `/tmp/skill-forge-booth.md`
 
 **B1. Mix 策略化**
 
@@ -402,6 +479,45 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 
 ---
 
+### Phase G: booth-api — 把交互式 CC session 变成 REST API
+
+> 目标：利用 booth 的 tmux + editor proxy 架构，对外暴露 OpenAI-compatible HTTP API。每个请求分配一个交互式 CC deck，天然 `entrypoint=cli` + `isInteractive=true`，不触发 `-p` 模式限制。
+
+**背景（2026-04-05）**：Anthropic 4月4日起 `claude -p` 走 Extra Usage 而非订阅额度。booth 的交互式 deck 天然不受此限制——CC 视角下每个 deck 就是一个人类坐在终端前的正常会话。booth-api 的核心价值：把这个"交互式特权"封装成标准 API，供外部工具/代码调用。
+
+**架构**：
+```
+POST /v1/chat/completions
+  → Auth (API key) → 路由到 deck pool
+  → 找空闲 deck / spin 新 deck
+  → editor proxy 注入用户消息
+  → 监听 JSONL 输出 → Stream SSE 响应
+  → deck 回到空闲池
+```
+
+**与 cc-gateway 的关系**：booth-api 解决应用层（session 编排），cc-gateway 解决网络层（指纹归一化）。组合使用：booth 每个 deck 的 launcher 设置 `ANTHROPIC_BASE_URL` 指向 cc-gateway，同时实现交互式模式 + 指纹统一化。
+
+**核心待办**：
+- [ ] HTTP API 层（Express/Hono，OpenAI-compatible 格式）
+- [ ] Deck pool 管理（空闲检测、自动扩缩、健康检查、最大并发数）
+- [ ] JSONL → 结构化 API response parser（提取 assistant 回复 + tool calls + thinking）
+- [ ] SSE streaming（实时流式返回，匹配 OpenAI stream format）
+- [ ] Session 复用策略（context 累积 vs 隔离、何时 /compact、何时 spin 新 deck）
+- [ ] API 认证 + rate limiting（防外部滥用）
+- [ ] 错误处理（CC 崩溃 → guardian 恢复 → 请求 retry / 502）
+- [ ] 与 cc-gateway 集成（launcher 环境变量注入）
+
+**已有基础设施可复用**：
+- deck spin/kill/send：已有完整 CLI + IPC
+- editor proxy：Ctrl+G 注入，零修改可用
+- JSONL watcher：SignalCollector 已在 tail
+- Guardian：CC 崩溃自动恢复
+- SQLite 状态管理：deck 池状态天然有持久化
+
+**预估工作量**：1-2 周（基于 booth 现有代码）
+
+---
+
 ### Bug Fixes（Phase A 期间，含 Quality Hardening）
 
 - [x] beat 冷却 hold idle 不重复触发 (8e2450d)
@@ -453,12 +569,13 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 | Wave F | Done | Backlog 清零 + socket fix + deck perm isolation + fresh→clean refactor + resume --list 移除 |
 | Identity Refactor | Done | 双重寻址 (name + session_id)，7 步重构 + report ingestion fix |
 | Quality Hardening | Done | 10 bug fixes: beat/report/input/kill/live/pane + 设计文档更新 |
-| Phase A | **In Progress** | 生存质量 — A1 完成, A3 Guardian 完成, A2 Worktree 进行中 |
+| Phase A | **Done** | 生存质量 — A1 Compaction + A2 Worktree + A3 Guardian 全部完成 |
 | Phase B | Queued | Skills 整改 — Mix 策略化、skill 依赖链 |
 | Phase C | Queued | 产品打磨 — UIUX、Token 统计、产品命名 |
 | Phase D | Queued | 市场定位 — 竞品分析、README/定位 |
 | Phase E | Queued | 发布 — npm publish + 博客宣发 |
 | Phase F | Outlined | 平台化 — Agent API、Codex、跨工具集成 |
+| Phase G | Idea | booth-api — 把交互式 CC session 封装成 REST API，绕过 -p 限制 |
 
 ## File Map
 
@@ -491,6 +608,7 @@ hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
 | `src/cli/commands/ls.ts` | `booth ls` — list decks + DJ |
 | `src/cli/commands/send.ts` | `booth send` — inject prompt to deck |
 | `src/cli/commands/reload.ts` | `booth reload` — graceful daemon restart |
+| `src/cli/commands/merge.ts` | `booth merge` — rebase + ff-only merge deck branch |
 | `src/cli/commands/reports.ts` | `booth reports` — list/view/open reports |
 | `src/cli/commands/config.ts` | `booth config` — set/get/list |
 | `src/cli/commands/init.ts` | `booth init` — register skill + setup |
