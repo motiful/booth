@@ -29,8 +29,13 @@ booth/
 ├── src/                    # TypeScript source
 ├── dist/                   # Compiled output (published)
 ├── skill/                  # Booth skill (published) — entrypoint + references
-│   ├── SKILL.md            # General entrypoint (loaded by CC skill system)
-│   └── references/         # mix, signals, check, beat, child-protocol
+│   ├── SKILL.md            # Shared vocabulary (signals, modes, statuses, CLI)
+│   ├── boot.md             # DJ system prompt (~41 lines, loaded by start.ts)
+│   ├── references/         # signals, cli
+│   └── templates/          # mix.md, check.md (legacy reference, not copy-on-init)
+├── booth-skills/           # CC-native role skills (installed via npx skills add)
+│   ├── booth-dj/SKILL.md   # DJ management handbook (~172 lines)
+│   └── booth-deck/SKILL.md # Deck execution protocol (~210 lines)
 ├── .claude/                # CC local config (gitignored)
 ├── package.json            # "files": ["dist/", "bin/", "skill/"]
 ├── CLAUDE.md               # This file
