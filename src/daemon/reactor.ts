@@ -133,14 +133,14 @@ export class Reactor {
       }
     }
 
-    // No report yet → trigger deck self-check via .booth/check.md
-    const checkPath = boothPath(this.projectRoot, 'check.md')
+    // No report yet → trigger deck self-check
+    const overridePath = boothPath(this.projectRoot, 'check.md')
     const round = this.checkRounds.get(deck.id) ?? 1
     this.checkRounds.set(deck.id, round)
 
-    let msg = existsSync(checkPath)
-      ? `[booth-check] round=${round}/${MAX_CHECK_ROUNDS} Read ${checkPath} and follow the self-verification procedure.`
-      : `[booth-check] round=${round}/${MAX_CHECK_ROUNDS} Self-verify your work. Submit report via: booth report --status SUCCESS --body "your report with YAML frontmatter".`
+    let msg = existsSync(overridePath)
+      ? `[booth-check] round=${round}/${MAX_CHECK_ROUNDS} Read ${overridePath} and follow the self-verification procedure.`
+      : `[booth-check] round=${round}/${MAX_CHECK_ROUNDS} Follow the booth-deck self-verification protocol.`
 
     // noLoop: tell deck to skip sub-agent review loop
     if (deck.noLoop) {
@@ -263,14 +263,13 @@ export class Reactor {
       return
     }
 
-    const beatPath = boothPath(this.projectRoot, 'beat.md')
     const summary = [
       `[booth-beat] Status update:`,
       working.length ? `  Working: ${working.join(', ')}` : '',
       checkingNormal.length ? `  Checking: ${checkingNormal.join(', ')}` : '',
       checkingStale.length ? `  ⚠ STALE CHECK: ${checkingStale.join(', ')} — may be stuck` : '',
       idle.length ? `  Idle: ${idle.join(', ')}` : '',
-      existsSync(beatPath) ? `  Read ${beatPath} for your checklist.` : `  Use "booth reports" to view completed deck reports.`,
+      `  Use "booth ls" and "booth reports" to review current state.`,
     ].filter(Boolean).join('\n')
 
     sendMessage(this.socket, this.state, 'dj', summary).then(result => {

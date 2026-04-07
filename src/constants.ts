@@ -1,10 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { resolve, basename, join, dirname } from 'node:path'
-import { existsSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { resolve, basename, join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
 
 export const SESSION = 'dj'
 export const BOOTH_DIR = '.booth'
@@ -43,18 +40,6 @@ export function boothDir(projectRoot: string): string {
   return join(projectRoot, BOOTH_DIR)
 }
 
-// Resolve the skill directory (relative to compiled dist/src/ → ../../skill/)
-function skillDir(): string {
-  return resolve(__dirname, '../..', 'skill')
-}
-
-const BEHAVIOR_TEMPLATES: Array<{ src: string; dest: string }> = [
-  { src: 'templates/check.md', dest: 'check.md' },
-  { src: 'templates/mix.md', dest: 'mix.md' },
-  { src: 'templates/beat/work.md', dest: 'beat.md' },
-  { src: 'templates/plan.md', dest: 'plan.md' },
-]
-
 export function initBoothDir(projectRoot: string): string {
   const dir = boothDir(projectRoot)
   if (!existsSync(dir)) {
@@ -63,18 +48,6 @@ export function initBoothDir(projectRoot: string): string {
   const lDir = logsDir(projectRoot)
   if (!existsSync(lDir)) {
     mkdirSync(lDir, { recursive: true })
-  }
-
-  // Copy behavior templates if not present (user can customize)
-  const skill = skillDir()
-  for (const t of BEHAVIOR_TEMPLATES) {
-    const dest = join(dir, t.dest)
-    if (!existsSync(dest)) {
-      const src = join(skill, t.src)
-      if (existsSync(src)) {
-        copyFileSync(src, dest)
-      }
-    }
   }
 
   // Auto-gitignore .booth/

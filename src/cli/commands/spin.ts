@@ -81,14 +81,12 @@ export async function spinCommand(args: string[]): Promise<void> {
   const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${sessionId}" && export BOOTH_ROLE=deck && export BOOTH_DECK_NAME="${name}" && export BOOTH_PROJECT_ROOT="${projectRoot}"`
 
   sleepMs(500)
-  if (prompt) {
-    const promptFile = join(tmpdir(), `booth-prompt-${name}-${Date.now()}.txt`)
-    writeFileSync(promptFile, prompt)
-    tmux(socket, 'send-keys', '-t', paneId,
-      `${envSetup} && PROMPT=$(cat ${promptFile}) && rm -f ${promptFile} && claude --worktree ${name} --dangerously-skip-permissions --session-id "${sessionId}" "$PROMPT"; reset`, 'Enter')
-  } else {
-    tmux(socket, 'send-keys', '-t', paneId, `${envSetup} && claude --worktree ${name} --dangerously-skip-permissions --session-id "${sessionId}"; reset`, 'Enter')
-  }
+  const deckIdentity = `You are Booth Deck "${name}".`
+  const fullPrompt = prompt ? `${deckIdentity}\n\n${prompt}` : deckIdentity
+  const promptFile = join(tmpdir(), `booth-prompt-${name}-${Date.now()}.txt`)
+  writeFileSync(promptFile, fullPrompt)
+  tmux(socket, 'send-keys', '-t', paneId,
+    `${envSetup} && PROMPT=$(cat ${promptFile}) && rm -f ${promptFile} && claude --worktree ${name} --dangerously-skip-permissions --session-id "${sessionId}" "$PROMPT"; reset`, 'Enter')
 
   const modeLabel = mode === 'auto' ? '' : ` [${mode}]`
   const loopLabel = noLoop ? ' [no-loop]' : ''

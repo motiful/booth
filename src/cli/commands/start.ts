@@ -70,16 +70,14 @@ export async function launchDJ(projectRoot: string, resumeSessionId?: string): P
   const djSessionId = resumeSessionId ?? generateSessionId()
   const djJsonlPath = jsonlPathForSession(projectRoot, djSessionId)
 
-  const mixPath = join(projectRoot, '.booth', 'mix.md')
+  const bootPath = join(packageRoot, 'skill', 'boot.md')
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
 
   const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
 
-  const warroomPath = join(projectRoot, '.booth', 'warroom')
-
   const claudeFlag = resumeSessionId
     ? `--resume "${djSessionId}"`
-    : `--session-id "${djSessionId}" --append-system-prompt "$(cat '${mixPath}')$( [ -f '${warroomPath}' ] && printf '\\n\\n' && cat '${warroomPath}' || true )"`
+    : `--session-id "${djSessionId}" --append-system-prompt "$(cat '${bootPath}')"`
 
   const djCmd = `${editorSetup} && export BOOTH_ROLE=dj && claude --dangerously-skip-permissions ${claudeFlag}; reset`
 
