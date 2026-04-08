@@ -2,32 +2,47 @@ import { existsSync, mkdirSync, symlinkSync, readlinkSync, unlinkSync } from 'no
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+const BOOTH_SKILLS = ['booth', 'booth-dj', 'booth-deck'] as const
+
 export function isInitialized(): boolean {
-  const link = join(homedir(), '.claude', 'skills', 'booth')
-  try {
-    const target = readlinkSync(link)
-    return existsSync(target)
-  } catch {
-    return false
-  }
+  const globalSkillDir = join(homedir(), '.claude', 'skills')
+  return BOOTH_SKILLS.every(name => {
+    try {
+      const target = readlinkSync(join(globalSkillDir, name))
+      return existsSync(target)
+    } catch {
+      return false
+    }
+  })
 }
 
-export function registerBoothSkill(packageRoot: string): void {
+export function registerBoothSkills(packageRoot: string): void {
   const globalSkillDir = join(homedir(), '.claude', 'skills')
   if (!existsSync(globalSkillDir)) mkdirSync(globalSkillDir, { recursive: true })
 
-  const link = join(globalSkillDir, 'booth')
-  const target = join(packageRoot, 'skill')
+  // booth-skills Collection lives alongside the code repo
+  const collectionRoot = join(packageRoot, '..', 'booth-skills', 'skills')
 
-  try {
-    const current = readlinkSync(link)
-    if (current === target) return
-    unlinkSync(link)
-  } catch {
-    // symlink doesn't exist
+  for (const name of BOOTH_SKILLS) {
+    const link = join(globalSkillDir, name)
+    const target = join(collectionRoot, name)
+
+    if (!existsSync(target)) {
+      // Collection not found at expected path — skip silently
+      // User can install via: npx skills add whiletrue0x/booth-skills
+      continue
+    }
+
+    try {
+      const current = readlinkSync(link)
+      if (current === target) continue
+      unlinkSync(link)
+    } catch {
+      // symlink doesn't exist
+    }
+
+    symlinkSync(target, link)
   }
-
-  symlinkSync(target, link)
 }
 
 export interface SkillStatus {

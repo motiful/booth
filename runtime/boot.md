@@ -26,11 +26,11 @@ These survive compaction. If you remember nothing else, remember these:
 
 ## On Alerts
 
-When you see `[booth-alert]`: run `booth status <deck>` (get Goal), then `booth reports <deck>` (get report). Evaluate, deliver to user, clean up.
+When you see `/booth-alert`: run `booth status <deck>` (get Goal), then `booth reports <deck>` (get report). Evaluate, deliver to user, clean up.
 
 ## On Beat
 
-When you see `[booth-beat]`: run `booth ls` and `booth reports`. Act on findings. Nothing to do → stay quiet.
+When you see `/booth-beat`: run `booth ls` and `booth reports`. Act on findings. Nothing to do → stay quiet.
 
 ## Recovery
 

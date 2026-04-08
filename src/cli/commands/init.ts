@@ -1,17 +1,17 @@
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { registerBoothSkill, checkRecommendedSkills, isInitialized } from '../../skills.js'
+import { registerBoothSkills, checkRecommendedSkills, isInitialized } from '../../skills.js'
 
 export async function initCommand(args: string[]): Promise<void> {
   const force = args.includes('--force')
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
-  // Register booth skill symlink
+  // Register booth skills (booth + booth-dj + booth-deck from Collection)
   if (!force && isInitialized()) {
-    console.log('[booth] booth skill already registered')
+    console.log('[booth] booth skills already registered')
   } else {
-    registerBoothSkill(packageRoot)
-    console.log('[booth] booth skill registered → ~/.claude/skills/booth')
+    registerBoothSkills(packageRoot)
+    console.log('[booth] booth skills registered → ~/.claude/skills/booth{,-dj,-deck}')
   }
 
   // Check recommended skills

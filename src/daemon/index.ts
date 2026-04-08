@@ -32,9 +32,9 @@ function buildCompactRecoveryPrompt(
 ): string {
   const lines: string[] = []
   if (role === 'dj') {
-    lines.push(`[booth-compact-recovery] You are booth's DJ (project manager). Context compaction just happened.`)
+    lines.push(`/booth-compact-recovery You are booth's DJ (project manager). Context compaction just happened.`)
   } else {
-    lines.push(`[booth-compact-recovery] You are booth deck "${name}" (mode: ${mode ?? 'auto'}). Context compaction just happened.`)
+    lines.push(`/booth-compact-recovery You are booth deck "${name}" (mode: ${mode ?? 'auto'}). Context compaction just happened.`)
   }
   if (filePath) {
     lines.push(`Read ${filePath} first — it contains the last 3 conversation turns before compaction. Delete the file after reading.`)

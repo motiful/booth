@@ -105,34 +105,117 @@ Three Skills:
 
 ## Pending Items — Phase C–G 路线图
 
+详细调研内容保留原文，供未来 session 继续探索。
+
 ### Phase C: 产品打磨 — 用户体验可交付
 
-- [ ] C1: CLI 交互打磨（错误提示、fuzzy match、命令补全）
-- [ ] C1: Report 展示优化（摘要预览、语法高亮、分页）
-- [ ] C2: Token 统计（从 JSONL usage 字段累加，存 SQLite，booth ls 显示）
-- [ ] C3: 产品命名评估（Booth 语音识别为 Boost 问题）
+> 目标：UIUX 达到可交付标准。
 
-### Phase D: 市场定位
+**C1. UIUX 打磨**
 
-- [ ] 竞品深度分析（Agent Teams、ComposioHQ、Claude Squad）
-- [ ] README 重写 + 定位校准
-- [ ] 博客方向确定（实践对比，不是架构创新）
+**已知 UX 痛点**：
 
-### Phase E: 发布
+- **CLI 交互模式单一**：当前 17 个命令全部是"执行一次退出"模式。没有 interactive/dashboard 模式
+- **错误信息不友好**：CLI 错误只输出 Usage + exit(1)，没有上下文提示
+- **`booth ls` 信息密度低**：只显示 mode/status/时间。缺少：当前 prompt 摘要、check 进度、report 状态
+- **Report 展示**：`booth reports` 列表缺少摘要预览；`booth reports <name>` 输出纯 markdown 到 stdout，没有语法高亮或分页
+- **`booth peek` 信息有限**：只看最后 N 行 tmux 输出，无法区分 CC 输出 vs 用户输入 vs 工具调用
+- **缺少 `booth dashboard`**：一个持续刷新的 TUI，实时展示所有 deck 状态、DJ 状态、最近 alert
 
-- [ ] npm publish @motiful/booth
-- [ ] booth-dj / booth-deck 发布到 GitHub（npx skills add）
-- [ ] 博客宣发
+**成功标准**：新用户 5 分钟内能理解 booth 工作流；日常操作不需要反复输入查询命令。
 
-### Phase F: 平台化
+- [ ] booth 指令交互打磨（参考老 booth 取精华去糟粕，推陈出新）
+- [ ] Report 系统展示优化（摘要预览、语法高亮、分页）
+- [ ] 整体用户流程优化（错误提示、fuzzy match deck 名、命令补全）
 
-- [ ] Agent API（给其他 agent 调用 booth）
-- [ ] Codex 适配
-- [ ] 跨工具集成
+**C2. Token 统计**（精简版 Attention Management）
 
-### Phase G: booth-api（Idea）
+**已知信息**：
 
-- [ ] 把交互式 CC session 封装成 REST API
+- CC JSONL 中 `type: "assistant"` 消息包含 `message.usage` 字段（input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, service_tier）
+- `SignalCollector`（`src/daemon/signal.ts`）已在 tail JSONL——可同时提取 token 数据，零额外 I/O
+- 数据存储可复用 SQLite（sessions 表加列或新建 token_usage 表）
+
+**未知/困惑**：
+
+- CC session resume 后 token 计数是否重置？（JSONL 追加，usage 每 turn 独立，需要累加）
+- `cache_read_input_tokens` 是否应计入总量？
+- Codex 的 token 统计 UI/UX 值得参考
+
+**成功标准**：`booth ls` 显示每个 deck 的累计 token 消耗；`booth kill` 时显示总消耗。
+
+- [ ] 在 SignalCollector 或 reactor 中累加 token 用量
+- [ ] 存入 SQLite
+- [ ] `booth ls` 和 `booth kill` 显示 token 统计
+
+**C3. 产品命名重新评估**
+
+- [ ] Booth 语音输入易误识别为 Boost，评估替代名称（不阻塞技术开发）
+
+---
+
+### Phase D: 市场定位 — 知道自己是谁
+
+- [ ] D1: 2026 新竞品调研 + 与老 booth signal 思想对比
+- [ ] D2: README + 定位（必须在竞品分析后确定）
+
+---
+
+### Phase E: 发布 — npm + 宣发
+
+**E1. npm publish**
+
+hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
+
+- [ ] npm publish 准备（package.json 审查、README、LICENSE、prepublishOnly script）
+- [ ] `src/version.ts` — getCurrentVersion() + checkForUpdates()
+- [ ] bare `booth` 版本检查（npm registry fetch，5s timeout，失败静默跳过）
+
+**E2. 博客 / 宣发**
+
+- [ ] 发博客造势 + signal 思想沉淀
+- [ ] 在 Phase D 定位确认后执行
+
+---
+
+### Phase F: 平台化 — 给 agent 用
+
+> booth 主要是给 agent 用，人也可以用但不是主要服务对象。
+
+- [ ] Agent-as-consumer API — 其他 agent 如何调用 booth
+- [ ] Codex 支持探索
+- [ ] 跨工具集成（CC/OpenClaw 直接调用）
+
+---
+
+### Phase G: booth-api — 把交互式 CC session 变成 REST API
+
+> 利用 booth 的 tmux + editor proxy 架构，对外暴露 OpenAI-compatible HTTP API。每个请求分配交互式 CC deck，天然 `entrypoint=cli` + `isInteractive=true`。
+
+**背景（2026-04-05）**：Anthropic 4月4日起 `claude -p` 走 Extra Usage 而非订阅额度。booth 的交互式 deck 天然不受此限制。booth-api 核心价值：把"交互式特权"封装成标准 API。
+
+**架构**：
+```
+POST /v1/chat/completions
+  → Auth → 路由到 deck pool
+  → 找空闲 deck / spin 新 deck
+  → editor proxy 注入用户消息
+  → 监听 JSONL 输出 → Stream SSE 响应
+  → deck 回到空闲池
+```
+
+**与 cc-gateway 的关系**：booth-api 解决应用层（session 编排），cc-gateway 解决网络层（指纹归一化）。
+
+**核心待办**：
+- [ ] HTTP API 层（Express/Hono，OpenAI-compatible 格式）
+- [ ] Deck pool 管理（空闲检测、自动扩缩、健康检查、最大并发数）
+- [ ] JSONL → 结构化 API response parser
+- [ ] SSE streaming（匹配 OpenAI stream format）
+- [ ] Session 复用策略（context 累积 vs 隔离）
+- [ ] API 认证 + rate limiting
+- [ ] 与 cc-gateway 集成
+
+**已有基础设施可复用**：deck spin/kill/send、editor proxy、JSONL watcher、Guardian、SQLite
 
 ---
 

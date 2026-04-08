@@ -88,7 +88,7 @@ export class Reactor {
     // Merge conflict: deck was resumed to resolve conflicts. Send guidance message.
     if (deck.mergeStatus === 'conflict') {
       sendMessage(this.socket, this.state, deck.id,
-        `[booth-merge-conflict] Your branch has conflicts with main. Run \`git rebase main\`, resolve all conflicts, commit, then idle. A check will re-run automatically.`
+        `/booth-merge-conflict Your branch has conflicts with main. Run \`git rebase main\`, resolve all conflicts, commit, then idle. A check will re-run automatically.`
       ).catch(err => logger.error(`[booth-reactor] conflict message failed for "${deck.name}": ${err}`))
       return
     }
@@ -139,8 +139,8 @@ export class Reactor {
     this.checkRounds.set(deck.id, round)
 
     let msg = existsSync(overridePath)
-      ? `[booth-check] round=${round}/${MAX_CHECK_ROUNDS} Read ${overridePath} and follow the self-verification procedure.`
-      : `[booth-check] round=${round}/${MAX_CHECK_ROUNDS} Follow the booth-deck self-verification protocol.`
+      ? `/booth-check round=${round}/${MAX_CHECK_ROUNDS} Read ${overridePath} and follow the self-verification procedure.`
+      : `/booth-check round=${round}/${MAX_CHECK_ROUNDS} Follow the booth-deck self-verification protocol.`
 
     // noLoop: tell deck to skip sub-agent review loop
     if (deck.noLoop) {
@@ -264,7 +264,7 @@ export class Reactor {
     }
 
     const summary = [
-      `[booth-beat] Status update:`,
+      `/booth-beat Status update:`,
       working.length ? `  Working: ${working.join(', ')}` : '',
       checkingNormal.length ? `  Checking: ${checkingNormal.join(', ')}` : '',
       checkingStale.length ? `  ⚠ STALE CHECK: ${checkingStale.join(', ')} — may be stuck` : '',
@@ -376,7 +376,7 @@ export class Reactor {
   // --- DJ notification ---
 
   notifyDj(message: string): void {
-    const formatted = `[booth-alert] ${message}`
+    const formatted = `/booth-alert ${message}`
     sendMessage(this.socket, this.state, 'dj', formatted).then(result => {
       if (result.ok) {
         logger.info(`[booth-reactor] notified DJ: ${message.slice(0, 80)}`)
@@ -484,7 +484,7 @@ export class Reactor {
     } else {
       this.state.updateDeck(deck.id, { mergeStatus: 'conflict' })
       sendMessage(this.socket, this.state, deck.id,
-        `[booth-merge-conflict] Auto-merge failed after check. Run \`git rebase main\`, resolve conflicts, commit, then idle. Check will re-run.`
+        `/booth-merge-conflict Auto-merge failed after check. Run \`git rebase main\`, resolve conflicts, commit, then idle. Check will re-run.`
       ).catch(err => logger.error(`[booth-reactor] conflict message failed for "${deck.name}": ${err}`))
       const msg = `Deck "${deck.name}" check complete: ${checkStatus}, but merge conflict. Deck notified to resolve.`
       this.notifyDj(msg)
