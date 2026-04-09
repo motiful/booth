@@ -74,7 +74,7 @@ export async function spinCommand(args: string[]): Promise<void> {
   // Zero cost when not intercepting — pure pass-through to user's real editor.
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
-  const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
+  const editorSetup = `unset CLAUDECODE && export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
 
   // BOOTH_PROJECT_ROOT tells findProjectRoot() in hooks/CLI to use the main repo,
   // not the worktree path. This ensures IPC, socket, and .booth/ paths resolve correctly.

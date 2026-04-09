@@ -210,7 +210,7 @@ async function resumeOne(
   // Set EDITOR proxy (same as spin.ts)
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
-  const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
+  const editorSetup = `unset CLAUDECODE && export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
 
   // Set BOOTH_PROJECT_ROOT for worktree decks (same as spin.ts)
   const projectRootExport = wtPath ? ` && export BOOTH_PROJECT_ROOT="${projectRoot}"` : ''

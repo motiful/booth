@@ -35,6 +35,16 @@
 - 信号格式暂用 `[bracket]`，Step 8 验证后决定最终格式
 - booth-dj / booth-deck 尚未 `npx skills add` 发布到 GitHub
 
+### Hardening (2026-04-10)
+
+E2E checklist 准备阶段发现的安全 + 启动问题，三处修复：
+
+- **DJ 自杀防护**：`stop.ts` / `restart.ts` 增加 `BOOTH_ROLE === 'dj'` 拦截。这两个命令会 kill SESSION="dj" 整个 tmux session — 从 DJ 自身 pane 调用等于自杀（CC 进程消失，看似"突然退出"）。原 deck 拦截已存在，DJ 拦截缺失。
+- **Deck CC 嵌套启动解封**：4 处 `editorSetup`（spin / resume / start / daemon guardian）前缀加 `unset CLAUDECODE`。CC 检测到 `CLAUDECODE=1` 拒绝启动嵌套 session — DJ pane 内 spin 出来的 deck pane 继承了该变量，导致 deck CC 直接报错退出。
+- **保留**：`booth reload` 当时复现失败已无法重现（连续 4 次成功）。`gracefulReload` 缺第二行 log 是 winston 异步 buffer 在 `process.exit(0)` 前未 flush 所致，纯 cosmetic。
+
+清理：旧路径 `~/motifpool/booth/booth/` 的僵尸 daemon (PID 81994, 自 3/26 运行) 终结；本项目残留的 stale tmux socket（`booth`、`booth-booth-54283ae9`、`booth-booth-d06d5266` + 一批 test/e2e socket）清除。
+
 ---
 
 ## Archived Phases

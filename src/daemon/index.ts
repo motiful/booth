@@ -981,7 +981,7 @@ export class Daemon {
     const deckName = deck.name
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
     const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
-    const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
+    const editorSetup = `unset CLAUDECODE && export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
     // Set BOOTH_PROJECT_ROOT for worktree decks (same as spin.ts/resume.ts)
     const projectRootExport = deck.worktreePath ? ` && export BOOTH_PROJECT_ROOT="${this.projectRoot}"` : ''
     const envSetup = `${editorSetup} && export BOOTH_DECK_ID="${sessionId}" && export BOOTH_ROLE=deck && export BOOTH_DECK_NAME="${deckName}"${projectRootExport}`

@@ -73,7 +73,7 @@ export async function launchDJ(projectRoot: string, resumeSessionId?: string): P
   const bootPath = join(packageRoot, 'runtime', 'boot.md')
   const editorProxy = join(packageRoot, 'bin', 'editor-proxy.sh')
 
-  const editorSetup = `export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
+  const editorSetup = `unset CLAUDECODE && export BOOTH_REAL_EDITOR="\${VISUAL:-\${EDITOR:-}}" && export VISUAL="${editorProxy}" && export EDITOR="${editorProxy}"`
 
   const claudeFlag = resumeSessionId
     ? `--resume "${djSessionId}"`

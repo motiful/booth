@@ -9,6 +9,11 @@ export async function stopCommand(args: string[]): Promise<void> {
     process.exit(1)
   }
 
+  if (process.env.BOOTH_ROLE === 'dj') {
+    console.error(`[booth] error: "booth stop" kills the tmux session that DJ is attached to — running this from DJ would terminate DJ itself. Run from an external shell instead.`)
+    process.exit(1)
+  }
+
   const projectRoot = findProjectRoot()
   const socket = deriveSocket(projectRoot)
   const clean = args.includes('--clean')
