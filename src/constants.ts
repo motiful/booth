@@ -77,7 +77,7 @@ export function ipcSocketPath(projectRoot: string): string {
 }
 
 export function ccProjectsDir(projectRoot: string): string {
-  const encoded = resolve(projectRoot).replace(/\//g, '-')
+  const encoded = resolve(projectRoot).replace(/[/.]/g, '-')
   return join(homedir(), '.claude', 'projects', encoded)
 }
 
