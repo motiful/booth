@@ -2,7 +2,10 @@ import { existsSync, mkdirSync, symlinkSync, readlinkSync, unlinkSync } from 'no
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-const BOOTH_SKILLS = ['booth', 'booth-dj', 'booth-deck'] as const
+const BOOTH_SKILLS = [
+  'booth', 'booth-dj', 'booth-deck',
+  'booth-check', 'booth-beat', 'booth-alert', 'booth-compact-recovery',
+] as const
 
 export function isInitialized(): boolean {
   const globalSkillDir = join(homedir(), '.claude', 'skills')

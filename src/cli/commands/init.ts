@@ -11,7 +11,7 @@ export async function initCommand(args: string[]): Promise<void> {
     console.log('[booth] booth skills already registered')
   } else {
     registerBoothSkills(packageRoot)
-    console.log('[booth] booth skills registered → ~/.claude/skills/booth{,-dj,-deck}')
+    console.log('[booth] booth skills registered → ~/.claude/skills/booth{,-dj,-deck,-check,-beat,-alert,-compact-recovery}')
   }
 
   // Check recommended skills
