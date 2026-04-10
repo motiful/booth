@@ -10,11 +10,11 @@ import type { DeckInfo, DeckMode } from '../../types.js'
 export async function spinCommand(args: string[]): Promise<void> {
   const name = args[0]
   if (!name) {
-    console.error('Usage: booth spin <name> [--prompt "..."] [--live] [--hold] [--no-loop]')
+    console.error('Usage: booth spin <name> [--prompt|--task "..."] [--live] [--hold] [--no-loop]')
     process.exit(1)
   }
 
-  const promptIdx = args.indexOf('--prompt')
+  const promptIdx = args.indexOf('--prompt') !== -1 ? args.indexOf('--prompt') : args.indexOf('--task')
   const prompt = promptIdx !== -1 ? args[promptIdx + 1] : undefined
 
   const isLive = args.includes('--live')
