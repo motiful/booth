@@ -7,11 +7,10 @@ const BOOTH_SKILLS = [
   'booth-check', 'booth-beat', 'booth-alert', 'booth-compact-recovery',
 ] as const
 
-export function isInitialized(): boolean {
-  const globalSkillDir = join(homedir(), '.claude', 'skills')
+function checkSkillsIn(dir: string): boolean {
   return BOOTH_SKILLS.every(name => {
     try {
-      const target = readlinkSync(join(globalSkillDir, name))
+      const target = readlinkSync(join(dir, name))
       return existsSync(target)
     } catch {
       return false
@@ -19,22 +18,20 @@ export function isInitialized(): boolean {
   })
 }
 
-export function registerBoothSkills(packageRoot: string): void {
+export function isInitialized(): boolean {
   const globalSkillDir = join(homedir(), '.claude', 'skills')
-  if (!existsSync(globalSkillDir)) mkdirSync(globalSkillDir, { recursive: true })
+  const localSkillDir = join(process.cwd(), '.claude', 'skills')
+  return checkSkillsIn(globalSkillDir) && checkSkillsIn(localSkillDir)
+}
 
-  // booth-skills Collection lives alongside the code repo
-  const collectionRoot = join(packageRoot, '..', 'booth-skills', 'skills')
+function ensureSymlinks(skillDir: string, collectionRoot: string): void {
+  if (!existsSync(skillDir)) mkdirSync(skillDir, { recursive: true })
 
   for (const name of BOOTH_SKILLS) {
-    const link = join(globalSkillDir, name)
+    const link = join(skillDir, name)
     const target = join(collectionRoot, name)
 
-    if (!existsSync(target)) {
-      // Collection not found at expected path — skip silently
-      // User can install via: npx skills add whiletrue0x/booth-skills
-      continue
-    }
+    if (!existsSync(target)) continue
 
     try {
       const current = readlinkSync(link)
@@ -45,6 +42,20 @@ export function registerBoothSkills(packageRoot: string): void {
     }
 
     symlinkSync(target, link)
+  }
+}
+
+export function registerBoothSkills(packageRoot: string): void {
+  // booth-skills Collection lives alongside the code repo
+  const collectionRoot = join(packageRoot, '..', 'booth-skills', 'skills')
+
+  // Register in global ~/.claude/skills/
+  ensureSymlinks(join(homedir(), '.claude', 'skills'), collectionRoot)
+
+  // Register in project-local .claude/skills/
+  const localSkillDir = join(process.cwd(), '.claude', 'skills')
+  if (existsSync(join(process.cwd(), '.claude'))) {
+    ensureSymlinks(localSkillDir, collectionRoot)
   }
 }
 
