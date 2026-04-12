@@ -815,6 +815,25 @@ export class Daemon {
         logger.info(`[booth-daemon] compact-recover: sent recovery to "${targetName}"`)
         return { ok: true }
       }
+      case 'deck-idle': {
+        // Stop hook fires when CC turn ends — primary idle signal.
+        // JSONL idle detection (SignalCollector) remains as fallback;
+        // updateDeckStatus deduplicates, so whichever fires first wins.
+        const role = typeof msg.role === 'string' ? msg.role : null
+        const sid = typeof msg.sessionId === 'string' ? msg.sessionId : null
+
+        if (role === 'dj') {
+          this.state.setDjStatus('idle')
+          logger.debug('[booth-daemon] DJ idle (stop hook)')
+        } else if (sid) {
+          const deck = this.state.getDeck(sid)
+          if (deck) {
+            this.state.updateDeckStatus(sid, 'idle')
+            logger.debug(`[booth-daemon] deck "${deck.name}" idle (stop hook)`)
+          }
+        }
+        return { ok: true }
+      }
       case 'reload':
         if (this.reloading) return { error: 'reload already in progress' }
         this.reloading = true

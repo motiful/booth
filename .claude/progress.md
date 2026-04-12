@@ -36,6 +36,15 @@
 - 4 个 signal skills 注册到 booth-skills Collection，与 booth/booth-dj/booth-deck 同级
 - booth-dj / booth-deck 尚未 `npx skills add` 发布到 GitHub
 
+### Stop Hook — Primary Idle Signal (2026-04-12)
+
+- [stop-hook-v1] CC Stop hook 替代 JSONL 作为主 idle 信号源
+  - `runtime/scripts/stop-hook.sh` + `src/stop-hook.ts` — hook 脚本 + handler
+  - `src/daemon/index.ts` — `deck-idle` IPC handler（DJ/deck 分支）
+  - `src/hooks.ts` — `ensureStopHook()` / `removeStopHook()`
+  - CLI start/stop/restart 注册/注销
+  - JSONL SignalCollector 保留为 fallback（`updateDeckStatus` 内建去重）
+
 ### Hardening (2026-04-10)
 
 E2E checklist 准备阶段发现的安全 + 启动问题，三处修复：
