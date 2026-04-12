@@ -28,11 +28,12 @@
 - CLAUDE.md / CLAUDE.local.md 更新
 - 设计文档 §6.3-6.4 同步更新
 
-**Pending**: Step 8（验证 /booth-check skill 调用，实验性）
-**Pending**: E2E 运行时验证（booth start → spin → check → report 全链路）
+**Completed**: Step 8 — `/slash` 信号格式验证通过 (2026-04-10)
+**Completed**: E2E 运行时验证 — 全信号链路打通 (2026-04-10)
 
-**Decisions carried forward**:
-- 信号格式暂用 `[bracket]`，Step 8 验证后决定最终格式
+**Decisions finalized**:
+- 信号格式确定为 `/slash`（/booth-check, /booth-alert, /booth-beat, /booth-compact-recovery）
+- 4 个 signal skills 注册到 booth-skills Collection，与 booth/booth-dj/booth-deck 同级
 - booth-dj / booth-deck 尚未 `npx skills add` 发布到 GitHub
 
 ### Hardening (2026-04-10)
@@ -44,6 +45,22 @@ E2E checklist 准备阶段发现的安全 + 启动问题，三处修复：
 - **保留**：`booth reload` 当时复现失败已无法重现（连续 4 次成功）。`gracefulReload` 缺第二行 log 是 winston 异步 buffer 在 `process.exit(0)` 前未 flush 所致，纯 cosmetic。
 
 清理：旧路径 `~/motifpool/booth/booth/` 的僵尸 daemon (PID 81994, 自 3/26 运行) 终结；本项目残留的 stale tmux socket（`booth`、`booth-booth-54283ae9`、`booth-booth-d06d5266` + 一批 test/e2e socket）清除。
+
+### E2E Clean Pass (2026-04-12)
+
+5 个修复合并到 main 后重跑完整 E2E checklist，**结构性 + 功能性全 PASS**：
+
+- **Bug 1 (dot encoding)** — `ccProjectsDir()` 编码 `.` 字符，daemon 正确找到 JSONL，idle 检测生效（commit 3a4590f）
+- **Bug 2 (signal skills)** — 4 个 signal skills 注册为 CC skill，`/booth-check/beat/alert/compact-recovery` 不再报 "Unknown skill"（commit 0861135）
+- **Bug 3 (init false-positive)** — `isInitialized()` 检查 global + project-local 双目录（commit 13093fb）
+- **Bug 4 (--task alias)** — `booth spin --task` 作为 `--prompt` 别名（commit 840030f）
+- **Bug 5 (init dual-directory)** — `registerBoothSkills()` 双目录注册（commit 13093fb）
+
+完整链路验证：`booth spin → deck idle → daemon /booth-check → deck self-verify → booth report → daemon /booth-alert → DJ`，每一步都有 daemon log 证据。
+
+`.booth/` 清理 7 个 Phase A/B 遗留文件（mix.md, beat.md, finalize-plan.md, state.json.migrated, test-guide-resume.md, deck-archive.json, alerts.json）。
+
+**BUG-002 (booth kill 不清 tmux window) 无法复现** — 当前代码 `kill-pane` 对 single-pane window 正确连带清理 window。Idle deck + checking deck 都测过。可能是上次 session 的 stale daemon 导致。
 
 ---
 
@@ -230,6 +247,10 @@ POST /v1/chat/completions
 ---
 
 ## Known Bugs
+
+### BUG-002: booth kill 不清理 tmux window — 无法复现 (2026-04-12)
+
+E2E 重测时无法复现。当前代码 `kill-pane` 对 single-pane window 正确连带清理 window。Idle deck + checking deck 都测过。怀疑上次 session 的 stale daemon / 旧编译代码导致。如果再次出现，需要捕获具体复现条件。
 
 ### BUG-001: Compaction 打断 alert 链路 — 部分解决
 
