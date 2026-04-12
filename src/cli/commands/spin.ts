@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { findProjectRoot, deriveSocket, generateSessionId, ccProjectsDir } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { tmux, sleepMs } from '../../tmux.js'
-import { deckWorktreePath } from '../../worktree.js'
+import { createWorktree } from '../../worktree.js'
 import type { DeckInfo, DeckMode } from '../../types.js'
 
 export async function spinCommand(args: string[]): Promise<void> {
@@ -38,8 +38,10 @@ export async function spinCommand(args: string[]): Promise<void> {
     process.exit(1)
   }
 
-  // CC --worktree creates the worktree + symlinks. Path is deterministic.
-  const wtPath = deckWorktreePath(projectRoot, name)
+  // Pre-create the worktree via booth (not CC's --worktree flag).
+  // This is required so .claude/settings.json symlink is in place BEFORE CC
+  // starts — otherwise project-level hooks don't fire inside the deck.
+  const wtPath = createWorktree(projectRoot, name)
 
   // Pre-generate session ID — JSONL path is deterministic.
   // CC runs in the worktree, so it will encode the worktree path for JSONL storage.
@@ -47,10 +49,10 @@ export async function spinCommand(args: string[]): Promise<void> {
   const wtProjectsDir = ccProjectsDir(wtPath)
   const jsonlPath = join(wtProjectsDir, `${sessionId}.jsonl`)
 
-  // Create shell window in project root (CC --worktree will cd into worktree).
+  // Launch tmux window directly inside the pre-created worktree.
   // -P -F gets paneId atomically in one call.
   const paneId = tmux(socket, 'new-window', '-d', '-a', '-t', 'dj', '-n', name,
-    '-c', projectRoot, '-P', '-F', '#{pane_id}')
+    '-c', wtPath, '-P', '-F', '#{pane_id}')
 
   const deck: DeckInfo = {
     id: sessionId,
@@ -86,7 +88,7 @@ export async function spinCommand(args: string[]): Promise<void> {
   const promptFile = join(tmpdir(), `booth-prompt-${name}-${Date.now()}.txt`)
   writeFileSync(promptFile, fullPrompt)
   tmux(socket, 'send-keys', '-t', paneId,
-    `${envSetup} && PROMPT=$(cat ${promptFile}) && rm -f ${promptFile} && claude --worktree ${name} --dangerously-skip-permissions --session-id "${sessionId}" "$PROMPT"; reset`, 'Enter')
+    `${envSetup} && PROMPT=$(cat ${promptFile}) && rm -f ${promptFile} && claude --dangerously-skip-permissions --session-id "${sessionId}" "$PROMPT"; reset`, 'Enter')
 
   const modeLabel = mode === 'auto' ? '' : ` [${mode}]`
   const loopLabel = noLoop ? ' [no-loop]' : ''

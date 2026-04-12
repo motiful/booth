@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, readlinkSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { boothDir } from './constants.js'
 
@@ -37,18 +37,29 @@ function unlinkIfSymlink(path: string): void {
   } catch {}
 }
 
-/** Create symlink if path doesn't exist. */
+/**
+ * Create a symlink to `target` at `linkPath`. Idempotent:
+ * - already a symlink to the correct target → no-op
+ * - symlink to wrong target → replace
+ * - non-symlink file/dir at path → leave untouched
+ */
 function ensureSymlink(target: string, linkPath: string): void {
   try {
-    lstatSync(linkPath)
-    return // exists (file, dir, or symlink)
+    const stat = lstatSync(linkPath)
+    if (stat.isSymbolicLink()) {
+      if (readlinkSync(linkPath) === target) return
+      unlinkSync(linkPath)
+    } else {
+      return
+    }
   } catch {}
   symlinkSync(target, linkPath)
 }
 
 /**
- * Ensure symlinks in worktree match CC's worktree.symlinkDirectories convention.
- * Used when booth rebuilds a worktree for resume (CC --worktree handles this for spin).
+ * Ensure symlinks in worktree. Called by both spin (via createWorktree) and
+ * resume (via ensureWorktree). Must run BEFORE CC starts so that
+ * .claude/settings.json is in place when CC reads hooks config.
  */
 function ensureSymlinks(projectRoot: string, wtPath: string): void {
   // .booth/ → main project's .booth/ (daemon.sock, check.md, booth.db)
@@ -59,11 +70,23 @@ function ensureSymlinks(projectRoot: string, wtPath: string): void {
   if (existsSync(nmSrc)) {
     ensureSymlink(nmSrc, join(wtPath, 'node_modules'))
   }
+
+  // .claude/settings.json → main project's settings.json
+  // Git worktrees are independent git roots; CC's settings.json discovery stops
+  // at the worktree root and misses the main project's settings. Without this
+  // symlink, booth's project-level hooks (SessionStart, Stop, PreCompact) never
+  // fire inside decks.
+  const settingsSrc = join(projectRoot, '.claude', 'settings.json')
+  if (existsSync(settingsSrc)) {
+    const wtClaudeDir = join(wtPath, '.claude')
+    if (!existsSync(wtClaudeDir)) mkdirSync(wtClaudeDir, { recursive: true })
+    ensureSymlink(settingsSrc, join(wtClaudeDir, 'settings.json'))
+  }
 }
 
 /**
- * Create a git worktree for a deck (used by ensureWorktree for resume fallback).
- * For spin, CC --worktree handles creation.
+ * Create a git worktree for a deck. Used by both spin (to pre-create
+ * before CC starts) and resume (via ensureWorktree fallback).
  */
 export function createWorktree(projectRoot: string, deckName: string): string {
   const wtPath = deckWorktreePath(projectRoot, deckName)
@@ -109,6 +132,7 @@ export function removeWorktree(projectRoot: string, deckName: string): { hadUnme
     // Remove symlinks before git worktree remove (git complains about dirty tree otherwise)
     unlinkIfSymlink(join(wtPath, '.booth'))
     unlinkIfSymlink(join(wtPath, 'node_modules'))
+    unlinkIfSymlink(join(wtPath, '.claude', 'settings.json'))
 
     const result = gitSyncSafe(['worktree', 'remove', '--force', wtPath], projectRoot)
     if (!result.ok && existsSync(wtPath)) {
