@@ -45,6 +45,20 @@
   - CLI start/stop/restart 注册/注销
   - JSONL SignalCollector 保留为 fallback（`updateDeckStatus` 内建去重）
 
+**E2E 验证暴露更底层问题** (2026-04-13)：spin 新 deck 后 daemon log 未见 `deck-idle` 事件，只有老的 JSONL polling 路径。排查发现 CC 在 worktree 里根本不读 main project 的 `.claude/settings.json` — git worktree 是独立 git root，CC settings 发现止步于此。
+
+**含义**：booth 所有项目级 hook（SessionStart / SessionEnd / PreCompact / Stop）从未在 deck worktree 里触发过。`grep session-changed .booth/logs/daemon-*.log` 零命中。之前所有 E2E "hook 正常"都是误报——整个 deck 侧信号链路靠 daemon 自己 polling JSONL 支撑，hook 对 deck 是完全死的。只有 DJ（在 main project root 运行）的 hook 是活的。
+
+**修复方向**：在 worktree 里 symlink `.claude/settings.json` → main project 的同名文件。和现有 `.booth/` symlink 模式一致。Main 改了配置，所有 worktree 自动跟进。
+
+- [worktree-settings-symlink] 已完成 (commit 6344056)
+  - `src/worktree.ts` — `ensureSymlinks()` 增加 `.claude/settings.json` symlink；`ensureSymlink()` 升级为校验 target 并替换过期 symlink；`removeWorktree()` 同步 unlink
+  - `src/cli/commands/spin.ts` — 改为 booth 自己 `createWorktree()` pre-create worktree，tmux 直接以 worktree 为 cwd，丢掉 `--worktree` flag
+  - Resume 路径自动覆盖（`ensureWorktree → ensureSymlinks`）
+  - 待 E2E 验证（merge + reload + spin 新 deck → daemon log 应见 `session-changed` 和 `deck-idle`）
+
+**Bug 暴露**：deck 用 `--status DONE` 提交 report，daemon 的 `TERMINAL_STATUSES` 只认 SUCCESS/FAIL/FAILED/ERROR/EXIT，导致 daemon 永远不认为 check 完成、持续 polling。需要：(a) `booth report` CLI 校验 status (b) `booth-deck` SKILL 明确允许的 status 值 (c) 老的 deck 报告手动 `UPDATE reports SET status='SUCCESS'` 解锁
+
 ### Hardening (2026-04-10)
 
 E2E checklist 准备阶段发现的安全 + 启动问题，三处修复：
