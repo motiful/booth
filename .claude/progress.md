@@ -2,42 +2,82 @@
 
 > Current execution state. Read this first when starting a session.
 
-## 当前位置：Phase B 完成 → Hardening 完成 → 待进入 Phase C
+## 当前位置：Hardening 尾声 — 核心通了，文档和校验规则还有洞
 
-**Phase B（Skill 架构改造）** 全部完成，包括 E2E 验证 + 关键 bug 修复 + Stop hook 迁移。
-**Phase C（产品打磨）** 是下一个大 phase，但有几个短期修复挡在前面。
+### booth 是什么（一句话）
+
+一个 CLI 工具，让 Claude Code 同时跑多个并行任务（"deck"），由 AI 项目经理（"DJ"）统一调度、自动质检、汇报结果。用户只管提需求，booth 管执行。
+
+### 核心机制健康状态
+
+| 机制 | 状态 | 说明 |
+|------|------|------|
+| **CLI 命令集** (23 个) | ✅ 健全 | spin/kill/resume/ls/peek/send/reports 全部可用 |
+| **Daemon + IPC** (25 个命令) | ✅ 健全 | 进程间通信稳定，Unix socket |
+| **信号检测（JSONL tail -f）** | ✅ 健全 | deck idle/working 状态检测，非 polling 而是事件驱动 |
+| **信号检测（Stop hook）** | ✅ 新增可用 | CC turn 结束时触发，比 JSONL 更快更准确 |
+| **自动 check 流程** | ⚠️ 流程通但文档有误 | daemon 发 `/booth-check` → deck 自验 → 提交 report → 通知 DJ 全链路通。但 check.md 仍用 `[bracket]` 格式（实际是 `/slash`）、要求 deck 写 progress.md（会卡权限）、status 值不做校验 |
+| **Skill 注册** (7 个) | ✅ 健全 | booth/booth-dj/booth-deck + 4 signal skills，symlink 全正确 |
+| **Worktree 隔离** | ✅ 健全 | spin pre-create worktree + settings.json symlink |
+| **Hook 体系** (4 个) | ⚠️ 部分可用 | Stop hook ✅ 在 worktree 里触发。SessionStart hook ❓ worktree 里未观察到触发（不阻塞主流程，daemon 有 JSONL fallback）。SessionEnd/PreCompact 未单独验证 |
+| **Report 存储（SQLite）** | ✅ 健全 | booth.db 存 sessions + reports |
+| **编译** | ✅ | `npx tsc` 0 error, dist/ 与 src/ 同步 |
 
 ### 上一轮做了什么 (2026-04-10 ~ 2026-04-18)
 
-| 事项 | 状态 | 关键 commit |
-|------|------|------------|
-| Phase B E2E 全链路验证（10 项 checklist） | ✅ 通过 | — |
-| 5 个阻塞 bug 修复（dot encoding、signal skills、init 等） | ✅ 已合并 | 3a4590f, 0861135, 13093fb, 840030f |
-| Stop hook 替代 JSONL idle 检测（Phase 1 of jsonl-vs-hooks） | ✅ 已合并 | 98d595c |
-| Worktree settings.json symlink（修复 deck 侧 hook 从未触发） | ✅ 已合并 | 6344056 |
-| Spin 改为 booth pre-create worktree（丢掉 CC `--worktree` flag） | ✅ 含在 6344056 | — |
-| `.booth/` 遗留文件清理（7 个 Phase A/B 残留） | ✅ | — |
-| BUG-002 (kill 不清 tmux window) | 无法复现 | — |
+**已合并到 main 的代码修复**：
+
+| 修复 | commit | 验证 |
+|------|--------|------|
+| ccProjectsDir() 编码 `.` 字符 | 3a4590f | E2E: daemon 正确找到 JSONL |
+| 4 个 signal skills 注册为 CC skill | 0861135 | E2E: /booth-check 不再报 "Unknown skill" |
+| isInitialized() 检查双目录 | 13093fb | E2E: booth init 不再假报 "already registered" |
+| `--task` 作为 `--prompt` 别名 | 840030f | E2E: spin --task 正确送入 prompt |
+| registerBoothSkills() 双目录注册 | 13093fb | 同上 |
+| CC Stop hook 替代 JSONL idle 检测 | 98d595c | E2E: daemon log `deck idle (stop hook)` |
+| Worktree settings.json symlink | 6344056 | E2E: JSONL `stop_hook_summary.hookCount: 2` |
+
+**E2E 验证的真实状态**：
+- **10 项结构 checklist**：全部 PASS（skill 注册、signal 格式、boot.md、init 输出等）
+- **核心 happy path**：spin → idle → /booth-check → self-verify → report → /booth-alert → DJ 通知，**一条线跑通**
+- **完整 10 项 checklist 重跑**：❌ 未做。只验证了关键路径，没有系统性 rerun
+- **SessionStart hook in worktree**：❓ 未解释为什么不触发，session-changed IPC = 0
 
 **详细归档**：`.claude/archive/progress-phaseB-hardening-2026-04-18.md`
 
-### 短期待做（进入 Phase C 之前必须完成）
+### 还没修的已知问题（进入 Phase C 之前必须完成）
 
-1. **check.md 修订：deck 不写 progress.md**
-   - 删掉 `Progress: Required` 完成维度
-   - 删掉 Pre-Report Steps 的 "Progress Update" 步骤
-   - 加 "What You Don't Do" 条目：不写 progress.md，那是 DJ 的活
-   - Progress.md 对 deck 是只读上下文；deck 的 "progress 贡献"就是它的 report
-   - **原因**：CC 对 `.claude/` 下的文件有硬权限规则（即使 bypass-permissions 也会弹确认），deck 每次 spin 新 session 都会卡住；而且 deck 没有项目全局视野，写出来的 progress 是碎片化的
+1. **check.md 文档错误 + 流程问题**
+   - 信号格式写的 `[booth-check]`，实际 daemon 发的是 `/booth-check`（全文 7 处）
+   - `Progress: Required` 完成维度要求 deck 写 progress.md，但 CC 对 `.claude/` 有硬权限规则会卡住
+   - 设计决策已定：progress.md 只 DJ 写，deck 不碰
 
-2. **`booth report` status 校验**
-   - `src/cli/commands/report.ts` 加 whitelist：SUCCESS/FAIL/FAILED/ERROR/EXIT
-   - 非法值立即 reject + 提示允许的值
-   - **原因**：deck 用 `--status DONE`，daemon 不认识，永远 polling check 状态
+2. **`booth report` 不校验 status 值**（BUG-003）
+   - CLI 接受任意字符串，daemon 只认 SUCCESS/FAIL/FAILED/ERROR/EXIT
+   - Deck 用了 DONE → daemon 永远认为 check 没完成，死循环 polling
 
-3. **check.md 补充 report status 允许值**
-   - 已有 line 277 列了 SUCCESS/FAIL/FAILED/ERROR，但不够醒目
-   - 改成独立小节 + 加粗强调
+3. **SessionStart hook 不触发**（worktree 里 session-changed IPC = 0）
+   - 不阻塞主流程（daemon 靠 JSONL polling 补偿），但说明 hook 体系仍不完整
+
+### 设计决策（本轮确定，待实施）
+
+**D1. Progress.md 所有权**
+- progress.md 是 project-level rollup，**只有 DJ 写**
+- Deck 可以读（了解自己在大盘里的位置），但不写
+- Deck 的 "progress" 就是它的 report + commit；DJ 读 report 后翻译成 progress.md 条目
+- **类比**：员工交周报 = report，HR 更新组织路线图 = progress.md
+
+**D2. Worktree 策略**
+- 有 `.git` → **始终开 worktree**（避免 option 1 "补建 worktree" 的不可能——跑着的 CC session 无法搬家）
+- 没 `.git` → 不开 worktree，直接 cd
+- Worktree 位置：开在**目标 git repo** 的 `.claude/worktrees/` 下（不是 workspace 根）
+- 中期目标：加 `booth spin --cwd X` 模式，让 deck 指定目标目录（支持 multi-project workspace）
+
+**D3. Signal Flow 双轨制确立**
+- **主信号**：Stop hook（CC turn 结束时触发，语义精确，零延迟）
+- **Fallback**：JSONL tail -f（daemon 持续读 JSONL 事件流，补偿 hook 未触发场景）
+- 两者通过 `updateDeckStatus()` 内建去重，先到先赢
+- **研究报告**：`/Users/yuhaolu/motifpool/booth-project/booth-backstage/research/jsonl-vs-hooks.md`
 
 ### 设计决策（本轮确定，待实施）
 
