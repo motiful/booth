@@ -172,9 +172,19 @@ E2E 重测时无法复现。如再现，需要捕获具体复现条件。
 
 **C2. Token 统计**（精简版 Attention Management）
 
-- CC JSONL 中 `type: "assistant"` 消息包含 `message.usage` 字段
-- `SignalCollector` 已在 tail JSONL——可同时提取 token 数据，零额外 I/O
-- 成功标准：`booth ls` 显示每个 deck 的累计 token 消耗
+**已知信息**：
+
+- CC JSONL 中 `type: "assistant"` 消息包含 `message.usage` 字段（input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, service_tier）
+- `SignalCollector`（`src/daemon/signal.ts`）已在 tail JSONL——可同时提取 token 数据，零额外 I/O
+- 数据存储可复用 SQLite（sessions 表加列或新建 token_usage 表）
+
+**未知/困惑**：
+
+- CC session resume 后 token 计数是否重置？（JSONL 追加，usage 每 turn 独立，需要累加）
+- `cache_read_input_tokens` 是否应计入总量？
+- Codex 的 token 统计 UI/UX 值得参考
+
+**成功标准**：`booth ls` 显示每个 deck 的累计 token 消耗；`booth kill` 时显示总消耗。
 
 - [ ] 在 SignalCollector 或 reactor 中累加 token 用量
 - [ ] 存入 SQLite
@@ -195,9 +205,18 @@ E2E 重测时无法复现。如再现，需要捕获具体复现条件。
 
 ### Phase E: 发布 — npm + 宣发
 
+**E1. npm publish**
+
+hook 点已就位：`src/cli/index.ts` 的 `case undefined:` 分支
+
 - [ ] npm publish 准备（package.json 审查、README、LICENSE、prepublishOnly script）
 - [ ] `src/version.ts` — getCurrentVersion() + checkForUpdates()
-- [ ] 发博客造势 + signal 思想沉淀（在 Phase D 定位确认后执行）
+- [ ] bare `booth` 版本检查（npm registry fetch，5s timeout，失败静默跳过）
+
+**E2. 博客 / 宣发**
+
+- [ ] 发博客造势 + signal 思想沉淀
+- [ ] 在 Phase D 定位确认后执行
 
 ---
 
@@ -211,8 +230,29 @@ E2E 重测时无法复现。如再现，需要捕获具体复现条件。
 
 ### Phase G: booth-api — 把交互式 CC session 变成 REST API
 
-> 利用 booth 的 tmux + editor proxy 架构，对外暴露 OpenAI-compatible HTTP API。
+> 利用 booth 的 tmux + editor proxy 架构，对外暴露 OpenAI-compatible HTTP API。每个请求分配交互式 CC deck，天然 `entrypoint=cli` + `isInteractive=true`。
 
-- [ ] HTTP API 层 + Deck pool 管理 + JSONL → API response + SSE streaming
-- [ ] Session 复用策略 + API 认证 + rate limiting
+**背景（2026-04-05）**：Anthropic 4月4日起 `claude -p` 走 Extra Usage 而非订阅额度。booth 的交互式 deck 天然不受此限制。booth-api 核心价值：把"交互式特权"封装成标准 API。
+
+**架构**：
+```
+POST /v1/chat/completions
+  → Auth → 路由到 deck pool
+  → 找空闲 deck / spin 新 deck
+  → editor proxy 注入用户消息
+  → 监听 JSONL 输出 → Stream SSE 响应
+  → deck 回到空闲池
+```
+
+**与 cc-gateway 的关系**：booth-api 解决应用层（session 编排），cc-gateway 解决网络层（指纹归一化）。
+
+**核心待办**：
+- [ ] HTTP API 层（Express/Hono，OpenAI-compatible 格式）
+- [ ] Deck pool 管理（空闲检测、自动扩缩、健康检查、最大并发数）
+- [ ] JSONL → 结构化 API response parser
+- [ ] SSE streaming（匹配 OpenAI stream format）
+- [ ] Session 复用策略（context 累积 vs 隔离）
+- [ ] API 认证 + rate limiting
 - [ ] 与 cc-gateway 集成
+
+**已有基础设施可复用**：deck spin/kill/send、editor proxy、JSONL watcher、Guardian、SQLite
