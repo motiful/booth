@@ -229,11 +229,17 @@ export class Reactor {
   private fireBeat(): void {
     if (!this.state.hasActiveDecks()) return
 
-    // Skip beat if DJ is busy — it will get the next one
+    // Skip beat if DJ is busy — it will get the next one.
+    // Back off by a full cooldown instead of calling scheduleBeat(), which would
+    // re-fire immediately (elapsed since lastBeatAt already exceeds cooldown) and
+    // busy-spin while DJ stays working. When DJ flips to idle, the
+    // 'dj:status-changed' listener calls scheduleBeat() and clears this timer,
+    // so recovery is still instant.
     const dj = this.state.getDj()
     if (dj?.status === 'working') {
-      logger.debug('[booth-reactor] beat skipped: DJ busy')
-      this.scheduleBeat()
+      logger.debug('[booth-reactor] beat skipped: DJ busy, backing off')
+      if (this.beatTimer) clearTimeout(this.beatTimer)
+      this.beatTimer = setTimeout(() => this.fireBeat(), this.beatCooldown)
       return
     }
 
