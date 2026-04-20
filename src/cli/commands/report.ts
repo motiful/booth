@@ -1,6 +1,8 @@
 import { findProjectRoot } from '../../constants.js'
 import { ipcRequest } from '../../ipc.js'
 
+const VALID_STATUSES = ['SUCCESS', 'FAIL', 'FAILED', 'ERROR', 'EXIT'] as const
+
 export async function reportCommand(args: string[]): Promise<void> {
   const statusIdx = args.indexOf('--status')
   const status = statusIdx !== -1 ? args[statusIdx + 1] : undefined
@@ -10,6 +12,12 @@ export async function reportCommand(args: string[]): Promise<void> {
 
   if (!status || !body) {
     console.error('Usage: booth report --status <STATUS> --body "<report content>"')
+    process.exit(1)
+  }
+
+  const normalizedStatus = status.toUpperCase()
+  if (!VALID_STATUSES.includes(normalizedStatus as typeof VALID_STATUSES[number])) {
+    console.error(`[booth] Invalid status '${status}'. Must be one of: ${VALID_STATUSES.join(', ')}`)
     process.exit(1)
   }
 
@@ -28,12 +36,12 @@ export async function reportCommand(args: string[]): Promise<void> {
     cmd: 'submit-report',
     deckName,
     sessionId,
-    status: status.toUpperCase(),
+    status: normalizedStatus,
     body,
   }) as { ok?: boolean; error?: string }
 
   if (result.ok) {
-    console.log(`[booth] report submitted (${status.toUpperCase()})`)
+    console.log(`[booth] report submitted (${normalizedStatus})`)
   } else {
     console.error(`[booth] report submission failed: ${result.error}`)
     process.exit(1)
