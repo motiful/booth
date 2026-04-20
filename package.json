@@ -9,13 +9,15 @@
   "files": [
     "dist/",
     "bin/",
-    "runtime/"
+    "runtime/",
+    "skill/"
   ],
   "scripts": {
     "build": "tsc && chmod +x dist/bin/booth.js",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
-    "prepare": "tsc && chmod +x dist/bin/booth.js && (git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git config core.hooksPath .githooks || true)"
+    "prepare": "tsc && chmod +x dist/bin/booth.js && (git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git config core.hooksPath .githooks || true)",
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=18"

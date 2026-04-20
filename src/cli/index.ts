@@ -18,6 +18,7 @@ import { reportsCommand } from './commands/reports.js'
 import { resumeCommand, resumeAllDecks, readResumableDecks, readDjSessionIdFromState } from './commands/resume.js'
 import { restartCommand } from './commands/restart.js'
 import { initCommand } from './commands/init.js'
+import { uninstallCommand } from './commands/uninstall.js'
 import { compactRecoverCommand } from './commands/compact-recover.js'
 import { reportCommand } from './commands/report.js'
 import { mergeCommand } from './commands/merge.js'
@@ -29,6 +30,7 @@ booth — AI project manager for Claude Code
 Usage:
   booth                Start booth (interactive: resume / clean start / show status)
   booth init           First-time setup (register skills, can re-run for recovery)
+  booth uninstall      Remove booth skill symlinks from ~/.claude/skills/
   booth spin <name>    Create a new deck (parallel CC instance)
   booth ls             List all active deck states
   booth ls -a          List all decks including exited (historical)
@@ -165,6 +167,9 @@ export async function run(args: string[]): Promise<void> {
         break
       case 'init':
         await initCommand(rest)
+        break
+      case 'uninstall':
+        await uninstallCommand(rest)
         break
       case 'spin':
         await spinCommand(rest)

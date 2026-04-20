@@ -46,8 +46,8 @@ function ensureSymlinks(skillDir: string, collectionRoot: string): void {
 }
 
 export function registerBoothSkills(packageRoot: string): void {
-  // booth-skills Collection lives alongside the code repo
-  const collectionRoot = join(packageRoot, '..', 'booth-skills', 'skills')
+  // Skills are bundled inside the package at skill/skills/
+  const collectionRoot = join(packageRoot, 'skill', 'skills')
 
   // Register in global ~/.claude/skills/
   ensureSymlinks(join(homedir(), '.claude', 'skills'), collectionRoot)
@@ -57,6 +57,28 @@ export function registerBoothSkills(packageRoot: string): void {
   if (existsSync(join(process.cwd(), '.claude'))) {
     ensureSymlinks(localSkillDir, collectionRoot)
   }
+}
+
+export function unregisterGlobalBoothSkills(): string[] {
+  const globalSkillDir = join(homedir(), '.claude', 'skills')
+  const removed: string[] = []
+
+  for (const name of BOOTH_SKILLS) {
+    const link = join(globalSkillDir, name)
+    try {
+      readlinkSync(link)
+    } catch {
+      continue
+    }
+    try {
+      unlinkSync(link)
+      removed.push(name)
+    } catch {
+      // ignore
+    }
+  }
+
+  return removed
 }
 
 export interface SkillStatus {
