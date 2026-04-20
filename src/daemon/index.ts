@@ -9,7 +9,7 @@ import { killSession, hasSession, tmuxSafe } from '../tmux.js'
 import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { sendMessage } from './send-message.js'
-import { parseReportBody } from './report.js'
+import { parseReportBody, isTerminalStatus } from './report.js'
 import { initLogger, logger } from './logger.js'
 import { removeWorktree, branchName, tryMerge, hasUnmergedCommits } from '../worktree.js'
 import type { DeckInfo, DeckMode, DeckStatus } from '../types.js'
@@ -528,21 +528,26 @@ export class Daemon {
         const body = typeof msg.body === 'string' ? msg.body : null
         if (!deckName || !status || !body) return { error: 'deckName, status, and body required' }
 
-        const reportId = `${deckName}-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 16)}`
         const parsed = parseReportBody(body)
+        const effectiveStatus = parsed?.status ?? status
+        if (!isTerminalStatus(effectiveStatus)) {
+          return { error: 'Invalid status. Must be one of: SUCCESS, FAIL, FAILED, ERROR, EXIT' }
+        }
+
+        const reportId = `${deckName}-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 16)}`
 
         this.state.insertReport({
           id: reportId,
           deckName,
           sessionId: sessionId ?? undefined,
-          status: parsed?.status ?? status,
+          status: effectiveStatus,
           content: body,
           rounds: parsed?.rounds,
           hasHumanReview: parsed?.hasHumanReview,
           hasDjAction: parsed?.hasDjAction,
         })
 
-        this.reactor.onReportSubmitted(deckName, parsed?.status ?? status)
+        this.reactor.onReportSubmitted(deckName, effectiveStatus)
         logger.info(`[booth-daemon] report submitted: "${reportId}" (${status}) for deck "${deckName}"`)
         return { ok: true, reportId }
       }
