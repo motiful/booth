@@ -229,6 +229,14 @@ export class Reactor {
   private fireBeat(): void {
     if (!this.state.hasActiveDecks()) return
 
+    // Skip beat if DJ is busy — it will get the next one
+    const dj = this.state.getDj()
+    if (dj?.status === 'working') {
+      logger.debug('[booth-reactor] beat skipped: DJ busy')
+      this.scheduleBeat()
+      return
+    }
+
     const now = Date.now()
     const allDecks = this.state.getAllDecks()
     // Live decks belong to the user — DJ doesn't manage them, skip entirely
