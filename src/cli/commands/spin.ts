@@ -15,6 +15,11 @@ export async function spinCommand(args: string[]): Promise<void> {
     process.exit(1)
   }
 
+  if (name.startsWith('--')) {
+    console.error(`[booth] Invalid deck name '${name}'. Deck names cannot start with '--'. Did you mean: booth spin <name> ${name} ...?`)
+    process.exit(1)
+  }
+
   const promptIdx = args.indexOf('--prompt') !== -1 ? args.indexOf('--prompt') : args.indexOf('--task')
   const prompt = promptIdx !== -1 ? args[promptIdx + 1] : undefined
 
