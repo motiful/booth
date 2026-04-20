@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Rebuild dist/ so the globally-linked booth picks up src/ changes.
+# dist/ is gitignored — this hook doesn't stage anything, it just
+# ensures the working tree's compiled output matches the committed src/.
+set -e
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+if ! git diff --cached --name-only | grep -qE '^(src/|bin/|tsconfig\.json$|package\.json$)'; then
+  exit 0
+fi
+
+echo "pre-commit: rebuilding dist/ (src/ or build config changed)"
+npx tsc
+chmod +x dist/bin/booth.js 2>/dev/null || true
