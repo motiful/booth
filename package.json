@@ -1,6 +1,6 @@
 {
   "name": "@motiful/booth",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AI project manager for Claude Code — parallel task execution with intelligent coordination",
   "type": "module",
   "bin": {
