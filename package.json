@@ -4,7 +4,7 @@
   "description": "AI project manager for Claude Code — parallel task execution with intelligent coordination",
   "type": "module",
   "bin": {
-    "booth": "./dist/bin/booth.js"
+    "booth": "dist/bin/booth.js"
   },
   "files": [
     "dist/",
@@ -24,7 +24,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/motiful/booth"
+    "url": "git+https://github.com/motiful/booth.git"
   },
   "keywords": [
     "claude-code",
