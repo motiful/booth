@@ -1,61 +1,47 @@
-import { existsSync, mkdirSync, symlinkSync, readlinkSync, unlinkSync } from 'node:fs'
+import { existsSync, lstatSync, readlinkSync, unlinkSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
 
 const BOOTH_SKILLS = [
   'booth', 'booth-dj', 'booth-deck',
   'booth-check', 'booth-beat', 'booth-alert', 'booth-compact-recovery',
 ] as const
 
-function checkSkillsIn(dir: string): boolean {
-  return BOOTH_SKILLS.every(name => {
-    try {
-      const target = readlinkSync(join(dir, name))
-      return existsSync(target)
-    } catch {
-      return false
+const SKILLS_REPO = 'github:motiful/booth-skills'
+
+function skillExists(skillDir: string, name: string): boolean {
+  const path = join(skillDir, name)
+  try {
+    const stat = lstatSync(path)
+    if (stat.isSymbolicLink()) {
+      const target = readlinkSync(path)
+      const resolved = target.startsWith('/') ? target : join(skillDir, target)
+      return existsSync(resolved)
     }
-  })
+    return stat.isDirectory()
+  } catch {
+    return false
+  }
 }
 
 export function isInitialized(): boolean {
   const globalSkillDir = join(homedir(), '.claude', 'skills')
-  const localSkillDir = join(process.cwd(), '.claude', 'skills')
-  return checkSkillsIn(globalSkillDir) && checkSkillsIn(localSkillDir)
+  return BOOTH_SKILLS.every(name => skillExists(globalSkillDir, name))
 }
 
-function ensureSymlinks(skillDir: string, collectionRoot: string): void {
-  if (!existsSync(skillDir)) mkdirSync(skillDir, { recursive: true })
+export function registerBoothSkills(): void {
+  if (isInitialized()) return
 
-  for (const name of BOOTH_SKILLS) {
-    const link = join(skillDir, name)
-    const target = join(collectionRoot, name)
+  const result = spawnSync(
+    'npx',
+    ['-y', 'skills', 'add', SKILLS_REPO, '--all', '-g', '-a', 'claude-code', '-y'],
+    { stdio: 'inherit' },
+  )
 
-    if (!existsSync(target)) continue
-
-    try {
-      const current = readlinkSync(link)
-      if (current === target) continue
-      unlinkSync(link)
-    } catch {
-      // symlink doesn't exist
-    }
-
-    symlinkSync(target, link)
-  }
-}
-
-export function registerBoothSkills(packageRoot: string): void {
-  // Skills are bundled inside the package at skill/skills/
-  const collectionRoot = join(packageRoot, 'skill', 'skills')
-
-  // Register in global ~/.claude/skills/
-  ensureSymlinks(join(homedir(), '.claude', 'skills'), collectionRoot)
-
-  // Register in project-local .claude/skills/
-  const localSkillDir = join(process.cwd(), '.claude', 'skills')
-  if (existsSync(join(process.cwd(), '.claude'))) {
-    ensureSymlinks(localSkillDir, collectionRoot)
+  if (result.error || result.status !== 0) {
+    console.warn('[booth] warning: failed to install booth skills via `npx skills add`')
+    console.warn(`[booth] install manually: npx skills add ${SKILLS_REPO} --all -g -a claude-code -y`)
   }
 }
 
@@ -64,14 +50,19 @@ export function unregisterGlobalBoothSkills(): string[] {
   const removed: string[] = []
 
   for (const name of BOOTH_SKILLS) {
-    const link = join(globalSkillDir, name)
+    const target = join(globalSkillDir, name)
+    let stat
     try {
-      readlinkSync(link)
+      stat = lstatSync(target)
     } catch {
       continue
     }
     try {
-      unlinkSync(link)
+      if (stat.isSymbolicLink() || stat.isFile()) {
+        unlinkSync(target)
+      } else if (stat.isDirectory()) {
+        rmSync(target, { recursive: true, force: true })
+      }
       removed.push(name)
     } catch {
       // ignore
@@ -94,8 +85,14 @@ export function checkRecommendedSkills(): SkillStatus[] {
   return skills.map(name => {
     const link = join(globalSkillDir, name)
     try {
-      const target = readlinkSync(link)
-      return { name, installed: existsSync(target), path: target }
+      const stat = lstatSync(link)
+      if (stat.isSymbolicLink()) {
+        const target = readlinkSync(link)
+        const resolved = target.startsWith('/') ? target : join(globalSkillDir, target)
+        return { name, installed: existsSync(resolved), path: resolved }
+      }
+      if (stat.isDirectory()) return { name, installed: true, path: link }
+      return { name, installed: false }
     } catch {
       return { name, installed: false }
     }

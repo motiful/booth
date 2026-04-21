@@ -9,8 +9,7 @@
   "files": [
     "dist/",
     "bin/",
-    "runtime/",
-    "skill/"
+    "runtime/"
   ],
   "scripts": {
     "build": "tsc && chmod +x dist/bin/booth.js",

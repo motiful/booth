@@ -1,20 +1,18 @@
-import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { registerBoothSkills, checkRecommendedSkills, isInitialized } from '../../skills.js'
 
 export async function initCommand(args: string[]): Promise<void> {
   const force = args.includes('--force')
-  const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
-  // Register booth skills (booth + booth-dj + booth-deck from Collection)
   if (!force && isInitialized()) {
     console.log('[booth] booth skills already registered')
   } else {
-    registerBoothSkills(packageRoot)
-    console.log('[booth] booth skills registered → ~/.claude/skills/booth{,-dj,-deck,-check,-beat,-alert,-compact-recovery}')
+    console.log('[booth] installing booth skills via `npx skills add github:motiful/booth-skills`...')
+    registerBoothSkills()
+    if (isInitialized()) {
+      console.log('[booth] booth skills registered → ~/.claude/skills/booth{,-dj,-deck,-check,-beat,-alert,-compact-recovery}')
+    }
   }
 
-  // Check recommended skills
   const skills = checkRecommendedSkills()
   const missing = skills.filter(s => !s.installed)
   const installed = skills.filter(s => s.installed)
@@ -29,8 +27,7 @@ export async function initCommand(args: string[]): Promise<void> {
     console.log('\n[booth] Recommended skills (not installed):')
     for (const skill of missing) {
       console.log(`  ${skill.name}:`)
-      console.log(`    git clone https://github.com/motiful/${skill.name} ~/motifpool/${skill.name}`)
-      console.log(`    ln -s ~/motifpool/${skill.name}/skill ~/.claude/skills/${skill.name}`)
+      console.log(`    npx skills add github:motiful/${skill.name} -g -a claude-code -y`)
     }
   }
 
