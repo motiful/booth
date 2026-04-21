@@ -30,7 +30,7 @@ booth — AI project manager for Claude Code
 Usage:
   booth                Start booth (interactive: resume / clean start / show status)
   booth init           First-time setup (register skills, can re-run for recovery)
-  booth uninstall      Remove booth skill symlinks from ~/.claude/skills/
+  booth uninstall      Remove booth skills from ~/.claude/skills/
   booth spin <name>    Create a new deck (parallel CC instance)
   booth ls             List all active deck states
   booth ls -a          List all decks including exited (historical)

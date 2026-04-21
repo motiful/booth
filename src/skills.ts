@@ -31,8 +31,6 @@ export function isInitialized(): boolean {
 }
 
 export function registerBoothSkills(): void {
-  if (isInitialized()) return
-
   const result = spawnSync(
     'npx',
     ['-y', 'skills', 'add', SKILLS_REPO, '--all', '-g', '-a', 'claude-code', '-y'],
@@ -58,10 +56,12 @@ export function unregisterGlobalBoothSkills(): string[] {
       continue
     }
     try {
-      if (stat.isSymbolicLink() || stat.isFile()) {
+      if (stat.isSymbolicLink()) {
         unlinkSync(target)
       } else if (stat.isDirectory()) {
         rmSync(target, { recursive: true, force: true })
+      } else {
+        continue
       }
       removed.push(name)
     } catch {

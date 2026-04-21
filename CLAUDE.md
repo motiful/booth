@@ -29,22 +29,34 @@ booth-project/                       # 项目命名空间（非 git）
 │   ├── bin/                         #   CLI entry + editor proxy
 │   ├── src/                         #   TypeScript source
 │   ├── dist/                        #   Compiled output
-│   ├── skill/                       #   CC Skill — shared vocabulary
-│   │   ├── SKILL.md                 #     信号表、模式表、CLI 速查
-│   │   └── references/              #     signals.md, cli.md
 │   ├── runtime/                     #   代码 runtime（npm published）
 │   │   ├── boot.md                  #     DJ system prompt (~41 lines)
 │   │   └── scripts/                 #     CC hooks (session-start/end, pre-compact)
 │   ├── .claude/skills/              #   In-repo skills
 │   │   └── maintenance-rules/       #     维护约束
-│   ├── package.json                 #   "files": ["dist/", "bin/", "skill/", "runtime/"]
+│   ├── package.json                 #   "files": ["dist/", "bin/", "runtime/"]
 │   └── LICENSE
 ├── booth-backstage/                 # 私有文档仓库
-├── booth-dj/                        # DJ skill 仓库（独立 git）
-│   └── SKILL.md                     #   DJ 管理手册 (~177 lines)
-└── booth-deck/                      # Deck skill 仓库（独立 git）
-    └── SKILL.md                     #   Deck 执行协议 (~215 lines)
+└── booth-skills/                    # Skills collection 仓库（独立 git，发布到 github:motiful/booth-skills）
+    └── skills/                      #   booth + booth-dj + booth-deck + 4 signal skills
+        ├── booth/                   #     共享词汇 + references
+        ├── booth-dj/                #     DJ 管理手册
+        ├── booth-deck/              #     Deck 执行协议
+        ├── booth-check/             #     /booth-check 信号
+        ├── booth-beat/              #     /booth-beat 信号
+        ├── booth-alert/             #     /booth-alert 信号
+        └── booth-compact-recovery/  #     /booth-compact-recovery 信号
 ```
+
+## Skills Installation
+
+Booth skills are installed via the standard CC ecosystem command — they are **not** bundled inside the npm package:
+
+```
+booth init   →   npx skills add github:motiful/booth-skills --all -g -a claude-code -y
+```
+
+`registerBoothSkills()` in `src/skills.ts` shells out to `npx skills add` and is idempotent (`isInitialized()` short-circuit). `booth uninstall` removes the symlinks/dirs from `~/.claude/skills/` but leaves the canonical copy in `~/.agents/skills/booth-skills/` for other agents.
 
 ## CC Launch Rules
 
