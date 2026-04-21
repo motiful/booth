@@ -395,7 +395,9 @@ export class Daemon {
         const deck = this.state.getDeck(sessionId)
 
         if (!deck) {
-          // Already exited or not found — safe to proceed with cleanup
+          // Deck already marked exited in DB. The tmux window may still exist
+          // if an earlier kill-pane failed silently — clean it up by window name.
+          if (deckName) tmuxSafe(socket, 'kill-window', '-t', `${SESSION}:=${deckName}`)
           this.removeDeck(sessionId)
           return { ok: true }
         }
@@ -425,6 +427,9 @@ export class Daemon {
         if (deck.paneId) {
           tmuxSafe(socket, 'kill-pane', '-t', deck.paneId)
         }
+        // Safety net: ensure the deck's window is gone even if paneId was stale
+        // or kill-pane failed silently. Idempotent — no-op if window already gone.
+        tmuxSafe(socket, 'kill-window', '-t', `${SESSION}:=${deck.name}`)
 
         // Try merge before cleanup (worktree must exist for rebase)
         let mergeWarning: string | undefined
