@@ -11,6 +11,7 @@ import type { DeckInfo, DeckStateChange } from '../types.js'
 
 const CHECK_DELAY = 500
 const CHECK_POLL_INTERVAL = 30_000
+const CHECK_RESEND_GAP_MS = 60_000
 const BEAT_INITIAL_COOLDOWN = 5 * 60_000
 const BEAT_MAX_COOLDOWN = 60 * 60_000
 const PLAN_APPROVE_DELAY = 3_000
@@ -119,15 +120,20 @@ export class Reactor {
     }
 
     if (deck.checkSentAt) {
+      const elapsed = Date.now() - deck.checkSentAt
+      // Stop hook fires at every CC turn end, not only at task completion.
+      // Long tasks emit many idle events — don't resend within RESEND_GAP.
+      if (elapsed < CHECK_RESEND_GAP_MS) {
+        logger.debug(`[booth-reactor] deck "${deck.name}" check already sent ${elapsed}ms ago, waiting for report`)
+        return
+      }
       if (fromIdle) {
-        // Deck went idle without submitting report — resend.
-        // [booth-check] is idempotent (signals.md), safe after compaction/limit/crash.
-        logger.info(`[booth-reactor] deck "${deck.name}" idle without report — resending check (idempotent)`)
+        // >60s without report — check likely lost (compaction/limit/crash). Resend.
+        logger.info(`[booth-reactor] deck "${deck.name}" check sent ${elapsed}ms ago without report — resending (likely lost)`)
         this.state.updateDeck(deck.id, { checkSentAt: undefined })
         this.clearCheckPollTimer(deck.id)
         // Fall through to send check below
       } else {
-        // Poll path — only check DB, don't resend (avoids message pile-up)
         logger.debug(`[booth-reactor] deck "${deck.name}" check already sent, waiting for report`)
         return
       }
