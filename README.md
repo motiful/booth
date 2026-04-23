@@ -69,8 +69,10 @@ Shutdown does **not** change deck status. Decks stay `working`/`idle` in the DB,
 
 ## Quick Start
 
+> Heads up: the npm package is scoped as `@motiful/booth`. Don't run `npm install -g booth` — that installs an unrelated third-party package.
+
 ```bash
-npm install -g booth
+npm install -g @motiful/booth
 cd your-project
 booth init          # First-time setup
 booth               # Start Booth (launches daemon + DJ)
