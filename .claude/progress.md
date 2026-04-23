@@ -2,7 +2,7 @@
 
 > Current execution state. Read this first when starting a session.
 
-## 当前位置：Hardening 尾声 — 核心通了，文档和校验规则还有洞
+## 当前位置：Hardening 完成 — E2E 10/10 PASS，进入 Phase C
 
 ### booth 是什么（一句话）
 
@@ -16,7 +16,7 @@
 | **Daemon + IPC** (25 个命令) | ✅ 健全 | 进程间通信稳定，Unix socket |
 | **信号检测（JSONL tail -f）** | ✅ 健全 | deck idle/working 状态检测，非 polling 而是事件驱动 |
 | **信号检测（Stop hook）** | ✅ 新增可用 | CC turn 结束时触发，比 JSONL 更快更准确 |
-| **自动 check 流程** | ⚠️ 流程通但文档有误 | daemon 发 `/booth-check` → deck 自验 → 提交 report → 通知 DJ 全链路通。但 check.md 仍用 `[bracket]` 格式（实际是 `/slash`）、要求 deck 写 progress.md（会卡权限）、status 值不做校验 |
+| **自动 check 流程** | ✅ 健全 | daemon 发 `/booth-check` → deck 自验 → 提交 report → 通知 DJ。check.md 已修正（slash 格式、去 progress.md 要求、status 值醒目）。CLI status 白名单校验已加。 |
 | **Skill 注册** (7 个) | ✅ 健全 | booth/booth-dj/booth-deck + 4 signal skills，symlink 全正确 |
 | **Worktree 隔离** | ✅ 健全 | spin pre-create worktree + settings.json symlink |
 | **Hook 体系** (4 个) | ⚠️ 部分可用 | Stop hook ✅ 在 worktree 里触发。SessionStart hook ❓ worktree 里未观察到触发（不阻塞主流程，daemon 有 JSONL fallback）。SessionEnd/PreCompact 未单独验证 |
@@ -37,27 +37,35 @@
 | CC Stop hook 替代 JSONL idle 检测 | 98d595c | E2E: daemon log `deck idle (stop hook)` |
 | Worktree settings.json symlink | 6344056 | E2E: JSONL `stop_hook_summary.hookCount: 2` |
 
-**E2E 验证的真实状态**：
-- **10 项结构 checklist**：全部 PASS（skill 注册、signal 格式、boot.md、init 输出等）
-- **核心 happy path**：spin → idle → /booth-check → self-verify → report → /booth-alert → DJ 通知，**一条线跑通**
-- **完整 10 项 checklist 重跑**：❌ 未做。只验证了关键路径，没有系统性 rerun
-- **SessionStart hook in worktree**：❓ 未解释为什么不触发，session-changed IPC = 0
+**E2E 验证状态 (2026-04-20)**：
+- **完整 10 项 checklist**：✅ 全部 PASS（skill 注册、signal 格式、boot.md、init、hooks、worktree symlinks、idle 检测、check flow、status 校验、DJ alert）
+- **核心 happy path**：spin → idle → /booth-check → self-verify → report → /booth-alert → DJ 通知，全链路 E2E 验证
+- **SessionStart hook in worktree**：❓ 未解释为什么不触发，session-changed IPC = 0（不阻塞）
 
 **详细归档**：`.claude/archive/progress-phaseB-hardening-2026-04-18.md`
 
-### 还没修的已知问题（进入 Phase C 之前必须完成）
+### 已修复的 Hardening 问题 (2026-04-20)
 
-1. **check.md 文档错误 + 流程问题**
-   - 信号格式写的 `[booth-check]`，实际 daemon 发的是 `/booth-check`（全文 7 处）
-   - `Progress: Required` 完成维度要求 deck 写 progress.md，但 CC 对 `.claude/` 有硬权限规则会卡住
-   - 设计决策已定：progress.md 只 DJ 写，deck 不碰
+| 修复 | commit | 说明 |
+|------|--------|------|
+| check.md bracket→slash + 去 progress.md 要求 + status 醒目化 | (runtime file) | .booth/check.md 是运行时文件，无 git commit |
+| `booth report` status 白名单校验 (BUG-003) | d231c94 | DONE 被拒，success 归一化为 SUCCESS |
+| Beat skip DJ busy | f9317bb, 9b3fb11 | DJ working 时跳过 beat，防止 stale beat 堆积 |
+| booth-dj SKILL.md proactive dispatch | (skill file) | beat 时主动巡查 progress.md，zero-deck = emergency |
+| dist/ 自动同步 (prepare + pre-commit) | 3cfb73d | rm dist && tsc 自动重编译，git commit 触发 hook |
+| Spin argparse 拒绝 `--` 开头 | 4100a65 | `--name`/`--help` 被拒 exit 1 |
+| Daemon 侧 status 白名单 | 4844eb1 | 隔离 daemon E2E: 5 条 IPC 用例全 PASS |
 
-2. **`booth report` 不校验 status 值**（BUG-003）
-   - CLI 接受任意字符串，daemon 只认 SUCCESS/FAIL/FAILED/ERROR/EXIT
-   - Deck 用了 DONE → daemon 永远认为 check 没完成，死循环 polling
+### E2E 发现的新问题 → 已全部修复 (2026-04-20)
 
-3. **SessionStart hook 不触发**（worktree 里 session-changed IPC = 0）
-   - 不阻塞主流程（daemon 靠 JSONL polling 补偿），但说明 hook 体系仍不完整
+| 问题 | commit | 验证 |
+|------|--------|------|
+| dist/ 不同步 | `3cfb73d` | prepare script + .githooks/pre-commit 自动重编译 |
+| daemon 侧不校验 status | `4844eb1` | 隔离 daemon E2E: 5 条 IPC 用例 (DONE 拒绝, 小写接受等) |
+| `booth spin --name` 畸形 deck | `4100a65` | E2E: `--name` 和 `--help` 被拒 exit 1 |
+
+**仍未解决**：
+- SessionStart hook 不触发 (LOW) — worktree 里 session-changed IPC = 0，不阻塞主流程
 
 ### 设计决策（本轮确定，待实施）
 
@@ -79,25 +87,6 @@
 - 两者通过 `updateDeckStatus()` 内建去重，先到先赢
 - **研究报告**：`/Users/yuhaolu/motifpool/booth-project/booth-backstage/research/jsonl-vs-hooks.md`
 
-### 设计决策（本轮确定，待实施）
-
-**D1. Progress.md 所有权**
-- progress.md 是 project-level rollup，**只有 DJ 写**
-- Deck 可以读（了解自己在大盘里的位置），但不写
-- Deck 的 "progress" 就是它的 report + commit；DJ 读 report 后翻译成 progress.md 条目
-- **类比**：员工交周报 = report，HR 更新组织路线图 = progress.md
-
-**D2. Worktree 策略**
-- 有 `.git` → **始终开 worktree**（避免 option 1 "补建 worktree" 的不可能——跑着的 CC session 无法搬家）
-- 没 `.git` → 不开 worktree，直接 cd
-- Worktree 位置：开在**目标 git repo** 的 `.claude/worktrees/` 下（不是 workspace 根）
-- 中期目标：加 `booth spin --cwd X` 模式，让 deck 指定目标目录（支持 multi-project workspace）
-
-**D3. Signal Flow 双轨制确立**
-- **主信号**：Stop hook（CC turn 结束时触发，语义精确，零延迟）
-- **Fallback**：JSONL polling（daemon 自己 tail JSONL，补偿 hook 未触发场景）
-- 两者通过 `updateDeckStatus()` 内建去重，先到先赢
-- **研究报告**：`/Users/yuhaolu/motifpool/booth-project/booth-backstage/research/jsonl-vs-hooks.md`
 
 ---
 
@@ -149,8 +138,8 @@ Worktree Symlinks (spin + resume):
 | Identity + Quality | Done | 双重寻址 + 10 bug fixes |
 | Phase A | Done | Compaction + Worktree + Guardian + Merge + Report DB |
 | Phase B | **Done** | Skill 架构改造 + 目录重组 + E2E 验证 + Stop hook 迁移 |
-| **Hardening** | **Done** | 5 bug fixes + worktree hook fix + check.md/report 修订（待做） |
-| Phase C | **Next** | 产品打磨 — UIUX、Token 统计、产品命名 |
+| **Hardening** | **Done** | 5+4 bug fixes + worktree hook fix + check.md/report 修订 + E2E 10/10 PASS |
+| Phase C | **Active** | 产品打磨 — UIUX、Token 统计、产品命名 |
 | Phase D | Queued | 市场定位 — 竞品分析、README/定位 |
 | Phase E | Queued | 发布 — npm publish + 博客宣发 |
 | Phase F | Outlined | 平台化 — Agent API、Codex、跨工具集成 |
@@ -160,19 +149,17 @@ Worktree Symlinks (spin + resume):
 
 ## Known Bugs
 
-### BUG-003: `booth report` 不校验 status 值 — 待修
+### BUG-003: `booth report` 不校验 status 值 — ✅ 已修 (2026-04-20)
 
-`booth report --status <X>` 接受任意字符串。Daemon 的 `TERMINAL_STATUSES` 只认 `{SUCCESS, FAIL, FAILED, ERROR, EXIT}`。Deck 用了 `DONE` → daemon 认为 check 永未完成 → 持续 polling。需要 CLI 端加 whitelist validation。
+CLI 白名单校验 (`d231c94`) + daemon 侧防御纵深 (`4844eb1`)。双层校验，非法 status 在 CLI 和 IPC 两层都被拒绝。
 
-### BUG-002: booth kill 不清理 tmux window — 无法复现 (2026-04-12)
+### BUG-002: booth kill 不清理 tmux window — ✅ 已修 (2026-04-22)
 
-E2E 重测时无法复现。如再现，需要捕获具体复现条件。
+Root cause 定位：`kill-deck` handler 两处漏洞（`!deck` 早退不清理 + 主路径只靠 kill-pane）。修复：两处 `kill-window` 兜底 (`55f3c14`)。
 
-### BUG-001: Compaction 打断 alert 链路 — 部分解决
+### BUG-001: Compaction 打断 alert 链路 — ✅ 关闭 (2026-04-22, by design)
 
-已有防护：PreCompact hook + CLAUDE.md Compact Instructions + Beat 兜底。
-待实现：PostCompact hook（等 CC 上游 #14258）。
-详见归档：`.claude/archive/progress-phaseA-B-2026-04-07.md`
+审计结论：当前三层防护（PreCompact hook + compact-recovery + Beat 兜底）已充分覆盖。Reports 持久化在 SQLite，compaction 丢不掉。Beat 无条件读 `booth reports`，丢失的 alert 一定会在下次 beat 被补上。两个小优化项（enriched beat summary + holdingNotified gate）记为 follow-up，非 bug。
 
 ---
 
