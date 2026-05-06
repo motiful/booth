@@ -597,6 +597,12 @@ export class Reactor {
       return
     }
 
+    // BUG-021: distinguish daemon-triggered check vs spontaneous deck report
+    // (e.g. startup-idle path that skips check, or any `booth report` the
+    // deck submits without a /booth-check round in flight). Captured before
+    // checkSentAt is cleared below so DJ alert text reflects the real event.
+    const daemonTriggered = Boolean(deck.checkSentAt)
+
     const round = this.checkRounds.get(deck.id) ?? 1
     const savedSnapshot = this.checkSnapshot.get(deck.id)
     const hasChanges = savedSnapshot ? this.hasGitChanges(deck.dir, savedSnapshot) : false
@@ -623,40 +629,51 @@ export class Reactor {
       logger.warn(`[booth-reactor] deck "${deckName}" hit MAX_CHECK_ROUNDS (${MAX_CHECK_ROUNDS}) with remaining changes`)
     }
 
+    // Prefix mirrors the actual event: a daemon-driven check round vs a
+    // spontaneous deck submission. Round/MAX_CHECK_ROUNDS only meaningful
+    // when daemon ran the check.
+    const prefix = daemonTriggered
+      ? `Deck "${deckName}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS})`
+      : `Deck "${deckName}" reported: ${status}`
+
     if (deck.mode === 'auto') {
       // Auto merge after check SUCCESS — attemptMerge schedules grace exit on success or nothing-to-merge.
-      this.attemptMerge(deck, status, round)
+      this.attemptMerge(deck, status, round, daemonTriggered)
     } else if (deck.mode === 'hold') {
       this.state.updateDeck(deck.id, { mergeStatus: 'pending' })
-      const msg = `Deck "${deckName}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Merge pending — use "booth merge ${deckName}". Report: "booth reports ${deckName}".`
+      const msg = `${prefix}. Merge pending — use "booth merge ${deckName}". Report: "booth reports ${deckName}".`
       this.notifyDj(msg)
       this.holdingNotified.add(deck.id)
       this.systemNotify(`Booth: ${deckName} → ${status} (holding)`)
-      logger.info(`[booth-reactor] deck "${deckName}" check result: ${status} (holding, round ${round})`)
+      logger.info(`[booth-reactor] deck "${deckName}" report: ${status} (holding, round ${round}, daemonTriggered=${daemonTriggered})`)
       // No grace exit for hold — deck deliberately persists until DJ runs `booth merge`.
     } else {
       // Live mode — user-managed persistent workspace. Notify, but never
       // schedule grace exit: a user-driven interim report (e.g. milestone
       // marker) shouldn't kill the pane. BUG-020 only targets auto mode.
-      const msg = `Deck "${deckName}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Use "booth reports ${deckName}" to read.`
+      const msg = `${prefix}. Use "booth reports ${deckName}" to read.`
       this.notifyDj(msg)
       this.systemNotify(`Booth: ${deckName} → ${status}`)
-      logger.info(`[booth-reactor] deck "${deckName}" check result: ${status} (round ${round})`)
+      logger.info(`[booth-reactor] deck "${deckName}" report: ${status} (round ${round}, daemonTriggered=${daemonTriggered})`)
     }
   }
 
-  private attemptMerge(deck: DeckInfo, checkStatus: string, round: number): void {
+  private attemptMerge(deck: DeckInfo, checkStatus: string, round: number, daemonTriggered: boolean): void {
     this.state.updateDeck(deck.id, { mergeStatus: 'merging' })
     const result = tryMerge(this.projectRoot, deck.name)
+
+    const prefix = daemonTriggered
+      ? `Deck "${deck.name}" check complete: ${checkStatus} (round ${round}/${MAX_CHECK_ROUNDS})`
+      : `Deck "${deck.name}" reported: ${checkStatus}`
 
     if (result.ok) {
       if (result.nothingToMerge) {
         this.state.updateDeck(deck.id, { mergeStatus: undefined })
-        const msg = `Deck "${deck.name}" check complete: ${checkStatus} (round ${round}/${MAX_CHECK_ROUNDS}). No new commits to merge.`
+        const msg = `${prefix}. No new commits to merge.`
         this.notifyDj(msg)
       } else {
         this.state.updateDeck(deck.id, { mergeStatus: 'merged' })
-        const msg = `Deck "${deck.name}" check complete: ${checkStatus} (round ${round}/${MAX_CHECK_ROUNDS}). Merged to main.`
+        const msg = `${prefix}. Merged to main.`
         this.notifyDj(msg)
         this.systemNotify(`Booth: ${deck.name} merged`)
       }
@@ -670,7 +687,7 @@ export class Reactor {
       sendMessage(this.socket, this.state, deck.id,
         `⚠️ Auto-merge failed for your branch. Action required:\n1. Run \`git rebase main\` in your worktree\n2. Resolve any conflicts\n3. \`git rebase --continue\` and commit\n4. Become idle (任务完成 → booth report)\n\nbooth will re-run check automatically after you idle.`
       ).catch(err => logger.error(`[booth-reactor] conflict message failed for "${deck.name}": ${err}`))
-      const msg = `Deck "${deck.name}" check complete: ${checkStatus}, but merge conflict. Deck notified to resolve.`
+      const msg = `${prefix}, but merge conflict. Deck notified to resolve.`
       this.notifyDj(msg)
       logger.warn(`[booth-reactor] deck "${deck.name}" merge conflict: ${result.error}`)
     }
