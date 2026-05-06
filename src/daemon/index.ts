@@ -443,15 +443,6 @@ export class Daemon {
           }
         }
 
-        // Clean up worktree
-        if (deck.worktreePath) {
-          try {
-            removeWorktree(this.projectRoot, deck.name)
-          } catch (err) {
-            logger.error(`[booth-daemon] worktree cleanup failed for "${deck.name}": ${err}`)
-          }
-        }
-
         this.removeDeck(sessionId)
         logger.info(`[booth-daemon] deck "${deck.name}" killed${force ? ' (forced)' : ''}`)
         return { ok: true, mergeWarning }
