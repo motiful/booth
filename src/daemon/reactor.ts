@@ -105,28 +105,34 @@ export class Reactor {
 
   /**
    * True when the most recent report for this deck is terminal AND attributable
-   * to the current deck instance (sessionId match preferred, createdAt fallback).
-   * Used by fireBeat (BUG-014), runCheck (BUG-017), and deck:state-changed.
+   * to the current deck instance. Identity rule:
+   *   - Prefer sessionId match (strongest signal — survives clock skew, deck respin).
+   *   - Fall back to createdAt only when the stored report has no sessionId
+   *     (legacy reports written before session_id column was indexed). This avoids
+   *     a stale same-name report from a killed deck suppressing a fresh respin's
+   *     check, since the old report's createdAt can exceed the new deck's.
    */
   private hasTerminalReport(deck: DeckInfo): boolean {
     const r = this.state.getReport(deck.name)
     if (!r || !isTerminalStatus(r.status)) return false
     const sessionMatch = Boolean(r.sessionId && deck.sessionId && r.sessionId === deck.sessionId)
-    const timeMatch = r.createdAt >= deck.createdAt
+    const timeMatch = !r.sessionId && r.createdAt >= deck.createdAt
     return sessionMatch || timeMatch
   }
 
   private runCheck(deck: DeckInfo): void {
-    // BUG-017 instrumentation: log every entry into runCheck with full context
+    // BUG-017 instrumentation: log every entry into runCheck with full context.
+    // debug-level — runCheck fires on every Stop hook + every 30s poll per deck,
+    // so info would flood logs at steady state.
     const dbReport = this.state.getReport(deck.name)
-    logger.info(
+    logger.debug(
       `[booth-reactor] runCheck enter deck="${deck.name}" deck.createdAt=${deck.createdAt} deck.sessionId=${deck.sessionId ?? 'none'} ` +
       `dbReport=${dbReport ? `status=${dbReport.status} createdAt=${dbReport.createdAt} sessionId=${dbReport.sessionId ?? 'none'}` : 'none'}`
     )
 
     if (dbReport && isTerminalStatus(dbReport.status)) {
       const sessionMatch = Boolean(dbReport.sessionId && deck.sessionId && dbReport.sessionId === deck.sessionId)
-      const timeMatch = dbReport.createdAt >= deck.createdAt
+      const timeMatch = !dbReport.sessionId && dbReport.createdAt >= deck.createdAt
       if (sessionMatch || timeMatch) {
         logger.info(
           `[booth-reactor] deck "${deck.name}" terminal report already in DB — skipping check ` +
@@ -166,6 +172,10 @@ export class Reactor {
       logger.warn(`[booth-reactor] deck "${deck.name}" exceeded MAX_CHECK_ROUNDS (${round}/${MAX_CHECK_ROUNDS}) — stopping check loop`)
       this.state.updateDeck(deck.id, { checkSentAt: undefined })
       this.clearCheckPollTimer(deck.id)
+      // Clear loop state so subsequent idle/poll re-entries don't re-fire the
+      // cap warning + DJ notification on every tick (notification storm guard).
+      this.checkRounds.delete(deck.id)
+      this.checkSnapshot.delete(deck.id)
       this.notifyDj(`Deck "${deck.name}" check loop exhausted (${MAX_CHECK_ROUNDS} rounds) — stopping; inspect manually.`)
       return
     }
