@@ -99,7 +99,7 @@ export class Reactor {
     // still initializing (reading prompt / loading skills), no real task has run.
     // Wait for genuine work before triggering self-check.
     if (!deck.workedOnce) {
-      logger.debug(`[booth-reactor] deck "${deck.name}" idle but never worked — skipping check (startup idle)`)
+      logger.debug(`[booth-reactor] deck "${deck.name}" (id=${deck.id}) idle but never worked — skipping check (startup idle)`)
       return
     }
     // All other cases (auto, hold, or live with in-flight check): proceed
@@ -469,7 +469,9 @@ export class Reactor {
     this.holdingNotified.delete(deck.id)
     // BUG-019: mark deck as having done real work. Idempotent — only persists
     // on first transition. Gates onDeckIdle / fireBeat from misclassifying
-    // startup idle as task-completion idle.
+    // startup idle as task-completion idle. Also re-arms after daemon reload:
+    // if a working deck's flag wasn't yet persisted before restart, the next
+    // JSONL working signal flips it back true here.
     if (!deck.workedOnce) {
       this.state.updateDeck(deck.id, { workedOnce: true })
       logger.debug(`[booth-reactor] deck "${deck.name}" workedOnce set`)
