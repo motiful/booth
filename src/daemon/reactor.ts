@@ -95,6 +95,13 @@ export class Reactor {
       logger.debug(`[booth-reactor] deck "${deck.name}" live mode — skipping check`)
       return
     }
+    // BUG-019: deck reached idle without ever transitioning to working — CC is
+    // still initializing (reading prompt / loading skills), no real task has run.
+    // Wait for genuine work before triggering self-check.
+    if (!deck.workedOnce) {
+      logger.debug(`[booth-reactor] deck "${deck.name}" idle but never worked — skipping check (startup idle)`)
+      return
+    }
     // All other cases (auto, hold, or live with in-flight check): proceed
     this.triggerCheck(deck)
   }
@@ -296,8 +303,11 @@ export class Reactor {
     // BUG-014 fix: exclude decks with terminal reports — they're done, DJ
     // already got the alert via notifyDj in onReportSubmitted, no need to
     // resurrect them in beat's idle list.
+    // BUG-019: exclude decks that have never transitioned to working — they're
+    // in startup idle (CC still initializing), not task-completion idle.
     const idle = decks.filter(d =>
       d.status === 'idle' &&
+      d.workedOnce &&
       !this.holdingNotified.has(d.id) &&
       !this.hasTerminalReport(d)
     ).map(d => d.name)
@@ -457,6 +467,13 @@ export class Reactor {
   private onDeckWorking(deck: DeckInfo): void {
     // Clear holding-notified flag — deck is active again
     this.holdingNotified.delete(deck.id)
+    // BUG-019: mark deck as having done real work. Idempotent — only persists
+    // on first transition. Gates onDeckIdle / fireBeat from misclassifying
+    // startup idle as task-completion idle.
+    if (!deck.workedOnce) {
+      this.state.updateDeck(deck.id, { workedOnce: true })
+      logger.debug(`[booth-reactor] deck "${deck.name}" workedOnce set`)
+    }
     // Reset merge status — deck is actively working again
     if (deck.mergeStatus) {
       this.state.updateDeck(deck.id, { mergeStatus: undefined })

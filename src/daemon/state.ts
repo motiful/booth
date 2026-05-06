@@ -39,13 +39,14 @@ export class BoothState extends EventEmitter {
   registerDeck(info: DeckInfo): void {
     const now = Date.now()
     this.db.prepare(`
-      INSERT INTO sessions (name, role, lifecycle, status, mode, dir, pane_id, session_id, jsonl_path, prompt, no_loop, worktree_path, check_sent_at, merge_status, created_at, updated_at)
-      VALUES (?, 'deck', 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (name, role, lifecycle, status, mode, dir, pane_id, session_id, jsonl_path, prompt, no_loop, worktree_path, check_sent_at, merge_status, worked_once, created_at, updated_at)
+      VALUES (?, 'deck', 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       info.name, info.status, info.mode, info.dir, info.paneId,
       info.sessionId ?? null, info.jsonlPath ?? null, info.prompt ?? null,
       info.noLoop ? 1 : 0, info.worktreePath ?? null, info.checkSentAt ?? null,
-      info.mergeStatus ?? null, info.createdAt ?? now, info.updatedAt ?? now
+      info.mergeStatus ?? null, info.workedOnce ? 1 : 0,
+      info.createdAt ?? now, info.updatedAt ?? now
     )
     this.decks.set(info.id, { ...info })
     this.emit('deck:registered', info)
@@ -64,14 +65,15 @@ export class BoothState extends EventEmitter {
       UPDATE sessions SET
         status = ?, mode = ?, dir = ?, pane_id = ?, session_id = ?,
         jsonl_path = ?, prompt = ?, no_loop = ?, worktree_path = ?,
-        check_sent_at = ?, merge_status = ?, updated_at = ?
+        check_sent_at = ?, merge_status = ?, worked_once = ?, updated_at = ?
       WHERE ${whereCol} = ? AND role = 'deck' AND status != 'exited'
     `).run(
       updated.status, updated.mode, updated.dir, updated.paneId,
       updated.sessionId ?? null, updated.jsonlPath ?? null,
       updated.prompt ?? null, updated.noLoop ? 1 : 0,
       updated.worktreePath ?? null,
-      updated.checkSentAt ?? null, updated.mergeStatus ?? null, updated.updatedAt,
+      updated.checkSentAt ?? null, updated.mergeStatus ?? null,
+      updated.workedOnce ? 1 : 0, updated.updatedAt,
       whereVal
     )
 
@@ -394,6 +396,13 @@ export class BoothState extends EventEmitter {
       // Column already exists — safe to ignore
     }
 
+    // Add worked_once column (BUG-019: distinguish startup idle from post-work idle)
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN worked_once INTEGER DEFAULT 0`)
+    } catch {
+      // Column already exists — safe to ignore
+    }
+
     // Step 0: Identity refactor schema prep
     // Index session_id for future lookups (unique among active sessions)
     this.db.exec(`
@@ -643,6 +652,7 @@ interface SessionRow {
   worktree_path: string | null
   check_sent_at: number | null
   merge_status: string | null
+  worked_once: number | null
   report_status: string | null
   created_at: number
   updated_at: number
@@ -695,6 +705,7 @@ function rowToDeckInfo(row: SessionRow): DeckInfo {
     worktreePath: row.worktree_path ?? undefined,
     checkSentAt: row.check_sent_at ?? undefined,
     mergeStatus: (row.merge_status as MergeStatus) ?? undefined,
+    workedOnce: row.worked_once === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

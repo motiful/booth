@@ -18,6 +18,7 @@ export interface DeckInfo {
   worktreePath?: string
   checkSentAt?: number
   mergeStatus?: MergeStatus
+  workedOnce?: boolean
   createdAt: number
   updatedAt: number
 }
