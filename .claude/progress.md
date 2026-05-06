@@ -163,32 +163,54 @@ Root cause 定位：`kill-deck` handler 两处漏洞（`!deck` 早退不清理 +
 
 ---
 
-## Open Issues (2026-04-23 发现 — 小白鼠阻塞)
+## Open Issues (2026-04-23 ~ 2026-05-06 — 小白鼠阻塞)
 
 ### P0 Blocker
+
+**BUG-013: `/booth-merge-conflict` skill 未注册 ★ 最高阻塞**
+- 现象：deck commit 后 daemon auto-merge 失败时发 `/booth-merge-conflict` slash command；CC 回 'Unknown command'，deck 空转无法 idle
+- 影响：任何需要 commit 的 deck 都可能卡死（已实证 verify-checkstorm-fix + update-progress-issues 各卡 1 次，靠人工救援）
+- Root cause：skill 迁移漏掉 — 这是最早怀疑"skill 迁移丢信息"的铁证
+- 修复方案 A（推荐）：daemon 把 slash command 换成 natural language prompt（不依赖 skill 注册）
+- 修复方案 B：注册 booth-merge-conflict skill 到 booth-skills 仓库（跨仓库改动大）
+- **必须先修**：阻塞所有需要 commit 的后续修复 deck
 
 **BUG-004: check storm — Stop hook 每 turn 触发被误判任务完成**
 - 现象：长任务 deck 5 分钟内被 daemon 连发 7+ 次 /booth-check，输入队列被塞爆
 - Root cause: `src/daemon/reactor.ts:121-133` 收到 Stop hook idle 就 resend check，未区分 'turn 结束' vs '任务完成'
 - Phase B E2E 漏掉：之前任务都是 hello-world 量级单 turn，没暴露 multi-turn 场景
-- 修复：已手工改 reactor.ts 加 CHECK_RESEND_GAP_MS=60s 时间窗口（方案 F+G）。**未 commit 未 E2E 验证**（由 verify-checkstorm-fix deck 接手）
+- 部分修复：`a71d02e fix(daemon): prevent check storm on multi-turn deck tasks (BUG-004)` 加 CHECK_RESEND_GAP_MS=60s
+- **遗留**：长任务 >60s 仍会被 resend（verify-checkstorm-fix 实测 2 分钟 3 次 check）
+- 彻底修复（按 verify-checkstorm-fix report 建议）：checking 状态跳过 fromIdle resend，仅靠 10min STALE_THRESHOLD 兜底
 - 诊断报告：`booth reports diagnose-check-storm`
 
 **BUG-005: `booth kill` 删除 worktree — 违反 'resume unconditional' 承诺**
 - 现象：kill 后 .claude/worktrees/<name>/ 目录消失，git worktree list 也没了
-- 影响：records persist forever 承诺破产；被 kill 的 deck 无法 resume
-- 下一步：diagnose-kill-worktree deck 诊断
+- Root cause: **不是 BUG-002 回归**，是 commit `505a138`（Phase A2 worktree isolation, 2026-03-13）有意设计
+- 代码位置：`src/daemon/index.ts:446-453`，调 `removeWorktree`（worktree.ts:126-173）
+- Persist 三层分析：DB 行 ✅ / 已提交工作 ✅ / **未提交工作 ❌ 丢失**
+- 影响范围扩大：`deck-exited` (495-501) + `exit-all` (744-750) + `shutdownClean` (1085-1091) 都有同问题
+- 修复方案 A（推荐）：删 8 行 + 未来加 `booth prune` 命令
+- 诊断报告：`booth reports diagnose-kill-worktree`（第一份 SUCCESS，5737 字符）
+
+**BUG-014: Beat 不停发 — auto deck SUCCESS 后未从 idle 列表退出**
+- 现象：deck 提交 terminal report 后 daemon 仍把它当待处理 idle 报给 DJ；用户必须手动 kill 才能闭环
+- Root cause: `src/daemon/reactor.ts:268` fireBeat 的 idle filter 只过滤 holdingNotified，缺少 `!hasTerminalReport(d)` 判断
+- 设计半成品：`deck:state-changed` handler (line 55-65) 已 skip terminal report 的 reset，但 fireBeat 的 idle 列表漏了同样过滤
+- 哲学冲突：违反 booth 自己的 "你只管想，booth 替你跑" — 完成的 deck 不该需要 DJ 操心
+- 修复方案 A（推荐）：fireBeat idle filter 加 `!hasTerminalReport(d)` 判断（≤5 行）
 
 ### P1 体验 Bug
 
-**BUG-006: Beat 显示状态冲突**
-- 现象：同一 deck 在 beat 消息里同时出现在 Working 和 Checking 列表
-- 例：`Working: fix-check-storm, fix-readme-install / Checking: fix-check-storm, fix-readme-install`
-- 可能原因：beat 快照对不同时刻采样导致状态重复计入
+**BUG-006: Beat 显示状态冲突 + 数据陈旧（持续复现）**
+- 现象 1：同一 deck 同时在 Working+Checking 列表（`Working: fix-check-storm, fix-readme-install / Checking: fix-check-storm, fix-readme-install`）
+- 现象 2：被 kill 的 deck 仍在 beat 显示为 idle（多次复现，本会话每个 beat 都暴露）
+- 可能原因：beat 快照取数路径和 `booth ls` 不同步；或 beat 用陈旧 cache
 
-**BUG-007: Alert 重复 — 同一事件发两次**
-- 现象：fix-readme-install 同一次 check 完成触发两次 /booth-alert（'Merged to main' + 'No new commits to merge'）
-- 可能是 BUG-004 check storm 的衍生——第二轮 check 重复触发了 alert；修完 BUG-004 观察是否自愈
+**BUG-007: Alert 重复 + Ghost alert**
+- 现象 1：同一次 check 完成触发 2 次 alert（fix-readme-install 'Merged to main' + 'No new commits to merge'）
+- 现象 2：deck 已 kill 后 daemon 仍发该 deck 的 alert（已实证 multiple decks）
+- 可能与 BUG-004 长任务 resend / BUG-014 同根；先修 P0 后观察是否自愈
 
 **BUG-008: `booth spin <name> --help` 不显示 usage，把 --help 当 prompt**
 - 复现：`booth spin x --help` → 直接 spun up 叫 x 的 deck
@@ -197,6 +219,26 @@ Root cause 定位：`kill-deck` handler 两处漏洞（`!deck` 早退不清理 +
 **BUG-009: `booth kill` 拒绝 working deck 时只提示 -f，未提示 hold**
 - 现象：错误信息 'cannot kill a working deck without -f'，暗示硬杀是唯一选择
 - 期望：提示 `booth hold <name>` 作为温和替代；附带 'peek 查看 deck 正在做什么' 建议
+
+**BUG-010: `booth report` 可能重复提交**
+- 现象：verify-nostorm-subject 收到 1 次 /booth-check 但 DB 里有 2 条 SUCCESS report
+- 时间戳间隔 ~30 秒
+- 可能：deck 端逻辑重复 / booth report CLI 不去重
+
+**BUG-011: bypass permissions 仍弹 `.claude/*` Edit dialog**（CC 上游 bug）
+- 上游 issues: [#37029](https://github.com/anthropics/claude-code/issues/37029), [#37516](https://github.com/anthropics/claude-code/issues/37516), [#29026](https://github.com/anthropics/claude-code/issues/29026)
+- 影响：deck 编辑 .claude/* 文件挂起等用户介入；本会话 update-progress-issues 卡 14 分钟
+- booth 侧 workaround：daemon 检测 permission dialog 文本 + 自动 send "1\n"
+- 不能配置关闭，必须 booth 帮忙回车
+
+**BUG-012: daemon 不追踪 main 外部变动 — alert merge 状态粘连**
+- 现象：人工 fast-forward merge 完 main 后 daemon 仍持续报 'merge conflict' alert
+- Root cause: daemon 没 watch main 的更新；merge 状态判断基于 daemon 上次尝试的结果
+
+**BUG-015: DJ session 不消费时 beat 在 CC input queue 堆积 → 一次性轰炸**
+- 现象：DJ working / 不响应期间 daemon 发的 beat 全部进 CC input queue；DJ 终于 idle 时 queue 一次性 dump 出 10+ 条 beat
+- 实测：本会话连续收到 13 个 beat，对应 daemon log 实际只发了 3 次
+- 可能修复：daemon 检测 DJ 是否在消费（pane 输入空闲）、或 message 自带去重时间戳让 CC 跳过陈旧 beat
 
 ### P2 新用户路径未验证
 
@@ -211,13 +253,18 @@ Root cause 定位：`kill-deck` handler 两处漏洞（`!deck` 早退不清理 +
 - **'不问蠢问题' 原则**：obvious fix（README 错字、诊断报告已给出明确方案等）直接派 deck，不问用户
 - **'Issue-first' 纪律**：发现 bug/需求 立刻写 progress.md，早于执行
 - **'DJ 不写代码' 边界**：破循环也有其他方案（live 模式 deck、noLoop deck、deck 给 patch 文本），DJ 亲自编辑代码是最后手段
-- **Skill 迁移 audit**：对比 ~/motifpool/booth-origin/ 的老 booth skill，确认有没有硬性规则在迁移时丢失
+- **'Beat/Alert 异常不要保持安静' protocol**：连续收到 ghost beat / alert 时必须主动诊断（grep daemon.log），不能用"保持安静"敷衍 — 本会话曾连续 13 次保持安静等用户开口
+- **Skill 迁移 audit**：对比 ~/motifpool/booth-origin/ 的老 booth skill，确认有没有硬性规则在迁移时丢失（BUG-013 是第一个铁证）
 
-## Recent Actions (本次会话)
+## Recent Actions (2026-04-23 ~ 2026-05-06)
 
-- 2026-04-23 13:44 手工修 `src/daemon/reactor.ts` 加 CHECK_RESEND_GAP_MS=60s，daemon reload 已生效（未 commit）
 - 2026-04-23 13:34 fix-readme-install 已 merge: `4a76442 docs: fix install command to use scoped package name @motiful/booth`
-- 2026-04-23 DJ 连续 3 次 kill -f 违反自述规则；已认错并承诺修复行为（通过 P3-1）
+- 2026-04-23 DJ 连续 3 次 kill -f 违反自述规则；已认错（通过 P3-1）
+- 2026-04-23 14:21 verify-checkstorm-fix commit `a71d02e` 已 merge：BUG-004 部分修复（CHECK_RESEND_GAP_MS=60s）
+- 2026-04-23 22:46 update-progress-issues commit cherry-pick 到 main `67fda6d`
+- 2026-04-26 投资人 demo：5 个 deck（booth-pitch-positioning / booth-target-users / booth-killer-demo / booth-investor-faq / booth-magic-moment）短任务全部 SUCCESS — booth 自身演示能力得到验证
+- 2026-04-27 BUG-014 root cause 定位（reactor.ts:268）+ daemon reload 清空 beat timer
+- 2026-05-06 progress.md 同步本会话累积 12 个 BUG（BUG-004~015）
 
 ---
 
