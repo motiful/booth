@@ -9,7 +9,14 @@ import { tmuxSafe } from '../tmux.js'
 import { logger } from './logger.js'
 import type { DeckInfo, DeckStateChange } from '../types.js'
 
-const CHECK_DELAY = 500
+// BUG-022: debounce idle→check trigger. Mid-task tool calls produce
+// sub-second working→idle→working transitions; firing /booth-check on
+// every transient idle interrupts the deck. Only treat idle as
+// "task completion" after the deck has stayed idle continuously this long.
+// Tool-call gaps are typically <5s, so 30s safely separates inter-tool
+// idle from genuine task-finished idle. Cancelled by onDeckWorking the
+// instant the deck resumes work.
+const IDLE_CHECK_DEBOUNCE = 30_000
 const CHECK_POLL_INTERVAL = 30_000
 const BEAT_INITIAL_COOLDOWN = 5 * 60_000
 const BEAT_MAX_COOLDOWN = 60 * 60_000
@@ -41,6 +48,10 @@ export class Reactor {
 
   // Check poll timers — safety net for missed idle signals
   private checkPollTimers = new Map<string, ReturnType<typeof setInterval>>()
+
+  // BUG-022: pending idle-debounce timers — set on idle, cleared on working.
+  // Only fires runCheck if the deck has stayed idle for IDLE_CHECK_DEBOUNCE.
+  private pendingCheckTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   // Check loop state — daemon-driven multi-round check
   private checkRounds = new Map<string, number>()
@@ -138,7 +149,32 @@ export class Reactor {
   }
 
   triggerCheck(deck: DeckInfo): void {
-    setTimeout(() => this.runCheck(deck), CHECK_DELAY)
+    // BUG-022: debounce. Don't fire runCheck immediately — schedule a timer
+    // and re-validate deck state when it fires. If deck transitioned back to
+    // working in the meantime (typical inter-tool idle), onDeckWorking will
+    // have cleared this timer. Multiple idle events within the window collapse
+    // to a single check by clearing the prior timer first.
+    this.clearPendingCheckTimer(deck.id)
+    const timer = setTimeout(() => {
+      this.pendingCheckTimers.delete(deck.id)
+      const current = this.state.getDeck(deck.id)
+      if (!current) return
+      if (current.status !== 'idle') {
+        logger.debug(`[booth-reactor] pending check for "${current.name}" cancelled — status=${current.status}`)
+        return
+      }
+      this.runCheck(current)
+    }, IDLE_CHECK_DEBOUNCE)
+    this.pendingCheckTimers.set(deck.id, timer)
+    logger.debug(`[booth-reactor] deck "${deck.name}" check debounced ${IDLE_CHECK_DEBOUNCE / 1000}s`)
+  }
+
+  private clearPendingCheckTimer(deckId: string): void {
+    const timer = this.pendingCheckTimers.get(deckId)
+    if (timer) {
+      clearTimeout(timer)
+      this.pendingCheckTimers.delete(deckId)
+    }
   }
 
   /**
@@ -432,6 +468,7 @@ export class Reactor {
     this.checkRounds.delete(deckId)
     this.clearPlanModeTimer(deckId)
     this.clearCheckPollTimer(deckId)
+    this.clearPendingCheckTimer(deckId)
     this.clearGraceExitTimer(deckId)
   }
 
@@ -505,6 +542,14 @@ export class Reactor {
   private onDeckWorking(deck: DeckInfo): void {
     // Clear holding-notified flag — deck is active again
     this.holdingNotified.delete(deck.id)
+    // BUG-022: drop any pending idle-debounce. Inter-tool idle was transient;
+    // the deck resumed work before the debounce window expired, so the
+    // pending /booth-check would otherwise fire after this working signal
+    // and interrupt a still-running task.
+    if (this.pendingCheckTimers.has(deck.id)) {
+      this.clearPendingCheckTimer(deck.id)
+      logger.debug(`[booth-reactor] deck "${deck.name}" pending check cancelled (working again)`)
+    }
     // BUG-020: deck is back at work (resumed, or DJ sent a message) — cancel
     // any pending auto-exit so we don't kill an actively working deck.
     if (this.graceExitTimers.has(deck.id)) {
@@ -566,6 +611,10 @@ export class Reactor {
     this.state.updateDeck(deck.id, { checkSentAt: undefined })
     this.clearCheckPollTimer(deck.id)
     this.checkRounds.delete(deck.id)
+    // BUG-022: terminal report supersedes any pending idle-debounce — the
+    // deck has self-declared its state, so a delayed runCheck would either
+    // no-op on hasTerminalReport or, worse, race with grace-exit teardown.
+    this.clearPendingCheckTimer(deck.id)
 
     // Prefix mirrors the actual event: a daemon-driven check round vs a
     // spontaneous deck submission. Round/MAX_CHECK_ROUNDS only meaningful
