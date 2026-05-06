@@ -16,6 +16,11 @@ const BEAT_MAX_COOLDOWN = 60 * 60_000
 const PLAN_APPROVE_DELAY = 3_000
 const MAX_CHECK_ROUNDS = 5
 const CHECK_STALE_THRESHOLD = 10 * 60_000
+// BUG-020: window after a terminal report + merge resolution before daemon
+// auto-exits the deck. Long enough for DJ to read alert/report and decide
+// whether to resume; short enough to keep the booth philosophy ("you keep
+// thinking, booth keeps clearing") working without manual kills.
+const GRACE_EXIT_DELAY = 30_000
 
 export class Reactor {
   private state: BoothState
@@ -41,10 +46,20 @@ export class Reactor {
   private checkRounds = new Map<string, number>()
   private checkSnapshot = new Map<string, string>()
 
+  // BUG-020: grace-period timers for auto-exit after terminal report + merge
+  private graceExitTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  // Daemon callback for full deck exit (kill pane + cleanup state). Set after
+  // construction since the daemon owns tmux + watcher lifecycle.
+  private exitDeckCallback?: (deckId: string) => void
+
   constructor(projectRoot: string, state: BoothState, socket: string) {
     this.projectRoot = projectRoot
     this.state = state
     this.socket = socket
+  }
+
+  setExitDeckCallback(cb: (deckId: string) => void): void {
+    this.exitDeckCallback = cb
   }
 
   start(): void {
@@ -447,6 +462,46 @@ export class Reactor {
     this.checkSnapshot.delete(deckId)
     this.clearPlanModeTimer(deckId)
     this.clearCheckPollTimer(deckId)
+    this.clearGraceExitTimer(deckId)
+  }
+
+  // --- Grace exit (BUG-020) ---
+
+  private scheduleGraceExit(deck: DeckInfo, reason: string): void {
+    this.clearGraceExitTimer(deck.id)
+    const timer = setTimeout(() => this.fireGraceExit(deck.id), GRACE_EXIT_DELAY)
+    this.graceExitTimers.set(deck.id, timer)
+    logger.info(`[booth-reactor] deck "${deck.name}" grace exit scheduled in ${GRACE_EXIT_DELAY / 1000}s (${reason})`)
+  }
+
+  private fireGraceExit(deckId: string): void {
+    this.graceExitTimers.delete(deckId)
+    const deck = this.state.getDeck(deckId)
+    if (!deck) {
+      logger.debug(`[booth-reactor] grace exit skipped — deck ${deckId} no longer active`)
+      return
+    }
+    // Safety: only auto-exit a still-idle deck. If DJ resumed or sent a message,
+    // the deck flipped to working; onDeckWorking already cancelled the timer,
+    // but recheck here to cover races where the timer fires before that path.
+    if (deck.status !== 'idle') {
+      logger.info(`[booth-reactor] grace exit aborted for "${deck.name}" — status=${deck.status}`)
+      return
+    }
+    if (!this.exitDeckCallback) {
+      logger.warn(`[booth-reactor] grace exit ready for "${deck.name}" but no exitDeckCallback set`)
+      return
+    }
+    logger.info(`[booth-reactor] auto-exiting deck "${deck.name}" after grace period`)
+    this.exitDeckCallback(deck.id)
+  }
+
+  private clearGraceExitTimer(deckId: string): void {
+    const timer = this.graceExitTimers.get(deckId)
+    if (timer) {
+      clearTimeout(timer)
+      this.graceExitTimers.delete(deckId)
+    }
   }
 
   // --- DJ notification ---
@@ -467,6 +522,12 @@ export class Reactor {
   private onDeckWorking(deck: DeckInfo): void {
     // Clear holding-notified flag — deck is active again
     this.holdingNotified.delete(deck.id)
+    // BUG-020: deck is back at work (resumed, or DJ sent a message) — cancel
+    // any pending auto-exit so we don't kill an actively working deck.
+    if (this.graceExitTimers.has(deck.id)) {
+      this.clearGraceExitTimer(deck.id)
+      logger.info(`[booth-reactor] deck "${deck.name}" grace exit cancelled (working again)`)
+    }
     // BUG-019: mark deck as having done real work. Idempotent — only persists
     // on first transition. Gates onDeckIdle / fireBeat from misclassifying
     // startup idle as task-completion idle. Also re-arms after daemon reload:
@@ -533,7 +594,7 @@ export class Reactor {
     }
 
     if (deck.mode === 'auto') {
-      // Auto merge after check SUCCESS
+      // Auto merge after check SUCCESS — grace exit scheduled inside on success/nothing-to-merge
       this.attemptMerge(deck, status, round)
     } else if (deck.mode === 'hold') {
       this.state.updateDeck(deck.id, { mergeStatus: 'pending' })
@@ -542,11 +603,14 @@ export class Reactor {
       this.holdingNotified.add(deck.id)
       this.systemNotify(`Booth: ${deckName} → ${status} (holding)`)
       logger.info(`[booth-reactor] deck "${deckName}" check result: ${status} (holding, round ${round})`)
+      // No grace exit for hold — deck deliberately persists until DJ runs `booth merge`.
     } else {
+      // Live mode — user-managed; no merge step, but terminal report means deck is done.
       const msg = `Deck "${deckName}" check complete: ${status} (round ${round}/${MAX_CHECK_ROUNDS}). Use "booth reports ${deckName}" to read.`
       this.notifyDj(msg)
       this.systemNotify(`Booth: ${deckName} → ${status}`)
       logger.info(`[booth-reactor] deck "${deckName}" check result: ${status} (round ${round})`)
+      this.scheduleGraceExit(deck, `live terminal report ${status}`)
     }
   }
 
@@ -566,6 +630,10 @@ export class Reactor {
         this.systemNotify(`Booth: ${deck.name} merged`)
       }
       logger.info(`[booth-reactor] deck "${deck.name}" merge: ${result.nothingToMerge ? 'nothing to merge' : 'success'}`)
+      // BUG-020: terminal report + merge resolved → schedule auto-exit so the
+      // deck doesn't sit idle forever waiting for DJ to manually kill it.
+      // Worktree + DB row persist (BUG-005), so `booth resume` still works.
+      this.scheduleGraceExit(deck, result.nothingToMerge ? 'auto nothing-to-merge' : 'auto merged')
     } else {
       this.state.updateDeck(deck.id, { mergeStatus: 'conflict' })
       sendMessage(this.socket, this.state, deck.id,

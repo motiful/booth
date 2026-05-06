@@ -84,6 +84,7 @@ export class Daemon {
     }
 
     this.state.start()
+    this.reactor.setExitDeckCallback((deckId) => this.autoExitDeck(deckId))
     this.reactor.start()
 
     this.signal.on('signal', (ev: SignalEvent) => {
@@ -151,6 +152,24 @@ export class Daemon {
     this.signal.unwatch(deckId)
     this.reactor.clearDeckTimers(deckId)
     this.guardianCleanup(deckId)
+  }
+
+  /**
+   * BUG-020: auto-exit a deck after the reactor's grace period.
+   * Kills the tmux pane + window so CC actually shuts down, then runs the
+   * standard removeDeck cleanup. Worktree + DB row persist (BUG-005), so
+   * `booth resume <name>` still revives the deck.
+   */
+  private autoExitDeck(deckId: string): void {
+    const deck = this.state.getDeck(deckId)
+    if (!deck) return
+    if (deck.paneId) {
+      tmuxSafe(this.socket, 'kill-pane', '-t', deck.paneId)
+    }
+    tmuxSafe(this.socket, 'kill-window', '-t', `${SESSION}:=${deck.name}`)
+    this.removeDeck(deckId)
+    this.reactor.notifyDj(`Deck "${deck.name}" auto-exited after completion. Resume with: booth resume ${deck.name}`)
+    logger.info(`[booth-daemon] deck "${deck.name}" auto-exited (grace period elapsed)`)
   }
 
   getState(): BoothState {
