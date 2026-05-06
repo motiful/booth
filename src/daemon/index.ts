@@ -567,6 +567,11 @@ export class Daemon {
         return { ok: true, reportId }
       }
       case 'merge-deck': {
+        // BUG-020 deliberate scope: only auto-mode decks auto-exit after merge.
+        // The `merge-deck` IPC is the canonical path for hold-mode merges, and
+        // hold mode's defining property is "persistent workspace" — DJ may run
+        // `booth merge` and keep iterating in the same deck. So we never schedule
+        // grace exit here. DJ kills hold decks explicitly when truly done.
         const deckName = typeof msg.name === 'string' && msg.name ? msg.name : null
         if (!deckName) return { error: 'name string required' }
 
@@ -641,6 +646,12 @@ export class Daemon {
         const deck = this.state.getAllDecks().find(d => d.name === name)
         if (deck) {
           this.paneLost.delete(deck.id)
+          // BUG-020: resumeDeck UPDATEs status='working' without emitting
+          // deck:working, so onDeckWorking can't drop a pending grace timer.
+          // fireGraceExit's status guard would still abort the kill, but
+          // dropping the timer here keeps "active deck ⇒ no grace timer" true
+          // across all paths (kill-deck, deck-exited, guardian, resume).
+          this.reactor.cancelGraceExit(deck.id)
           if (deck.jsonlPath) {
             this.watchOrWait(deck.id, deck.jsonlPath)
           } else if (jsonlPath) {
