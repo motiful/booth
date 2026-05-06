@@ -89,7 +89,7 @@ export class Reactor {
     // Merge conflict: deck was resumed to resolve conflicts. Send guidance message.
     if (deck.mergeStatus === 'conflict') {
       sendMessage(this.socket, this.state, deck.id,
-        `/booth-merge-conflict Your branch has conflicts with main. Run \`git rebase main\`, resolve all conflicts, commit, then idle. A check will re-run automatically.`
+        `⚠️ Auto-merge failed for your branch. Action required:\n1. Run \`git rebase main\` in your worktree\n2. Resolve any conflicts\n3. \`git rebase --continue\` and commit\n4. Become idle (任务完成 → booth report)\n\nbooth will re-run check automatically after you idle.`
       ).catch(err => logger.error(`[booth-reactor] conflict message failed for "${deck.name}": ${err}`))
       return
     }
@@ -504,7 +504,7 @@ export class Reactor {
     } else {
       this.state.updateDeck(deck.id, { mergeStatus: 'conflict' })
       sendMessage(this.socket, this.state, deck.id,
-        `/booth-merge-conflict Auto-merge failed after check. Run \`git rebase main\`, resolve conflicts, commit, then idle. Check will re-run.`
+        `⚠️ Auto-merge failed for your branch. Action required:\n1. Run \`git rebase main\` in your worktree\n2. Resolve any conflicts\n3. \`git rebase --continue\` and commit\n4. Become idle (任务完成 → booth report)\n\nbooth will re-run check automatically after you idle.`
       ).catch(err => logger.error(`[booth-reactor] conflict message failed for "${deck.name}": ${err}`))
       const msg = `Deck "${deck.name}" check complete: ${checkStatus}, but merge conflict. Deck notified to resolve.`
       this.notifyDj(msg)
