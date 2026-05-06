@@ -54,12 +54,9 @@ export class Reactor {
       // Skip beat reset for decks with terminal reports — their idle↔working
       // cycling is tmux activity noise, not meaningful state changes.
       const deck = this.state.getDeck(change.deckId)
-      if (deck) {
-        const dbReport = this.state.getReport(deck.name)
-        if (dbReport && isTerminalStatus(dbReport.status) && dbReport.createdAt >= deck.createdAt) {
-          logger.debug(`[booth-reactor] skipping beat reset for "${deck.name}" — terminal report exists`)
-          return
-        }
+      if (deck && this.hasTerminalReport(deck)) {
+        logger.debug(`[booth-reactor] skipping beat reset for "${deck.name}" — terminal report exists`)
+        return
       }
       this.resetBeat()
     })
@@ -106,16 +103,45 @@ export class Reactor {
     setTimeout(() => this.runCheck(deck), CHECK_DELAY)
   }
 
+  /**
+   * True when the most recent report for this deck is terminal AND attributable
+   * to the current deck instance (sessionId match preferred, createdAt fallback).
+   * Used by fireBeat (BUG-014), runCheck (BUG-017), and deck:state-changed.
+   */
+  private hasTerminalReport(deck: DeckInfo): boolean {
+    const r = this.state.getReport(deck.name)
+    if (!r || !isTerminalStatus(r.status)) return false
+    const sessionMatch = Boolean(r.sessionId && deck.sessionId && r.sessionId === deck.sessionId)
+    const timeMatch = r.createdAt >= deck.createdAt
+    return sessionMatch || timeMatch
+  }
+
   private runCheck(deck: DeckInfo): void {
-    // Check if terminal report already exists in DB
+    // BUG-017 instrumentation: log every entry into runCheck with full context
     const dbReport = this.state.getReport(deck.name)
-    if (dbReport && isTerminalStatus(dbReport.status) && dbReport.createdAt >= deck.createdAt) {
-      logger.debug(`[booth-reactor] deck "${deck.name}" terminal report already in DB — skipping check`)
-      this.state.updateDeck(deck.id, { checkSentAt: undefined })
-      this.clearCheckPollTimer(deck.id)
-      this.checkRounds.delete(deck.id)
-      this.checkSnapshot.delete(deck.id)
-      return
+    logger.info(
+      `[booth-reactor] runCheck enter deck="${deck.name}" deck.createdAt=${deck.createdAt} deck.sessionId=${deck.sessionId ?? 'none'} ` +
+      `dbReport=${dbReport ? `status=${dbReport.status} createdAt=${dbReport.createdAt} sessionId=${dbReport.sessionId ?? 'none'}` : 'none'}`
+    )
+
+    if (dbReport && isTerminalStatus(dbReport.status)) {
+      const sessionMatch = Boolean(dbReport.sessionId && deck.sessionId && dbReport.sessionId === deck.sessionId)
+      const timeMatch = dbReport.createdAt >= deck.createdAt
+      if (sessionMatch || timeMatch) {
+        logger.info(
+          `[booth-reactor] deck "${deck.name}" terminal report already in DB — skipping check ` +
+          `(status=${dbReport.status}, sessionMatch=${sessionMatch}, timeMatch=${timeMatch})`
+        )
+        this.state.updateDeck(deck.id, { checkSentAt: undefined })
+        this.clearCheckPollTimer(deck.id)
+        this.checkRounds.delete(deck.id)
+        this.checkSnapshot.delete(deck.id)
+        return
+      }
+      logger.warn(
+        `[booth-reactor] deck "${deck.name}" terminal report exists but does not match deck identity ` +
+        `(sessionMatch=${sessionMatch}, timeMatch=${timeMatch}, dbReport.createdAt=${dbReport.createdAt}, deck.createdAt=${deck.createdAt}) — proceeding to check`
+      )
     }
 
     if (deck.checkSentAt) {
@@ -130,10 +156,22 @@ export class Reactor {
       return
     }
 
+    // BUG-018 fix: increment round on every actual check send.
+    // Previous logic kept round at 1 because it only re-incremented inside
+    // onReportSubmitted's hasChanges branch — re-entries from spontaneous
+    // deck reports (BUG-010) or stale check polls reset the counter.
+    const round = (this.checkRounds.get(deck.id) ?? 0) + 1
+    this.checkRounds.set(deck.id, round)
+    if (round > MAX_CHECK_ROUNDS) {
+      logger.warn(`[booth-reactor] deck "${deck.name}" exceeded MAX_CHECK_ROUNDS (${round}/${MAX_CHECK_ROUNDS}) — stopping check loop`)
+      this.state.updateDeck(deck.id, { checkSentAt: undefined })
+      this.clearCheckPollTimer(deck.id)
+      this.notifyDj(`Deck "${deck.name}" check loop exhausted (${MAX_CHECK_ROUNDS} rounds) — stopping; inspect manually.`)
+      return
+    }
+
     // No report yet → trigger deck self-check
     const overridePath = boothPath(this.projectRoot, 'check.md')
-    const round = this.checkRounds.get(deck.id) ?? 1
-    this.checkRounds.set(deck.id, round)
 
     let msg = existsSync(overridePath)
       ? `/booth-check round=${round}/${MAX_CHECK_ROUNDS} Read ${overridePath} and follow the self-verification procedure.`
@@ -245,7 +283,14 @@ export class Reactor {
     // Live decks belong to the user — DJ doesn't manage them, skip entirely
     const decks = allDecks.filter(d => d.mode !== 'live')
     const working = decks.filter(d => d.status === 'working').map(d => d.name)
-    const idle = decks.filter(d => d.status === 'idle' && !this.holdingNotified.has(d.id)).map(d => d.name)
+    // BUG-014 fix: exclude decks with terminal reports — they're done, DJ
+    // already got the alert via notifyDj in onReportSubmitted, no need to
+    // resurrect them in beat's idle list.
+    const idle = decks.filter(d =>
+      d.status === 'idle' &&
+      !this.holdingNotified.has(d.id) &&
+      !this.hasTerminalReport(d)
+    ).map(d => d.name)
 
     // Mark idle hold decks as notified — they appear in THIS beat but not future ones.
     // Cleared on deck working transition (onDeckWorking), so re-idle triggers a fresh beat.
@@ -436,13 +481,13 @@ export class Reactor {
     const savedSnapshot = this.checkSnapshot.get(deck.id)
     const hasChanges = savedSnapshot ? this.hasGitChanges(deck.dir, savedSnapshot) : false
 
-    // Check loop: if there are changes and we haven't hit max rounds, re-trigger
+    // Check loop: if there are changes and we haven't hit max rounds, re-trigger.
+    // BUG-018: round increment now lives in runCheck — don't bump it here, just clear
+    // checkSentAt so the next runCheck advances the counter on actual send.
     if (round < MAX_CHECK_ROUNDS && hasChanges) {
-      const nextRound = round + 1
-      this.checkRounds.set(deck.id, nextRound)
       this.state.updateDeck(deck.id, { checkSentAt: undefined })
       this.clearCheckPollTimer(deck.id)
-      logger.info(`[booth-reactor] deck "${deckName}" check round ${round}/${MAX_CHECK_ROUNDS} complete with changes — triggering round ${nextRound}`)
+      logger.info(`[booth-reactor] deck "${deckName}" check round ${round}/${MAX_CHECK_ROUNDS} complete with changes — triggering next round`)
       const refreshed = this.state.getDeck(deck.id)
       if (refreshed) this.triggerCheck(refreshed)
       return
