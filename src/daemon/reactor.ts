@@ -11,7 +11,6 @@ import type { DeckInfo, DeckStateChange } from '../types.js'
 
 const CHECK_DELAY = 500
 const CHECK_POLL_INTERVAL = 30_000
-const CHECK_RESEND_GAP_MS = 60_000
 const BEAT_INITIAL_COOLDOWN = 5 * 60_000
 const BEAT_MAX_COOLDOWN = 60 * 60_000
 const PLAN_APPROVE_DELAY = 3_000
@@ -104,10 +103,10 @@ export class Reactor {
   }
 
   triggerCheck(deck: DeckInfo): void {
-    setTimeout(() => this.runCheck(deck, true), CHECK_DELAY)
+    setTimeout(() => this.runCheck(deck), CHECK_DELAY)
   }
 
-  private runCheck(deck: DeckInfo, fromIdle = false): void {
+  private runCheck(deck: DeckInfo): void {
     // Check if terminal report already exists in DB
     const dbReport = this.state.getReport(deck.name)
     if (dbReport && isTerminalStatus(dbReport.status) && dbReport.createdAt >= deck.createdAt) {
@@ -120,23 +119,15 @@ export class Reactor {
     }
 
     if (deck.checkSentAt) {
-      const elapsed = Date.now() - deck.checkSentAt
-      // Stop hook fires at every CC turn end, not only at task completion.
-      // Long tasks emit many idle events — don't resend within RESEND_GAP.
-      if (elapsed < CHECK_RESEND_GAP_MS) {
-        logger.debug(`[booth-reactor] deck "${deck.name}" check already sent ${elapsed}ms ago, waiting for report`)
-        return
-      }
-      if (fromIdle) {
-        // >60s without report — check likely lost (compaction/limit/crash). Resend.
-        logger.info(`[booth-reactor] deck "${deck.name}" check sent ${elapsed}ms ago without report — resending (likely lost)`)
-        this.state.updateDeck(deck.id, { checkSentAt: undefined })
-        this.clearCheckPollTimer(deck.id)
-        // Fall through to send check below
-      } else {
-        logger.debug(`[booth-reactor] deck "${deck.name}" check already sent, waiting for report`)
-        return
-      }
+      // Check already in flight — wait for deck to submit report.
+      // Never resend on idle: Stop hook fires at every CC turn end, so
+      // long-running tasks (>60s) would otherwise be re-checked on each turn.
+      // Genuine loss is covered by:
+      //   - CHECK_STALE_THRESHOLD (10min): beat warns DJ
+      //   - /booth-compact-recovery hook: compaction-specific recovery
+      //   - CHECK_POLL_INTERVAL (30s): re-enters this branch (no-op) until report lands
+      logger.debug(`[booth-reactor] deck "${deck.name}" check already sent, waiting for report`)
+      return
     }
 
     // No report yet → trigger deck self-check
