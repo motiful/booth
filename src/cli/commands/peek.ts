@@ -39,9 +39,25 @@ export async function peekCommand(args: string[]): Promise<void> {
     process.exit(1)
   }
 
-  const result = tmuxSafe(socket, 'capture-pane', '-t', deck.paneId, '-p', '-S', `-${lines}`)
+  // Target the deck's tmux window by name (each deck has one window with one
+  // pane, named after the deck). This is resilient to stale paneId in state —
+  // window names follow the deck name and don't drift.
+  const target = `dj:${resolved.name}`
+  let result = tmuxSafe(socket, 'capture-pane', '-t', target, '-p', '-S', `-${lines}`)
+
+  // Fallback to stored paneId if window-name target fails (legacy decks or
+  // edge case where window was renamed manually).
+  if (!result.ok && deck.paneId) {
+    result = tmuxSafe(socket, 'capture-pane', '-t', deck.paneId, '-p', '-S', `-${lines}`)
+  }
+
   if (!result.ok) {
-    console.error(`[booth] pane ${deck.paneId} for deck "${resolved.name}" is gone`)
+    const tmuxCheck = tmuxSafe(socket, 'list-windows', '-t', 'dj', '-F', '#{window_name}')
+    const windows = tmuxCheck.ok ? tmuxCheck.output.split('\n').filter(Boolean) : []
+    console.error(`[booth] cannot capture pane for deck "${resolved.name}"`)
+    console.error(`        target tried: ${target} (window) → ${deck.paneId ?? 'no paneId'} (paneId fallback)`)
+    if (windows.length) console.error(`        live tmux windows in 'dj' session: ${windows.join(', ')}`)
+    else console.error(`        tmux session 'dj' has no windows or list-windows failed`)
     process.exit(1)
   }
 
