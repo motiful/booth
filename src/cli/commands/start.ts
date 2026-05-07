@@ -6,8 +6,12 @@ import { findProjectRoot, deriveSocket, initBoothDir, logsDir, generateSessionId
 import { hasSession, newSession, tmux, tmuxSafe, tmuxAttach } from '../../tmux.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
 import { ensureSessionStartHook, ensureSessionEndHook, ensurePreCompactHook, ensureStopHook } from '../../hooks.js'
+import { ensureDistFresh } from '../../dist-freshness.js'
 
 function forkDaemon(projectRoot: string): void {
+  const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
+  ensureDistFresh(packageRoot)
+
   const daemonEntry = join(dirname(fileURLToPath(import.meta.url)), '../../daemon/run.js')
   const lDir = logsDir(projectRoot)
   if (!existsSync(lDir)) mkdirSync(lDir, { recursive: true })

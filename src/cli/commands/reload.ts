@@ -1,9 +1,10 @@
 import { fork } from 'node:child_process'
 import { existsSync, mkdirSync, openSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { findProjectRoot, logsDir, ipcSocketPath } from '../../constants.js'
 import { ipcRequest, isDaemonRunning } from '../../ipc.js'
+import { ensureDistFresh } from '../../dist-freshness.js'
 
 const DAEMON_EXIT_TIMEOUT = 5_000
 const DAEMON_START_TIMEOUT = 2_000
@@ -15,6 +16,12 @@ export async function reloadCommand(_args: string[]): Promise<void> {
     console.error('[booth] daemon not running. Use `booth start` first.')
     process.exit(1)
   }
+
+  // Rebuild dist BEFORE asking daemon to exit — if rebuild fails, the running
+  // daemon stays up. If we reloaded first, a stale-then-failed rebuild would
+  // leave the user with no daemon.
+  const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
+  ensureDistFresh(packageRoot)
 
   // Send reload command — daemon will persist state and exit
   console.log('[booth] sending reload...')
