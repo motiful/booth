@@ -74,9 +74,17 @@ export function parseEventState(line: string): DeckStatus | null {
 
   const t = ev.type as string | undefined
 
-  // last-prompt = CC is showing the ❯ prompt, definitively idle
-  if (t === 'last-prompt') return 'idle'
-
+  // 'last-prompt' is a CC internal prompt-snapshot event written mid-turn
+  // (between tool_use → tool_result → permission-mode), NOT a turn-end
+  // marker. Earlier code treated it as idle, which produced spurious
+  // mid-task idle signals (verified: a verify-bug024-roundloop2 deck
+  // with 0 stop_hook_summary still emitted 3 last-prompt events while
+  // actively working). The IDLE_CHECK_DEBOUNCE in reactor.ts was a
+  // patch for this noise. Idle is now sourced purely from the Stop
+  // hook (system + stop_hook_summary), which fires 1:1 with main-turn
+  // end — no false-positive mid-task signals.
+  // 'last-prompt' is not used as a working signal either; it carries no
+  // turn-state information.
   if (t === 'system') {
     const sub = (ev.subtype ?? '') as string
     if (sub === 'turn_duration') return 'idle'
