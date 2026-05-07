@@ -91,6 +91,21 @@ export class Daemon {
       if (ev.deckId === 'dj') {
         this.state.setDjStatus(ev.status)
       } else {
+        // BUG-019/028: bind workedOnce at the raw-signal layer, not the
+        // state-transition layer. Decks are spawned with status='working'
+        // (spin.ts), so the first parser 'working' signal is same-status and
+        // updateDeckStatus early-returns without emitting deck:working —
+        // onDeckWorking never fires, workedOnce stays false, and the first
+        // idle is misclassified as startup-idle. Setting here treats
+        // workedOnce as "ever observed any working signal" (mechanical),
+        // independent of the state machine's transition semantics.
+        if (ev.status === 'working') {
+          const deck = this.state.getDeck(ev.deckId)
+          if (deck && !deck.workedOnce) {
+            this.state.updateDeck(ev.deckId, { workedOnce: true })
+            logger.debug(`[booth-daemon] deck "${deck.name}" workedOnce set (signal-layer)`)
+          }
+        }
         this.state.updateDeckStatus(ev.deckId, ev.status)
       }
     })

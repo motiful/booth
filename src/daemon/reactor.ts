@@ -631,15 +631,8 @@ export class Reactor {
       this.clearGraceExitTimer(deck.id)
       logger.info(`[booth-reactor] deck "${deck.name}" grace exit cancelled (working again)`)
     }
-    // BUG-019: mark deck as having done real work. Idempotent — only persists
-    // on first transition. Gates onDeckIdle / fireBeat from misclassifying
-    // startup idle as task-completion idle. Also re-arms after daemon reload:
-    // if a working deck's flag wasn't yet persisted before restart, the next
-    // JSONL working signal flips it back true here.
-    if (!deck.workedOnce) {
-      this.state.updateDeck(deck.id, { workedOnce: true })
-      logger.debug(`[booth-reactor] deck "${deck.name}" workedOnce set`)
-    }
+    // workedOnce is set at the signal-layer (daemon index.ts signal handler),
+    // not here. See BUG-019/028 note there for why this binding moved.
     // Reset merge status — deck is actively working again
     if (deck.mergeStatus) {
       this.state.updateDeck(deck.id, { mergeStatus: undefined })
