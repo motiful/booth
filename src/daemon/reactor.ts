@@ -1,10 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
 import { BoothState } from './state.js'
 import { sendMessage } from './send-message.js'
 import { isTerminalStatus } from './report.js'
 import { tryMerge } from '../worktree.js'
-import { boothPath } from '../constants.js'
 import { tmuxSafe } from '../tmux.js'
 import { logger } from './logger.js'
 import type { DeckInfo, DeckStateChange } from '../types.js'
@@ -282,12 +280,14 @@ export class Reactor {
       return
     }
 
-    // No report yet → trigger deck self-check
-    const overridePath = boothPath(this.projectRoot, 'check.md')
-
-    let msg = existsSync(overridePath)
-      ? `/booth-check round=${round}/${MAX_CHECK_ROUNDS} Read ${overridePath} and follow the self-verification procedure.`
-      : `/booth-check round=${round}/${MAX_CHECK_ROUNDS} Follow the booth-deck self-verification protocol.`
+    // No report yet → trigger deck self-check. CC auto-loads the booth-check
+    // skill on the slash command, which references the booth-deck skill for
+    // the full self-verification protocol. Earlier code preferred a runtime
+    // file override at .booth/check.md but the template-and-copy mechanism
+    // it implied (skill/templates/check.md → .booth/check.md via booth start)
+    // never actually existed in code; the file was a 2026-04-20 stale orphan
+    // duplicating ~300 lines of skill content. Single source of truth now.
+    let msg = `/booth-check round=${round}/${MAX_CHECK_ROUNDS} Follow the booth-deck self-verification protocol.`
 
     // noLoop: tell deck to skip sub-agent review loop
     if (deck.noLoop) {
