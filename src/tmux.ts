@@ -174,11 +174,11 @@ async function drainPaneQueue(socket: string, target: string): Promise<void> {
 
   const sd = stateDir(target)
   const paneSlug = target.replace('%', 'p')
-  const savedInputPath = join(tmpdir(), `booth-saved-${Date.now()}-${paneSlug}.md`)
   const cleanupPaths: string[] = []
   let batchIndex = 0
 
-  // Copy-mode state (saved once, restored once)
+  // Copy-mode state (saved once, restored once — orthogonal to per-message
+  // input save/restore; copy-mode is scroll position, not input buffer)
   let wasCopyMode = false
   let savedScrollPos = -1
   let savedHistorySize = -1
@@ -215,36 +215,34 @@ async function drainPaneQueue(socket: string, target: string): Promise<void> {
       await delay(150)
     }
 
-    // --- Batch send loop ---
-    // First message saves real user input; subsequent messages use throwaway save paths.
+    // --- Per-message save/restore loop (Ticket 5 / audit/07) ---
+    // dc92c54 batched all sends and restored once at end. That snapshotted
+    // user input at the FIRST message and overwrote any typing the user did
+    // between messages. Reverted to per-message save/restore (the c61b748
+    // architecture): each message saves the current input, injects + submits,
+    // waits for prompt, then restores. The user's edits between messages are
+    // re-captured on each save instead of being clobbered by a stale snapshot.
+    // Trade-off: brief input flicker per message, instead of "no flicker but
+    // intermediate edits silently lost".
     while (queue.entries.length > 0) {
       const entry = queue.entries.shift()!
       const preview = entry.text.slice(0, 50) + (entry.text.length > 50 ? '...' : '')
       logger.info(`[booth-tmux] drain[${batchIndex}] target=${target} text="${preview}"`)
 
       const injectPath = join(tmpdir(), `booth-inject-${Date.now()}-${batchIndex}.md`)
-      cleanupPaths.push(injectPath)
+      const savePath = join(tmpdir(), `booth-saved-${Date.now()}-${batchIndex}-${paneSlug}.md`)
+      cleanupPaths.push(injectPath, savePath)
 
       try {
         writeFileSync(injectPath, entry.text)
         mkdirSync(sd, { recursive: true })
         writeFileSync(join(sd, 'action'), 'inject')
         writeFileSync(join(sd, 'inject-file'), injectPath)
+        writeFileSync(join(sd, 'save-path'), savePath)
 
-        if (batchIndex === 0) {
-          // First message: save real user input to the persistent path
-          writeFileSync(join(sd, 'save-path'), savedInputPath)
-        } else {
-          // Subsequent: editor-proxy requires save-path, but we discard the content
-          const throwaway = join(tmpdir(), `booth-discard-${Date.now()}-${batchIndex}.md`)
-          writeFileSync(join(sd, 'save-path'), throwaway)
-          cleanupPaths.push(throwaway)
-        }
-
-        // Ctrl+G → editor-proxy saves input + writes injected message
+        // Ctrl+G → editor-proxy saves current input → savePath + writes injected message
         tmux(socket, 'send-keys', '-t', target, 'C-g')
 
-        // Wait for editor-proxy to consume the action file
         if (!await waitForFileGone(join(sd, 'action'), 5_000, 50)) {
           throw new Error('Editor proxy did not execute within 5s — Ctrl+G may not have reached CC')
         }
@@ -260,6 +258,25 @@ async function drainPaneQueue(socket: string, target: string): Promise<void> {
           logger.warn(`[booth-tmux] timeout waiting for prompt (drain[${batchIndex}])`)
         }
         await delay(300)
+
+        // Per-message restore: write the user's just-saved input back
+        if (existsSync(savePath)) {
+          const saved = readFileSync(savePath, 'utf-8')
+          if (saved.length > 0) {
+            try {
+              writeFileSync(join(sd, 'action'), 'restore')
+              writeFileSync(join(sd, 'restore-path'), savePath)
+              tmux(socket, 'send-keys', '-t', target, 'C-g')
+              if (!await waitForFileGone(join(sd, 'action'), 5_000, 50)) {
+                logger.warn(`[booth-tmux] drain[${batchIndex}] restore: editor proxy did not respond`)
+              }
+              await delay(200)
+              logger.debug(`[booth-tmux] drain[${batchIndex}] user input restored`)
+            } catch (err) {
+              logger.error(`[booth-tmux] drain[${batchIndex}] restore failed: ${err}`)
+            }
+          }
+        }
 
         entry.resolve()
         logger.info(`[booth-tmux] drain[${batchIndex}] sent`)
@@ -278,24 +295,6 @@ async function drainPaneQueue(socket: string, target: string): Promise<void> {
       }
 
       batchIndex++
-    }
-
-    // --- Post-batch: restore user input ONCE ---
-    if (existsSync(savedInputPath)) {
-      const saved = readFileSync(savedInputPath, 'utf-8')
-      if (saved.length > 0) {
-        try {
-          mkdirSync(sd, { recursive: true })
-          writeFileSync(join(sd, 'action'), 'restore')
-          writeFileSync(join(sd, 'restore-path'), savedInputPath)
-          tmux(socket, 'send-keys', '-t', target, 'C-g')
-          await waitForFileGone(join(sd, 'action'), 5_000, 50)
-          await delay(200)
-          logger.debug('[booth-tmux] user input restored (batch)')
-        } catch (err) {
-          logger.error(`[booth-tmux] batch restore failed: ${err}`)
-        }
-      }
     }
 
     // Restore copy-mode + scroll position
@@ -326,7 +325,6 @@ async function drainPaneQueue(socket: string, target: string): Promise<void> {
     for (const p of cleanupPaths) {
       try { unlinkSync(p) } catch {}
     }
-    try { unlinkSync(savedInputPath) } catch {}
 
     logger.info(`[booth-tmux] drain done target=${target} processed=${batchIndex}`)
     queue.draining = false
