@@ -55,6 +55,15 @@ export class Reactor {
 
   // Check loop state — daemon-driven multi-round check
   private checkRounds = new Map<string, number>()
+  // Git snapshot per check round — used to detect whether the deck committed
+  // a fix during the round (verify-fix-verify trigger).
+  private checkSnapshot = new Map<string, string>()
+  // BUG-024: timestamp of the most recent verify-fix-verify retrigger from
+  // onReportSubmitted. Lets runCheck distinguish "a prior round's report"
+  // (must NOT short-circuit the new round) from "a fresh response to the
+  // current round" (skip is correct). In-memory only — daemon reload after a
+  // mid-loop retrigger collapses to the original round-1 behavior.
+  private lastCheckTriggeredAt = new Map<string, number>()
 
   // BUG-020: grace-period timers for auto-exit after terminal report + merge
   private graceExitTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -207,7 +216,17 @@ export class Reactor {
     if (dbReport && isTerminalStatus(dbReport.status)) {
       const sessionMatch = Boolean(dbReport.sessionId && deck.sessionId && dbReport.sessionId === deck.sessionId)
       const timeMatch = !dbReport.sessionId && dbReport.createdAt >= deck.createdAt
-      if (sessionMatch || timeMatch) {
+      const identityMatch = sessionMatch || timeMatch
+      // BUG-024: when onReportSubmitted explicitly retriggered a new round
+      // (verify-fix-verify), the prior round's report is older than the new
+      // trigger and must NOT short-circuit the new round. Treat the report as
+      // "consumed" only if it was created after the latest round-trigger.
+      // Without a recorded retrigger, fall back to identity-only behavior.
+      const lastTrigger = this.lastCheckTriggeredAt.get(deck.id)
+      const reportConsumed = lastTrigger === undefined
+        ? true
+        : dbReport.createdAt > lastTrigger
+      if (identityMatch && reportConsumed) {
         logger.info(
           `[booth-reactor] deck "${deck.name}" terminal report already in DB — skipping check ` +
           `(status=${dbReport.status}, sessionMatch=${sessionMatch}, timeMatch=${timeMatch})`
@@ -215,12 +234,21 @@ export class Reactor {
         this.state.updateDeck(deck.id, { checkSentAt: undefined })
         this.clearCheckPollTimer(deck.id)
         this.checkRounds.delete(deck.id)
+        this.checkSnapshot.delete(deck.id)
+        this.lastCheckTriggeredAt.delete(deck.id)
         return
       }
-      logger.warn(
-        `[booth-reactor] deck "${deck.name}" terminal report exists but does not match deck identity ` +
-        `(sessionMatch=${sessionMatch}, timeMatch=${timeMatch}, dbReport.createdAt=${dbReport.createdAt}, deck.createdAt=${deck.createdAt}) — proceeding to check`
-      )
+      if (identityMatch && !reportConsumed) {
+        logger.info(
+          `[booth-reactor] deck "${deck.name}" stale terminal report from prior round ` +
+          `(dbReport.createdAt=${dbReport.createdAt}, lastCheckTriggeredAt=${lastTrigger}) — proceeding to next round check`
+        )
+      } else {
+        logger.warn(
+          `[booth-reactor] deck "${deck.name}" terminal report exists but does not match deck identity ` +
+          `(sessionMatch=${sessionMatch}, timeMatch=${timeMatch}, dbReport.createdAt=${dbReport.createdAt}, deck.createdAt=${deck.createdAt}) — proceeding to check`
+        )
+      }
     }
 
     if (deck.checkSentAt) {
@@ -248,6 +276,8 @@ export class Reactor {
       // Clear loop state so subsequent idle/poll re-entries don't re-fire the
       // cap warning + DJ notification on every tick (notification storm guard).
       this.checkRounds.delete(deck.id)
+      this.checkSnapshot.delete(deck.id)
+      this.lastCheckTriggeredAt.delete(deck.id)
       this.notifyDj(`Deck "${deck.name}" check loop exhausted (${MAX_CHECK_ROUNDS} rounds) — stopping; inspect manually.`)
       return
     }
@@ -268,6 +298,9 @@ export class Reactor {
     msg += `\n\nYou are booth deck "${deck.name}" (mode: ${deck.mode}).`
     msg += `\nIf you need to review your original goal, run: \`booth status ${deck.name}\``
 
+    // Capture git snapshot for diff detection on next idle (verify-fix-verify trigger)
+    this.checkSnapshot.set(deck.id, this.captureSnapshot(deck.dir))
+
     // Set checking status optimistically
     this.state.updateDeckStatus(deck.id, 'checking')
     this.state.updateDeck(deck.id, { checkSentAt: Date.now() })
@@ -280,6 +313,46 @@ export class Reactor {
         logger.info(`[booth-reactor] sent check to "${deck.name}"`)
       }
     }).catch(err => logger.error(`[booth-reactor] check send threw for "${deck.name}": ${err}`))
+  }
+
+  // --- Git diff detection for verify-fix-verify check loop ---
+
+  private captureSnapshot(dir: string): string {
+    try {
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: dir, encoding: 'utf8', timeout: 5_000,
+      }).trim()
+      const raw = execFileSync('git', ['status', '--porcelain', '-uno'], {
+        cwd: dir, encoding: 'utf8', timeout: 5_000,
+      })
+      const changes = raw
+        .split('\n')
+        .filter(line => {
+          const path = line.slice(3)
+          return path && !path.startsWith('.booth/') && !path.startsWith('.claude/')
+        })
+        .join('\n')
+      return `${head}\n${changes}`
+    } catch {
+      return ''
+    }
+  }
+
+  private hasGitChanges(dir: string, savedSnapshot: string): boolean {
+    if (!savedSnapshot) return false
+    try {
+      const current = this.captureSnapshot(dir)
+      if (!current) return false
+      const changed = current !== savedSnapshot
+      logger.debug(`[booth-reactor] diff detection: changed=${changed}`)
+      if (changed) {
+        logger.debug(`[booth-reactor] diff saved:\n${savedSnapshot}`)
+        logger.debug(`[booth-reactor] diff current:\n${current}`)
+      }
+      return changed
+    } catch {
+      return false
+    }
   }
 
   // --- Beat system ---
@@ -466,6 +539,8 @@ export class Reactor {
   clearDeckTimers(deckId: string): void {
     this.holdingNotified.delete(deckId)
     this.checkRounds.delete(deckId)
+    this.checkSnapshot.delete(deckId)
+    this.lastCheckTriggeredAt.delete(deckId)
     this.clearPlanModeTimer(deckId)
     this.clearCheckPollTimer(deckId)
     this.clearPendingCheckTimer(deckId)
@@ -602,19 +677,41 @@ export class Reactor {
     const daemonTriggered = Boolean(deck.checkSentAt)
 
     const round = this.checkRounds.get(deck.id) ?? 1
+    const savedSnapshot = this.checkSnapshot.get(deck.id)
+    const hasChanges = savedSnapshot ? this.hasGitChanges(deck.dir, savedSnapshot) : false
 
-    // BUG-024: terminal status is authoritative — deck has self-verified and
-    // declared its final state. Always proceed to merge + notifyDj regardless
-    // of whether files changed during the check round. The earlier "re-trigger
-    // next round on changes" branch silently bypassed merge for SUCCESS reports
-    // whose verification round committed a fix.
+    // BUG-024 (verify-fix-verify): if the deck committed a fix during this
+    // round, the fix itself hasn't been verified — never bypass merge straight
+    // to a SUCCESS that includes unverified changes. Re-trigger the next round
+    // so the deck self-verifies its own work. Round counter is bumped inside
+    // runCheck (BUG-018), so we only clear checkSentAt + the poll timer here.
+    if (round < MAX_CHECK_ROUNDS && hasChanges) {
+      this.state.updateDeck(deck.id, { checkSentAt: undefined })
+      this.clearCheckPollTimer(deck.id)
+      logger.info(`[booth-reactor] deck "${deckName}" check round ${round}/${MAX_CHECK_ROUNDS} complete with changes — triggering next round`)
+      // BUG-024: record the retrigger timestamp so the next runCheck does not
+      // mistake this round's report for a fresh response and short-circuit the
+      // new round (BUG-017 dup-check skip).
+      this.lastCheckTriggeredAt.set(deck.id, Date.now())
+      const refreshed = this.state.getDeck(deck.id)
+      if (refreshed) this.triggerCheck(refreshed)
+      return
+    }
+
+    // Final round (no changes, or hit MAX_CHECK_ROUNDS) — proceed to merge + notifyDj.
     this.state.updateDeck(deck.id, { checkSentAt: undefined })
     this.clearCheckPollTimer(deck.id)
     this.checkRounds.delete(deck.id)
+    this.checkSnapshot.delete(deck.id)
+    this.lastCheckTriggeredAt.delete(deck.id)
     // BUG-022: terminal report supersedes any pending idle-debounce — the
     // deck has self-declared its state, so a delayed runCheck would either
     // no-op on hasTerminalReport or, worse, race with grace-exit teardown.
     this.clearPendingCheckTimer(deck.id)
+
+    if (round >= MAX_CHECK_ROUNDS && hasChanges) {
+      logger.warn(`[booth-reactor] deck "${deckName}" hit MAX_CHECK_ROUNDS (${MAX_CHECK_ROUNDS}) with remaining changes — proceeding to merge anyway`)
+    }
 
     // Prefix mirrors the actual event: a daemon-driven check round vs a
     // spontaneous deck submission. Round/MAX_CHECK_ROUNDS only meaningful
