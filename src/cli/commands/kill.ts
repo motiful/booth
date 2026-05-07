@@ -40,7 +40,7 @@ export async function killCommand(args: string[]): Promise<void> {
     sessionId: resolved.sessionId,
     name: resolved.name,
     force,
-  }) as { ok?: boolean; error?: string; blocked?: boolean; reason?: string }
+  }) as { ok?: boolean; error?: string; blocked?: boolean; reason?: string; patchPath?: string; mergeWarning?: string }
 
   if (res.blocked) {
     console.error(`[booth] kill blocked: ${res.reason}`)
@@ -54,4 +54,10 @@ export async function killCommand(args: string[]): Promise<void> {
   }
 
   console.log(`[booth] deck "${resolved.name}" killed${force ? ' (forced)' : ''}`)
+  if (res.patchPath) {
+    console.log(`[booth] uncommitted work saved to: ${res.patchPath}`)
+  }
+  if (res.mergeWarning) {
+    console.log(`[booth] ${res.mergeWarning}`)
+  }
 }

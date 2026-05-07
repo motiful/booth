@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { sendMessage } from './send-message.js'
 import { parseReportBody, isTerminalStatus } from './report.js'
 import { initLogger, logger } from './logger.js'
-import { removeWorktree, branchName, tryMerge, hasUnmergedCommits } from '../worktree.js'
+import { removeWorktree, branchName, tryMerge, hasUnmergedCommits, hasUncommittedChanges, saveAbandonedPatch } from '../worktree.js'
 import type { DeckInfo, DeckMode, DeckStatus } from '../types.js'
 
 const VALID_MODES: DeckMode[] = ['auto', 'hold', 'live']
@@ -171,9 +171,12 @@ export class Daemon {
 
   /**
    * BUG-020: auto-exit a deck after the reactor's grace period.
-   * Kills the tmux pane + window so CC actually shuts down, then runs the
-   * standard removeDeck cleanup. Worktree + DB row persist (BUG-005), so
-   * `booth resume <name>` still revives the deck.
+   * Kills the tmux pane + window, removes the worktree dir, then runs
+   * removeDeck cleanup. DB row + git branch persist; resume rebuilds the
+   * dir on demand via ensureWorktree. Decision B: this path was missing
+   * removeWorktree (audit/04 listed kill/deck-exited/exit-all/shutdownClean
+   * but missed the auto-exit grace path), which is why merged decks left
+   * worktree dirs behind even after auto-exit.
    */
   private autoExitDeck(deckId: string): void {
     const deck = this.state.getDeck(deckId)
@@ -182,6 +185,13 @@ export class Daemon {
       tmuxSafe(this.socket, 'kill-pane', '-t', deck.paneId)
     }
     tmuxSafe(this.socket, 'kill-window', '-t', `${SESSION}:=${deck.name}`)
+    if (deck.worktreePath) {
+      try {
+        removeWorktree(this.projectRoot, deck.name)
+      } catch (err) {
+        logger.error(`[booth-daemon] worktree cleanup failed for "${deck.name}": ${err}`)
+      }
+    }
     this.removeDeck(deckId)
     this.reactor.notifyDj(`Deck "${deck.name}" auto-exited after completion. Resume with: booth resume ${deck.name}`)
     logger.info(`[booth-daemon] deck "${deck.name}" auto-exited (grace period elapsed)`)
@@ -455,7 +465,27 @@ export class Daemon {
               reason: `deck "${deck.name}" is idle in ${mode} mode — ${mode} decks are persistent workspaces, use -f to force kill`,
             }
           }
-          // idle + auto, exited — safe to kill
+          // Decision B: uncommitted work in worktree — block to prevent silent
+          // data loss when the dir is removed. -f saves the patch first.
+          if (deck.worktreePath && hasUncommittedChanges(this.projectRoot, deck.name)) {
+            return {
+              ok: false,
+              blocked: true,
+              reason: `deck "${deck.name}" has uncommitted changes in its worktree — commit them or use -f (force will save patch to .booth/abandoned-patches/)`,
+            }
+          }
+          // idle + auto, no uncommitted, exited — safe to kill
+        }
+
+        // Force + uncommitted: save patch before destroying the worktree
+        let patchPath: string | undefined
+        if (force && deck.worktreePath && hasUncommittedChanges(this.projectRoot, deck.name)) {
+          patchPath = saveAbandonedPatch(this.projectRoot, deck.name)
+          if (patchPath) {
+            logger.warn(`[booth-daemon] deck "${deck.name}" abandoned patch saved: ${patchPath}`)
+          } else {
+            logger.error(`[booth-daemon] deck "${deck.name}" patch save FAILED — proceeding with kill anyway (force)`)
+          }
         }
 
         if (deck.paneId) {
@@ -477,9 +507,19 @@ export class Daemon {
           }
         }
 
+        // Decision B: remove worktree dir (records persist via DB row + git
+        // branch). resume rebuilds dir on demand via ensureWorktree.
+        if (deck.worktreePath) {
+          try {
+            removeWorktree(this.projectRoot, deck.name)
+          } catch (err) {
+            logger.error(`[booth-daemon] worktree cleanup failed for "${deck.name}": ${err}`)
+          }
+        }
+
         this.removeDeck(sessionId)
         logger.info(`[booth-daemon] deck "${deck.name}" killed${force ? ' (forced)' : ''}`)
-        return { ok: true, mergeWarning }
+        return { ok: true, mergeWarning, patchPath }
       }
       case 'deck-exited': {
         // During shutdown, ignore exit hooks to preserve resumability
@@ -768,6 +808,53 @@ export class Daemon {
         const reviewNote = typeof msg.reviewNote === 'string' ? msg.reviewNote : undefined
         const updated = this.state.markReportRead(id, reviewedBy, reviewNote)
         return updated ? { ok: true } : { error: `report not found: ${id}` }
+      }
+      case 'prune': {
+        // Decision B: scan .claude/worktrees/ and remove dirs whose deck is
+        // not active. Active deck = present in cache (DB row with non-exited
+        // status). For inactive worktrees, defer the merged-vs-unmerged
+        // decision to removeWorktree which already keeps unmerged branches.
+        const dryRun = msg.dryRun === true
+        const wtRoot = join(this.projectRoot, '.claude', 'worktrees')
+        if (!existsSync(wtRoot)) return { ok: true, candidates: [], pruned: [], skipped: [] }
+
+        const activeNames = new Set(this.state.getAllDecks().map(d => d.name))
+
+        let dirs: string[] = []
+        try {
+          const { readdirSync } = await import('node:fs')
+          dirs = readdirSync(wtRoot, { withFileTypes: true })
+            .filter(d => d.isDirectory() || d.isSymbolicLink())
+            .map(d => d.name)
+        } catch (err) {
+          return { error: `cannot read worktrees dir: ${err}` }
+        }
+
+        const candidates: string[] = []
+        const pruned: string[] = []
+        const skipped: { name: string; reason: string }[] = []
+
+        for (const name of dirs) {
+          if (activeNames.has(name)) {
+            skipped.push({ name, reason: 'active deck (in DB)' })
+            continue
+          }
+          if (hasUnmergedCommits(this.projectRoot, name)) {
+            skipped.push({ name, reason: 'unmerged commits on branch' })
+            continue
+          }
+          candidates.push(name)
+          if (!dryRun) {
+            try {
+              removeWorktree(this.projectRoot, name)
+              pruned.push(name)
+            } catch (err) {
+              skipped.push({ name, reason: `remove failed: ${err}` })
+            }
+          }
+        }
+
+        return { ok: true, candidates, pruned, skipped }
       }
       case 'exit-all': {
         // Exit all decks + DJ in DB (status='exited'), kill deck panes, clear caches/watchers.

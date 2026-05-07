@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, readlinkSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { boothDir } from './constants.js'
 
@@ -225,6 +225,96 @@ export function tryMerge(projectRoot: string, deckName: string): MergeResult {
   }
 
   return { ok: true }
+}
+
+// ensureSymlinks creates these as symlinks at the worktree root; gitignore
+// patterns like `node_modules/` only match real dirs, so symlinks show up as
+// untracked. They are bookkeeping, never user work — filter them out of any
+// uncommitted-changes detection.
+const BOOKKEEPING_PATHS = new Set(['.booth', 'node_modules', '.claude/settings.json', '.claude'])
+
+function isBookkeepingPath(path: string): boolean {
+  return BOOKKEEPING_PATHS.has(path) || BOOKKEEPING_PATHS.has(path.replace(/\/$/, ''))
+}
+
+/**
+ * Check if a deck's worktree has uncommitted changes (modified, staged, or
+ * untracked). Used by kill to gate dir removal — uncommitted work would be
+ * lost when the worktree dir is deleted. Filters out booth's bookkeeping
+ * symlinks (.booth, node_modules, .claude/settings.json) which always show
+ * as untracked because gitignore dir-patterns don't match symlinks.
+ */
+export function hasUncommittedChanges(projectRoot: string, deckName: string): boolean {
+  const wtPath = deckWorktreePath(projectRoot, deckName)
+  if (!existsSync(join(wtPath, '.git'))) return false
+  const status = gitSyncSafe(['status', '--porcelain'], wtPath)
+  if (!status.ok) return false
+  const lines = status.output.split('\n').filter(l => {
+    const trimmed = l.trim()
+    if (!trimmed) return false
+    // Each porcelain line is "XY <path>" (with X,Y being status codes).
+    // For untracked it's "?? <path>". Extract the path portion.
+    const match = trimmed.match(/^([?!]{2}|[ MADRCU?!]{2})\s+(.+)$/)
+    if (!match) return true
+    const path = match[2].replace(/^"(.+)"$/, '$1') // unquote if quoted
+    return !isBookkeepingPath(path)
+  })
+  return lines.length > 0
+}
+
+/**
+ * Save the deck's uncommitted work to .booth/abandoned-patches/<deck>-<ts>.patch
+ * before the worktree is force-removed. Includes both staged/modified diff
+ * and untracked files (via -p with --include-untracked equivalent).
+ * Returns the patch file path on success, undefined on failure.
+ */
+export function saveAbandonedPatch(projectRoot: string, deckName: string): string | undefined {
+  const wtPath = deckWorktreePath(projectRoot, deckName)
+  if (!existsSync(join(wtPath, '.git'))) return undefined
+
+  // Combine `git diff HEAD` (tracked) + manual list of untracked. Filter out
+  // booth bookkeeping symlinks (see BOOKKEEPING_PATHS) — they always show as
+  // untracked and would pollute the patch.
+  const diffResult = gitSyncSafe(['diff', 'HEAD'], wtPath)
+  const untrackedResult = gitSyncSafe(['ls-files', '--others', '--exclude-standard'], wtPath)
+
+  const tracked = diffResult.ok ? diffResult.output : ''
+  const untrackedFiles = untrackedResult.ok
+    ? untrackedResult.output.split('\n').filter(f => f && !isBookkeepingPath(f))
+    : []
+  // If both empty, nothing to save (caller should have checked hasUncommittedChanges)
+  if (!tracked && untrackedFiles.length === 0) return undefined
+
+  const patchDir = join(boothDir(projectRoot), 'abandoned-patches')
+  if (!existsSync(patchDir)) mkdirSync(patchDir, { recursive: true })
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const patchPath = join(patchDir, `${deckName}-${ts}.patch`)
+
+  let content = `# Abandoned patch from deck "${deckName}"\n# Saved: ${new Date().toISOString()}\n# Worktree: ${wtPath}\n\n`
+  if (tracked) {
+    content += `# === Tracked changes (git diff HEAD) ===\n${tracked}\n\n`
+  }
+  if (untrackedFiles.length > 0) {
+    content += `# === Untracked files ===\n`
+    for (const file of untrackedFiles) {
+      const filePath = join(wtPath, file)
+      if (existsSync(filePath)) {
+        try {
+          const fileContent = execFileSync('cat', [filePath], { encoding: 'utf-8', timeout: 5_000 })
+          content += `\n# --- ${file} ---\n${fileContent}\n`
+        } catch {
+          content += `\n# --- ${file} (read failed) ---\n`
+        }
+      }
+    }
+  }
+
+  try {
+    writeFileSync(patchPath, content, 'utf-8')
+    return patchPath
+  } catch {
+    return undefined
+  }
 }
 
 /**

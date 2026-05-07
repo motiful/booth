@@ -22,6 +22,7 @@ import { uninstallCommand } from './commands/uninstall.js'
 import { compactRecoverCommand } from './commands/compact-recover.js'
 import { reportCommand } from './commands/report.js'
 import { mergeCommand } from './commands/merge.js'
+import { pruneCommand } from './commands/prune.js'
 import { isInitialized } from '../skills.js'
 
 const HELP = `
@@ -224,6 +225,9 @@ export async function run(args: string[]): Promise<void> {
         break
       case 'config':
         await configCommand(rest)
+        break
+      case 'prune':
+        await pruneCommand(rest)
         break
       default:
         console.error(`Unknown command: ${cmd}`)
