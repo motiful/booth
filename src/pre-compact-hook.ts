@@ -29,7 +29,9 @@ function readStdin(): string {
 function parseRecentTurns(jsonlPath: string, maxTurns: number): ConversationTurn[] {
   let lines: string[]
   try {
-    const tail = execFileSync('tail', ['-n', '200', jsonlPath], {
+    // Heavy editing sessions can have 200+ tool roundtrips between text turns;
+    // 500 lines gives breathing room without ballooning memory.
+    const tail = execFileSync('tail', ['-n', '500', jsonlPath], {
       encoding: 'utf-8',
       timeout: 5_000,
     })
@@ -38,15 +40,16 @@ function parseRecentTurns(jsonlPath: string, maxTurns: number): ConversationTurn
     return []
   }
 
-  // Parse all user/assistant entries
+  // Parse user/assistant entries, filtering out tool_use/tool_result (empty text).
+  // Without this filter, walking backwards pairs empty-empty entries and
+  // produces useless "Turn N: (no text blocks)" snapshots.
   const entries: Array<{ type: 'user' | 'assistant'; text: string }> = []
   for (const line of lines) {
     try {
       const ev = JSON.parse(line)
-      if (ev.type === 'user' && ev.message) {
-        entries.push({ type: 'user', text: extractTextContent(ev.message) })
-      } else if (ev.type === 'assistant' && ev.message) {
-        entries.push({ type: 'assistant', text: extractTextContent(ev.message) })
+      if ((ev.type === 'user' || ev.type === 'assistant') && ev.message) {
+        const text = extractTextContent(ev.message).trim()
+        if (text) entries.push({ type: ev.type, text })
       }
     } catch {
       // skip malformed lines
@@ -57,16 +60,13 @@ function parseRecentTurns(jsonlPath: string, maxTurns: number): ConversationTurn
   const turns: ConversationTurn[] = []
   let i = entries.length - 1
   while (i >= 0 && turns.length < maxTurns) {
-    // Find assistant
     while (i >= 0 && entries[i].type !== 'assistant') i--
     if (i < 0) break
     const assistantText = entries[i].text
     i--
 
-    // Find user
     while (i >= 0 && entries[i].type !== 'user') i--
     if (i < 0) {
-      // Assistant without user — include as partial turn
       turns.push({ user: '(no user message)', assistant: assistantText })
       break
     }
@@ -76,7 +76,6 @@ function parseRecentTurns(jsonlPath: string, maxTurns: number): ConversationTurn
     turns.push({ user: userText, assistant: assistantText })
   }
 
-  // Reverse to chronological order
   return turns.reverse()
 }
 

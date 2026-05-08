@@ -32,18 +32,17 @@ function buildCompactRecoveryPrompt(
 ): string {
   const lines: string[] = []
   if (role === 'dj') {
-    lines.push(`/booth-compact-recovery You are booth's DJ (project manager). Context compaction just happened.`)
+    lines.push(`/booth-compact-recovery You are booth's DJ. Compaction just happened.`)
   } else {
-    lines.push(`/booth-compact-recovery You are booth deck "${name}" (mode: ${mode ?? 'auto'}). Context compaction just happened.`)
+    lines.push(`/booth-compact-recovery You are booth deck "${name}" (mode: ${mode ?? 'auto'}). Compaction just happened.`)
   }
   if (filePath) {
-    lines.push(`Read ${filePath} first — it contains the last 3 conversation turns before compaction. Delete the file after reading.`)
-    lines.push(`Prioritize understanding those turns to recover your working context.`)
+    lines.push(`Read ${filePath} (last real text turns; delete after reading). If empty or insufficient, read your own session JSONL directly to find the last ~5 real user-assistant exchanges.`)
   }
   if (role === 'dj') {
-    lines.push(`If unsure about the current plan, read .booth/plan.md. If unsure about deck status, run \`booth ls\`.`)
+    lines.push(`Then read progress/README.md 🎯 NOW segment (authoritative). State next action in one sentence. Wait for user confirmation before reading other files.`)
   } else {
-    lines.push(`If unsure about your current task, run \`booth status ${name}\` to check your original goal.`)
+    lines.push(`Then run \`booth status ${name}\` for original goal. State current task progress in one sentence. Wait for user confirmation.`)
   }
   return lines.join('\n')
 }
