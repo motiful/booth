@@ -1,10 +1,5 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { readFileSync, existsSync } from 'node:fs'
 import { findProjectRoot, DB_FILE, boothPath } from './constants.js'
-import { extractTextContent } from './transcript-utils.js'
 import { ipcRequest } from './ipc.js'
 
 interface PreCompactInput {
@@ -13,86 +8,12 @@ interface PreCompactInput {
   cwd?: string
 }
 
-interface ConversationTurn {
-  user: string
-  assistant: string
-}
-
 function readStdin(): string {
   try {
     return readFileSync(0, 'utf-8')
   } catch {
     return ''
   }
-}
-
-function parseRecentTurns(jsonlPath: string, maxTurns: number): ConversationTurn[] {
-  let lines: string[]
-  try {
-    // Heavy editing sessions can have 200+ tool roundtrips between text turns;
-    // 500 lines gives breathing room without ballooning memory.
-    const tail = execFileSync('tail', ['-n', '500', jsonlPath], {
-      encoding: 'utf-8',
-      timeout: 5_000,
-    })
-    lines = tail.trim().split('\n').filter(Boolean)
-  } catch {
-    return []
-  }
-
-  // Parse user/assistant entries, filtering out tool_use/tool_result (empty text).
-  // Without this filter, walking backwards pairs empty-empty entries and
-  // produces useless "Turn N: (no text blocks)" snapshots.
-  const entries: Array<{ type: 'user' | 'assistant'; text: string }> = []
-  for (const line of lines) {
-    try {
-      const ev = JSON.parse(line)
-      if ((ev.type === 'user' || ev.type === 'assistant') && ev.message) {
-        const text = extractTextContent(ev.message).trim()
-        if (text) entries.push({ type: ev.type, text })
-      }
-    } catch {
-      // skip malformed lines
-    }
-  }
-
-  // Walk backwards collecting turns (user + assistant pairs)
-  const turns: ConversationTurn[] = []
-  let i = entries.length - 1
-  while (i >= 0 && turns.length < maxTurns) {
-    while (i >= 0 && entries[i].type !== 'assistant') i--
-    if (i < 0) break
-    const assistantText = entries[i].text
-    i--
-
-    while (i >= 0 && entries[i].type !== 'user') i--
-    if (i < 0) {
-      turns.push({ user: '(no user message)', assistant: assistantText })
-      break
-    }
-    const userText = entries[i].text
-    i--
-
-    turns.push({ user: userText, assistant: assistantText })
-  }
-
-  return turns.reverse()
-}
-
-function formatTurnsToMarkdown(turns: ConversationTurn[]): string {
-  const sections: string[] = ['# Pre-Compact Context (last conversation turns)', '']
-  for (let idx = 0; idx < turns.length; idx++) {
-    const turn = turns[idx]
-    sections.push(`## Turn ${idx + 1}`)
-    sections.push('')
-    sections.push('### User')
-    sections.push(turn.user.slice(0, 2000))
-    sections.push('')
-    sections.push('### Assistant')
-    sections.push(turn.assistant.slice(0, 2000))
-    sections.push('')
-  }
-  return sections.join('\n')
 }
 
 async function main(): Promise<void> {
@@ -129,24 +50,15 @@ async function main(): Promise<void> {
     return
   }
 
-  const dbPath = boothPath(projectRoot, DB_FILE)
-  if (!existsSync(dbPath)) {
+  if (!existsSync(boothPath(projectRoot, DB_FILE))) {
     console.error('PreCompact: booth.db not found')
     return
   }
 
-  // Parse last 3 turns from JSONL
-  const turns = parseRecentTurns(transcriptPath, 3)
-  if (turns.length === 0) {
-    console.error('PreCompact: no conversation turns found in transcript')
-    return
-  }
-
-  // Write to temp file
-  const filePath = join(tmpdir(), `booth-compact-${randomUUID()}.md`)
-  writeFileSync(filePath, formatTurnsToMarkdown(turns))
-
-  // Send IPC to daemon (fire-and-forget on daemon side)
+  // Notify daemon: queue recovery prompt for after compaction.
+  // We pass the transcriptPath through; the post-compact recovery prompt
+  // will direct DJ/deck to read the JSONL directly. No predigested temp
+  // file — AI reads raw source for whatever depth it needs.
   const name = process.env.BOOTH_DECK_NAME || 'DJ'
   const sessionId = process.env.BOOTH_DECK_ID || undefined
   try {
@@ -155,7 +67,7 @@ async function main(): Promise<void> {
       role,
       name,
       sessionId,
-      filePath,
+      transcriptPath,
     })
   } catch {
     console.error('PreCompact: daemon unreachable')

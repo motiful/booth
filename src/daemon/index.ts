@@ -28,7 +28,7 @@ const GUARDIAN_MAX_RETRIES = 3
 const SHELL_NAMES = new Set(['zsh', 'bash', 'sh', 'fish', 'dash', 'ksh', 'tcsh', 'csh'])
 
 function buildCompactRecoveryPrompt(
-  role: 'dj' | 'deck', name: string, mode?: string, filePath?: string
+  role: 'dj' | 'deck', name: string, mode?: string, transcriptPath?: string
 ): string {
   const lines: string[] = []
   if (role === 'dj') {
@@ -36,11 +36,11 @@ function buildCompactRecoveryPrompt(
   } else {
     lines.push(`/booth-compact-recovery You are booth deck "${name}" (mode: ${mode ?? 'auto'}). Compaction just happened.`)
   }
-  if (filePath) {
-    lines.push(`Read ${filePath} (last real text turns; delete after reading). If empty or insufficient, read your own session JSONL directly to find the last ~5 real user-assistant exchanges.`)
+  if (transcriptPath) {
+    lines.push(`Read the last ~5 real user-assistant exchanges in your session JSONL: ${transcriptPath} (skip tool_use/tool_result entries with empty text).`)
   }
   if (role === 'dj') {
-    lines.push(`Then read progress/README.md 🎯 NOW segment (authoritative). State next action in one sentence. Wait for user confirmation before reading other files.`)
+    lines.push(`Then read progress/README.md 🎯 NOW segment (authoritative single source). State next action in one sentence. Wait for user confirmation before reading other files.`)
   } else {
     lines.push(`Then run \`booth status ${name}\` for original goal. State current task progress in one sentence. Wait for user confirmation.`)
   }
@@ -887,18 +887,19 @@ export class Daemon {
       case 'compact-prepare': {
         const role = typeof msg.role === 'string' ? msg.role : null
         const name = typeof msg.name === 'string' ? msg.name : null
-        const filePath = typeof msg.filePath === 'string' ? msg.filePath : null
+        const transcriptPath = typeof msg.transcriptPath === 'string' ? msg.transcriptPath : null
         const sid = typeof msg.sessionId === 'string' ? msg.sessionId : null
-        if (!role || !name || !filePath) {
-          return { error: 'role, name, and filePath required' }
+        if (!role || !name || !transcriptPath) {
+          return { error: 'role, name, and transcriptPath required' }
         }
 
         const target = role === 'dj' ? 'dj' : sid
         if (!target) return { error: 'sessionId required for deck compact-prepare' }
 
-        // Build recovery prompt
+        // Build recovery prompt — directs the post-compact session to read
+        // its own JSONL directly. No predigested temp file (lossy + brittle).
         const deckForPrompt = role !== 'dj' ? this.state.getDeck(target) : undefined
-        const prompt = buildCompactRecoveryPrompt(role === 'dj' ? 'dj' : 'deck', name!, deckForPrompt?.mode, filePath!)
+        const prompt = buildCompactRecoveryPrompt(role === 'dj' ? 'dj' : 'deck', name!, deckForPrompt?.mode, transcriptPath!)
 
         // Fire-and-forget: sendMessage in background, reply IPC immediately.
         // This ensures the hook exits → CC starts compact → sendMessage's Ctrl+G
@@ -909,7 +910,7 @@ export class Daemon {
           }
         }).catch(err => logger.error(`[booth-daemon] compact-prepare sendMessage threw: ${err}`))
 
-        logger.info(`[booth-daemon] compact-prepare: ${target} → sendMessage (filePath: ${filePath})`)
+        logger.info(`[booth-daemon] compact-prepare: ${target} → sendMessage (transcriptPath: ${transcriptPath})`)
         return { ok: true }
       }
       case 'compact-recover': {
